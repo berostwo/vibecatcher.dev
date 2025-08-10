@@ -18,6 +18,9 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { auth } from '@/lib/firebase'
 
+// Disable prerendering for this page
+export const dynamic = 'force-dynamic'
+
 interface AuditForm {
   repositoryUrl: string
   repositoryName: string

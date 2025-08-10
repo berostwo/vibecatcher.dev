@@ -3,7 +3,7 @@ import { SecurityAuditEngine } from '@/lib/audit-engine';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, doc, updateDoc, getDoc, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { auth } from '@/lib/firebase';
-import { getAuth } from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 
 // Initialize Firebase Admin if not already initialized

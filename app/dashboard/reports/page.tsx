@@ -20,6 +20,9 @@ import {
 import Link from 'next/link'
 import { auth } from '@/lib/firebase'
 
+// Disable prerendering for this page
+export const dynamic = 'force-dynamic'
+
 interface Vulnerability {
   id: string
   title: string

@@ -6,6 +6,9 @@ import { useAuth } from '@/contexts/AuthContext'
 import Sidebar from '@/components/Sidebar'
 import { motion } from 'framer-motion'
 
+// Disable prerendering for this layout
+export const dynamic = 'force-dynamic'
+
 export default function DashboardLayout({
   children,
 }: {

@@ -171,6 +171,11 @@ export class SecurityAuditEngine {
         ref: branch,
       });
 
+      // Handle case where contents might be a single file or an array
+      if (!Array.isArray(contents)) {
+        return; // This is a file, not a directory
+      }
+
       for (const item of contents) {
         if (item.type === 'file') {
           // Skip large files and binary files

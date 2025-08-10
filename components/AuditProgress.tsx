@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Shield, Clock, CheckCircle, AlertTriangle, Zap } from 'lucide-react'
+import { auth } from '@/lib/firebase'
 
 interface AuditProgressProps {
   auditId: string
