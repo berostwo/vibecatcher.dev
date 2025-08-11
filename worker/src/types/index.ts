@@ -58,3 +58,4 @@ export interface GitHubRepository {
   size: number;
   updated_at: string;
 }
+

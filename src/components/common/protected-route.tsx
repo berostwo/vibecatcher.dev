@@ -38,3 +38,4 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   // Render protected content if user is authenticated
   return <>{children}</>;
 }
+

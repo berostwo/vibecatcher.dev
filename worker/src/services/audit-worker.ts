@@ -16,8 +16,8 @@ export class AuditWorkerService {
 
   // Main method to process an audit request
   async processAuditRequest(request: AuditRequest): Promise<string> {
-    let reportId: string;
-    let repoPath: string;
+    let reportId: string | undefined;
+    let repoPath: string | undefined;
 
     try {
       // Verify user has audits available
@@ -135,3 +135,4 @@ export class AuditWorkerService {
     return await this.firebaseService.getUserAuditReports(userId);
   }
 }
+

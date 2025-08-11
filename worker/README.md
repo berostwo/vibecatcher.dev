@@ -230,3 +230,4 @@ Set `WORKER_ENV=development` for verbose logging.
 ## 📝 License
 
 This worker is part of the VibeCatcher project and follows the same license terms.
+

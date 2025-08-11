@@ -34,3 +34,4 @@ steps:
 
 images:
   - 'gcr.io/$PROJECT_ID/vibecatcher-worker:$COMMIT_SHA'
+
