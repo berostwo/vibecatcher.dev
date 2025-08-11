@@ -1,9 +1,14 @@
+'use client';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Github, History, ShieldCheck, ArrowRight, CheckCircle, ShoppingCart } from 'lucide-react'
 import Link from 'next/link'
+import { useAuthContext } from '@/contexts/auth-context'
 
 export default function DashboardPage() {
+  const { user, userData } = useAuthContext();
+
   return (
     <div className="space-y-6 animate-fade-in-up">
       <div>
@@ -34,7 +39,10 @@ export default function DashboardPage() {
             <CheckCircle className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">8</div>
+            <div className="text-2xl font-bold">{userData?.auditsAvailable || 0}</div>
+            <p className="text-xs text-muted-foreground">
+              {userData?.auditsAvailable === 1 ? '1 free audit available' : `${userData?.auditsAvailable || 0} audits available`}
+            </p>
           </CardContent>
         </Card>
       </div>

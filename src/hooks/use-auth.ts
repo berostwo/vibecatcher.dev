@@ -2,32 +2,49 @@ import { useState, useEffect } from 'react';
 import { 
   User, 
   signInWithPopup, 
-  GoogleAuthProvider, 
   signOut as firebaseSignOut,
   onAuthStateChanged 
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { auth, githubProvider } from '@/lib/firebase';
+import { UserService, UserData } from '@/lib/user-service';
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
+  const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUser(user);
+        try {
+          // Get or create user data (with free audit for new users)
+                    const data = await UserService.getUserData(
+            user.uid, 
+            user.email || '', 
+            user.displayName || undefined,
+            user.photoURL || undefined
+          );
+          setUserData(data);
+        } catch (error) {
+          console.error('Error getting user data:', error);
+        }
+      } else {
+        setUser(null);
+        setUserData(null);
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithGithub = async () => {
     try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, githubProvider);
       return result.user;
     } catch (error) {
-      console.error('Error signing in with Google:', error);
+      console.error('Error signing in with GitHub:', error);
       throw error;
     }
   };
@@ -43,8 +60,9 @@ export function useAuth() {
 
   return {
     user,
+    userData,
     loading,
-    signInWithGoogle,
+    signInWithGithub,
     signOut,
   };
 }

@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, GithubAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
@@ -20,5 +20,12 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
+// Configure GitHub OAuth provider with proper scopes
+export const githubProvider = new GithubAuthProvider();
+// Add scopes for repository access
+githubProvider.addScope('repo'); // Full repository access (includes private repos)
+githubProvider.addScope('read:user'); // Read user profile
+githubProvider.addScope('user:email'); // Read user email
 
 export default app;

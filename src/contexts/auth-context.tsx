@@ -2,11 +2,13 @@
 
 import React, { createContext, useContext, ReactNode } from 'react';
 import { useAuth } from '@/hooks/use-auth';
+import { UserData } from '@/lib/user-service';
 
 interface AuthContextType {
   user: any;
+  userData: UserData | null;
   loading: boolean;
-  signInWithGoogle: () => Promise<any>;
+  signInWithGithub: () => Promise<any>;
   signOut: () => Promise<void>;
 }
 

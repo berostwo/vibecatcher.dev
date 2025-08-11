@@ -4,7 +4,6 @@
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Github, ScanLine, FileJson2, Wand2, ShieldAlert, Code, Terminal, AlertTriangle, Info, CheckCircle, Shield } from 'lucide-react'
-import Link from 'next/link'
 import {
   Accordion,
   AccordionContent,
@@ -14,7 +13,8 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { AppFooter } from '@/components/common/app-footer'
 import { useAuthContext } from '@/contexts/auth-context'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 
 const mockVulnerabilities = [
@@ -86,8 +86,9 @@ const getSeverityStyles = (severity: string) => {
 
 
 export default function Home() {
-  const { user, signInWithGoogle, loading } = useAuthContext();
+  const { user, signInWithGithub, loading } = useAuthContext();
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const router = useRouter();
   const healthScore = 47;
   
   const getHealthColor = (score: number) => {
@@ -97,10 +98,17 @@ export default function Home() {
     return 'text-red-500';
   }
 
+  // Auto-redirect authenticated users to dashboard
+  useEffect(() => {
+    if (user && !loading) {
+      router.push('/dashboard');
+    }
+  }, [user, loading, router]);
+
   const handleSignIn = async () => {
     try {
       setIsSigningIn(true);
-      await signInWithGoogle();
+      await signInWithGithub();
     } catch (error) {
       console.error('Sign in error:', error);
     } finally {
@@ -130,28 +138,31 @@ export default function Home() {
           tailor prompts to fix your security risks with OpenAI GPT.
         </p>
         <div className="mt-8">
-          {user ? (
-            <div className="flex flex-col items-center gap-4">
-              <p className="text-sm text-muted-foreground">
-                Welcome back, {user.displayName || user.email}!
-              </p>
-              <Button asChild size="lg" className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105">
-                <Link href="/dashboard">
-                  <Github className="mr-2 h-5 w-5" />
-                  Go to Dashboard
-                </Link>
-              </Button>
-            </div>
-          ) : (
+          {!user && !loading && (
             <Button 
               onClick={handleSignIn}
-              disabled={loading || isSigningIn}
+              disabled={isSigningIn}
               size="lg" 
               className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105"
             >
               <Github className="mr-2 h-5 w-5" />
               {isSigningIn ? 'Signing in...' : 'Continue with GitHub'}
             </Button>
+          )}
+          {(user || loading) && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              {loading ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                  <span>Loading...</span>
+                </>
+              ) : (
+                <>
+                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  <span>Redirecting to dashboard...</span>
+                </>
+              )}
+            </div>
           )}
         </div>
 

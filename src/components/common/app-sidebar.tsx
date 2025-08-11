@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { StripePayment } from "./stripe-payment"
 
 export function AppSidebar() {
   const pathname = usePathname()
@@ -34,11 +35,7 @@ export function AppSidebar() {
     { href: "/dashboard/account", label: "Account", icon: User },
   ]
 
-  const purchaseOptions = [
-    { title: "Single Audit", price: "$4.99" },
-    { title: "5 Audits", price: "$11.99" },
-    { title: "10 Audits", price: "$18.99" },
-  ]
+
 
   return (
     <>
@@ -66,17 +63,7 @@ export function AppSidebar() {
         </SidebarMenu>
         <div className="mt-auto group-data-[collapsible=icon]:hidden">
             <SidebarSeparator className="my-4" />
-            <div className="space-y-2">
-                 {purchaseOptions.map((option) => (
-                    <Button key={option.title} variant="outline" className="w-full justify-between h-auto p-3 bg-sidebar-accent border-2 border-primary/20 hover:bg-background/50">
-                         <div>
-                            <p className="text-sm font-medium text-left">{option.title}</p>
-                            <p className="text-xs text-muted-foreground text-left">{option.price}</p>
-                        </div>
-                        <ShoppingCart className="h-4 w-4 text-primary" />
-                    </Button>
-                 ))}
-            </div>
+            <StripePayment />
         </div>
       </SidebarContent>
       <SidebarFooter>
