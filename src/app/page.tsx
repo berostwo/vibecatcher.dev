@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/accordion"
 import { Badge } from '@/components/ui/badge'
 import { AppFooter } from '@/components/common/app-footer'
+import { useAuthContext } from '@/contexts/auth-context'
+import { useState } from 'react'
 
 
 const mockVulnerabilities = [
@@ -84,13 +86,27 @@ const getSeverityStyles = (severity: string) => {
 
 
 export default function Home() {
+  const { user, signInWithGoogle, loading } = useAuthContext();
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const healthScore = 47;
+  
   const getHealthColor = (score: number) => {
     if (score > 85) return 'text-green-500';
     if (score > 60) return 'text-yellow-500';
     if (score > 40) return 'text-orange-500';
     return 'text-red-500';
   }
+
+  const handleSignIn = async () => {
+    try {
+      setIsSigningIn(true);
+      await signInWithGoogle();
+    } catch (error) {
+      console.error('Sign in error:', error);
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4 overflow-x-hidden">
@@ -114,12 +130,29 @@ export default function Home() {
           tailor prompts to fix your security risks with OpenAI GPT.
         </p>
         <div className="mt-8">
-          <Button asChild size="lg" className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105">
-            <Link href="/dashboard">
+          {user ? (
+            <div className="flex flex-col items-center gap-4">
+              <p className="text-sm text-muted-foreground">
+                Welcome back, {user.displayName || user.email}!
+              </p>
+              <Button asChild size="lg" className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105">
+                <Link href="/dashboard">
+                  <Github className="mr-2 h-5 w-5" />
+                  Go to Dashboard
+                </Link>
+              </Button>
+            </div>
+          ) : (
+            <Button 
+              onClick={handleSignIn}
+              disabled={loading || isSigningIn}
+              size="lg" 
+              className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105"
+            >
               <Github className="mr-2 h-5 w-5" />
-              Continue with GitHub
-            </Link>
-          </Button>
+              {isSigningIn ? 'Signing in...' : 'Continue with GitHub'}
+            </Button>
+          )}
         </div>
 
         <section className="mt-16 w-full max-w-5xl">
