@@ -1,8 +1,0 @@
-{
-  "/_not-found/page": "/_not-found",
-  "/api/audit/route": "/api/audit",
-  "/page": "/",
-  "/dashboard/page": "/dashboard",
-  "/dashboard/audit/page": "/dashboard/audit",
-  "/dashboard/reports/page": "/dashboard/reports"
-}
