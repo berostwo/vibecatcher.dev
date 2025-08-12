@@ -35,13 +35,19 @@ export class UserService {
       const newUserData: UserData = {
         uid,
         email,
-        displayName,
-        photoURL,
         auditsAvailable: 1, // Free audit for new users
         totalAuditsUsed: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
+
+      // Only add optional fields if they have values
+      if (displayName) {
+        newUserData.displayName = displayName;
+      }
+      if (photoURL) {
+        newUserData.photoURL = photoURL;
+      }
 
       await setDoc(userRef, newUserData);
       return newUserData;

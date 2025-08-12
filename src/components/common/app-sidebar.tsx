@@ -24,9 +24,11 @@ import {
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { StripePayment } from "./stripe-payment"
+import { usePaymentMode } from "@/contexts/payment-mode-context"
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const { isPaymentMode, setIsPaymentMode } = usePaymentMode()
 
   const menuItems = [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -35,7 +37,13 @@ export function AppSidebar() {
     { href: "/dashboard/account", label: "Account", icon: User },
   ]
 
+  const handlePaymentStart = () => {
+    setIsPaymentMode(true)
+  }
 
+  const handlePaymentEnd = () => {
+    setIsPaymentMode(false)
+  }
 
   return (
     <>
@@ -61,9 +69,18 @@ export function AppSidebar() {
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
-        <div className="mt-auto group-data-[collapsible=icon]:hidden">
+        <div className={`mt-auto group-data-[collapsible=icon]:hidden transition-all duration-500 ease-in-out ${
+          isPaymentMode ? 'p-4' : 'p-2'
+        }`}>
             <SidebarSeparator className="my-4" />
-            <StripePayment />
+            <div className={`transition-all duration-500 ease-in-out ${
+              isPaymentMode ? 'scale-105' : 'scale-100'
+            }`}>
+              <StripePayment 
+                onPaymentStart={handlePaymentStart}
+                onPaymentEnd={handlePaymentEnd}
+              />
+            </div>
         </div>
       </SidebarContent>
       <SidebarFooter>

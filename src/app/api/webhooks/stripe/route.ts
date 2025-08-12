@@ -28,40 +28,22 @@ export async function POST(request: NextRequest) {
       
       if (paymentIntent.status === 'succeeded') {
         const { userId, audits } = paymentIntent.metadata!;
-        const auditCount = parseInt(audits);
+        const auditCount = parseInt(audits || '0');
         
-        try {
-          // Add audits to user's account
-          await UserService.addAudits(userId, auditCount);
-          console.log(`Added ${auditCount} audits to user ${userId}`);
-        } catch (error) {
-          console.error('Error adding audits to user:', error);
-          return NextResponse.json(
-            { error: 'Failed to add audits' },
-            { status: 500 }
-          );
-        }
-      }
-      break;
-
-    case 'checkout.session.completed':
-      // Keep this for backward compatibility if you have existing checkout sessions
-      const session = event.data.object as Stripe.Checkout.Session;
-      
-      if (session.payment_status === 'paid') {
-        const { userId, audits } = session.metadata!;
-        const auditCount = parseInt(audits);
-        
-        try {
-          // Add audits to user's account
-          await UserService.addAudits(userId, auditCount);
-          console.log(`Added ${auditCount} audits to user ${userId}`);
-        } catch (error) {
-          console.error('Error adding audits to user:', error);
-          return NextResponse.json(
-            { error: 'Failed to add audits' },
-            { status: 500 }
-          );
+        if (userId && userId !== 'unknown' && auditCount > 0) {
+          try {
+            // Add audits to user's account
+            await UserService.addAudits(userId, auditCount);
+            console.log(`Added ${auditCount} audits to user ${userId}`);
+          } catch (error) {
+            console.error('Error adding audits to user:', error);
+            return NextResponse.json(
+              { error: 'Failed to add audits' },
+              { status: 500 }
+            );
+          }
+        } else {
+          console.warn('Invalid metadata for payment intent:', { userId, audits });
         }
       }
       break;

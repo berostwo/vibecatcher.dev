@@ -1,4 +1,4 @@
-// Audit package configurations with Stripe price IDs
+// Audit package configurations used for UI display only
 export const AUDIT_PACKAGES = [
   {
     id: 'single_audit',
@@ -7,7 +7,6 @@ export const AUDIT_PACKAGES = [
     price: 4.99,
     audits: 1,
     popular: false,
-    priceId: process.env.NEXT_PUBLIC_STRIPE_SINGLE_AUDIT_PRICE_ID || '',
   },
   {
     id: 'five_audits',
@@ -16,7 +15,6 @@ export const AUDIT_PACKAGES = [
     price: 11.99,
     audits: 5,
     popular: true,
-    priceId: process.env.NEXT_PUBLIC_STRIPE_FIVE_AUDITS_PRICE_ID || '',
   },
   {
     id: 'ten_audits',
@@ -25,6 +23,5 @@ export const AUDIT_PACKAGES = [
     price: 18.99,
     audits: 10,
     popular: false,
-    priceId: process.env.NEXT_PUBLIC_STRIPE_TEN_AUDITS_PRICE_ID || '',
   },
 ];

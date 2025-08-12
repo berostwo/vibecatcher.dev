@@ -100,7 +100,9 @@ export default function Home() {
 
   // Auto-redirect authenticated users to dashboard
   useEffect(() => {
-    if (user && !loading) {
+    // Only redirect if we have a confirmed authenticated user
+    if (user && !loading && user.uid) {
+      console.log('User authenticated, redirecting to dashboard:', user.uid);
       router.push('/dashboard');
     }
   }, [user, loading, router]);
@@ -108,11 +110,19 @@ export default function Home() {
   const handleSignIn = async () => {
     try {
       setIsSigningIn(true);
-      await signInWithGithub();
+      console.log('Starting GitHub sign-in...');
+      
+      const result = await signInWithGithub();
+      console.log('GitHub sign-in result:', result);
+      
+      // Don't set isSigningIn to false here - let the auth state change handle it
+      // The useEffect will redirect to dashboard when user is actually authenticated
     } catch (error) {
       console.error('Sign in error:', error);
-    } finally {
-      setIsSigningIn(false);
+      setIsSigningIn(false); // Only reset on error
+      
+      // Show error to user
+      alert('Sign in failed. Please try again.');
     }
   };
 
@@ -138,7 +148,7 @@ export default function Home() {
           tailor prompts to fix your security risks with OpenAI GPT.
         </p>
         <div className="mt-8">
-          {!user && !loading && (
+          {!user && !loading && !isSigningIn && (
             <Button 
               onClick={handleSignIn}
               disabled={isSigningIn}
@@ -146,10 +156,16 @@ export default function Home() {
               className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105"
             >
               <Github className="mr-2 h-5 w-5" />
-              {isSigningIn ? 'Signing in...' : 'Continue with GitHub'}
+              Continue with GitHub
             </Button>
           )}
-          {(user || loading) && (
+          {isSigningIn && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+              <span>Signing in with GitHub...</span>
+            </div>
+          )}
+          {(user || loading) && !isSigningIn && (
             <div className="flex items-center gap-2 text-muted-foreground">
               {loading ? (
                 <>

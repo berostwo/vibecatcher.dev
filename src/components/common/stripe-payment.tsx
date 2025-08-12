@@ -22,6 +22,7 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
   const [error, setError] = useState<string | null>(null);
   const stripe = useStripe();
   const elements = useElements();
+  const { user } = useAuthContext();
 
   const selectedPackage = AUDIT_PACKAGES.find(pkg => pkg.id === packageId);
 
@@ -36,6 +37,14 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
     setError(null);
 
     try {
+      // First, submit the elements to validate the form
+      const { error: submitError } = await elements.submit();
+      if (submitError) {
+        setError(submitError.message || 'Form validation failed');
+        setLoading(false);
+        return;
+      }
+
       // Create payment intent
       const response = await fetch('/api/create-payment-intent', {
         method: 'POST',
@@ -44,7 +53,7 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
         },
         body: JSON.stringify({
           packageId,
-          userId: useAuthContext().user?.uid,
+          userId: user?.uid,
         }),
       });
 
@@ -95,8 +104,8 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
             layout: 'tabs',
             defaultValues: {
               billingDetails: {
-                name: useAuthContext().user?.displayName || '',
-                email: useAuthContext().user?.email || '',
+                name: user?.displayName || '',
+                email: user?.email || '',
               }
             }
           }}
@@ -138,10 +147,17 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
   );
 }
 
-export function StripePayment() {
+export function StripePayment({ 
+  onPaymentStart, 
+  onPaymentEnd 
+}: { 
+  onPaymentStart?: () => void;
+  onPaymentEnd?: () => void;
+}) {
   const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
+  const [showSuccess, setShowSuccess] = useState(false);
   const { user } = useAuthContext();
 
   const handlePackageSelect = async (packageId: string) => {
@@ -162,11 +178,20 @@ export function StripePayment() {
         }),
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create payment intent');
+      }
+
       const { clientSecret: secret } = await response.json();
       setClientSecret(secret);
       setSelectedPackage(packageId);
+      
+      // Notify parent component that payment mode has started
+      onPaymentStart?.();
     } catch (error) {
       console.error('Error creating payment intent:', error);
+      alert('Failed to create payment. Please try again.');
     } finally {
       setLoading(null);
     }
@@ -175,13 +200,44 @@ export function StripePayment() {
   const handleCancel = () => {
     setSelectedPackage(null);
     setClientSecret(null);
+    
+    // Notify parent component that payment mode has ended
+    onPaymentEnd?.();
   };
 
   const handleSuccess = () => {
+    setShowSuccess(true);
     setSelectedPackage(null);
     setClientSecret(null);
-    // Optionally redirect or show success message
+    
+    // Notify parent component that payment mode has ended
+    onPaymentEnd?.();
+    
+    // Hide success message after 5 seconds
+    setTimeout(() => {
+      setShowSuccess(false);
+    }, 5000);
   };
+
+  if (showSuccess) {
+    return (
+      <div className="space-y-4">
+        <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-6 text-center">
+          <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-green-500 mb-2">Payment Successful!</h3>
+          <p className="text-muted-foreground">
+            Your audits have been added to your account. You can now start security audits.
+          </p>
+        </div>
+        <Button 
+          onClick={() => setShowSuccess(false)} 
+          className="w-full"
+        >
+          Continue
+        </Button>
+      </div>
+    );
+  }
 
   if (selectedPackage && clientSecret) {
     return (
