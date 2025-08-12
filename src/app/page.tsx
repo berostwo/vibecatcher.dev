@@ -3,7 +3,7 @@
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Github, ScanLine, FileJson2, Wand2, ShieldAlert, Code, Terminal, AlertTriangle, Info, CheckCircle, Shield } from 'lucide-react'
+import { ScanLine, FileJson2, Wand2, ShieldAlert, Code, Terminal, AlertTriangle, Info, CheckCircle, Shield, Github } from 'lucide-react'
 import {
   Accordion,
   AccordionContent,
@@ -12,9 +12,10 @@ import {
 } from "@/components/ui/accordion"
 import { Badge } from '@/components/ui/badge'
 import { AppFooter } from '@/components/common/app-footer'
-import { useAuthContext } from '@/contexts/auth-context'
+import { useGitHubAuth } from '@/contexts/github-auth-context'
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { GitHubOAuthService } from '@/lib/github-oauth'
+import { useRouter } from 'next/navigation';
 
 
 const mockVulnerabilities = [
@@ -86,21 +87,57 @@ const getSeverityStyles = (severity: string) => {
 
 
 export default function Home() {
-  // FORCE REFRESH - Ensure new auth code runs
-  useEffect(() => {
-    const authVersion = localStorage.getItem('auth_provider_version');
-    if (authVersion !== '2.0.0') {
-      console.log('🔄 Auth version mismatch, forcing page refresh...');
-      localStorage.setItem('auth_provider_version', '2.0.0');
-      window.location.reload();
-      return;
-    }
-  }, []);
-  
-  const { user, loading, signInWithGithub } = useAuthContext();
-  const [isSigningIn, setIsSigningIn] = useState(false);
+  const { user, loading, isAuthenticated, signInWithGithub } = useGitHubAuth();
   const router = useRouter();
+  const [isRedirecting, setIsRedirecting] = useState(false);
   const healthScore = 47;
+  
+  // Check for OAuth redirect return
+  useEffect(() => {
+    const checkOAuthReturn = async () => {
+      // Don't handle redirect returns if we're on the OAuth callback page
+      // The callback page will handle the OAuth flow directly
+      if (typeof window !== 'undefined' && window.location.pathname === '/auth/github/callback') {
+        console.log('On OAuth callback page, skipping redirect return handling in main page');
+        return;
+      }
+
+      if (GitHubOAuthService.checkRedirectReturn()) {
+        try {
+          setIsRedirecting(false);
+          const accessToken = await GitHubOAuthService.handleRedirectReturn();
+          if (accessToken) {
+            // The auth context will handle the authentication completion
+            console.log('OAuth redirect return handled');
+          }
+        } catch (error) {
+          console.error('Failed to handle OAuth redirect return:', error);
+          setIsRedirecting(false);
+        }
+      }
+    };
+
+    checkOAuthReturn();
+  }, []);
+
+  // Reset redirecting state when user becomes authenticated
+  useEffect(() => {
+    if (user && isRedirecting) {
+      setIsRedirecting(false);
+    }
+  }, [user, isRedirecting]);
+
+  // Auto-redirect to dashboard when user is authenticated
+  useEffect(() => {
+    if (user && !loading) {
+      const timer = setTimeout(() => {
+        console.log('Redirecting to dashboard...');
+        router.push('/dashboard');
+      }, 1500); // 1.5 second delay to show success message
+      
+      return () => clearTimeout(timer);
+    }
+  }, [user, loading, router]);
   
   const getHealthColor = (score: number) => {
     if (score > 85) return 'text-green-500';
@@ -108,64 +145,6 @@ export default function Home() {
     if (score > 40) return 'text-orange-500';
     return 'text-red-500';
   }
-
-  // Remove the old useEffect that was causing automatic redirects
-  // useEffect(() => {
-  //   if (user && user.uid) {
-  //     console.log('User authenticated, redirecting to dashboard:', user.uid);
-  //     router.push('/dashboard');
-  //   }
-  // }, [user, router]);
-
-  const handleSignIn = async () => {
-    setIsSigningIn(true);
-    try {
-      console.log('page: Starting GitHub sign-in...');
-      
-      // Sign in with GitHub and wait for token storage to complete
-      const user = await signInWithGithub();
-      
-      if (user) {
-        console.log('page: Sign-in successful, user:', user.uid);
-        
-        // Wait a moment for token storage to complete
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Check if token is available before redirecting
-        try {
-          const { UserService } = await import('@/lib/user-service');
-          const token = await UserService.getGitHubToken(user.uid);
-          
-          if (token) {
-            console.log('page: GitHub token confirmed available, redirecting to dashboard');
-            // Token is ready, redirect to dashboard
-            window.location.href = '/dashboard';
-          } else {
-            console.log('page: GitHub token not yet available, waiting...');
-            // Wait a bit more and try again
-            setTimeout(() => {
-              if (user) {
-                window.location.href = '/dashboard';
-              }
-            }, 2000);
-          }
-        } catch (error) {
-          console.error('page: Error checking token availability:', error);
-          // If there's an error, redirect anyway after a delay
-          setTimeout(() => {
-            if (user) {
-              window.location.href = '/dashboard';
-            }
-          }, 2000);
-        }
-      }
-    } catch (error) {
-      console.error('page: Sign-in failed:', error);
-      alert('Sign-in failed. Please try again.');
-    } finally {
-      setIsSigningIn(false);
-    }
-  };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4 overflow-x-hidden">
@@ -190,18 +169,57 @@ export default function Home() {
         </p>
         
         <div className="mt-8">
-          {!user && !loading && !isSigningIn && (
-            <Button 
-              onClick={handleSignIn}
-              disabled={isSigningIn}
-              size="lg" 
-              className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105"
-            >
-              <Github className="mr-2 h-5 w-5" />
-              Continue with GitHub
-            </Button>
+          {!user && !loading && !isRedirecting && (
+            <div className="flex flex-col gap-4 items-center">
+              <Button 
+                onClick={async () => {
+                  try {
+                    setIsRedirecting(true);
+                    await signInWithGithub();
+                  } catch (error) {
+                    console.error('Sign-in failed:', error);
+                    setIsRedirecting(false);
+                  }
+                }}
+                size="lg" 
+                className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105"
+              >
+                <Github className="mr-2 h-5 w-5" />
+                Continue with GitHub (Popup)
+              </Button>
+              
+              <Button 
+                onClick={() => {
+                  try {
+                    setIsRedirecting(true);
+                    GitHubOAuthService.initiateOAuthRedirect();
+                  } catch (error) {
+                    console.error('Redirect OAuth failed:', error);
+                    setIsRedirecting(false);
+                  }
+                }}
+                size="lg" 
+                variant="outline"
+                className="border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+              >
+                <Github className="mr-2 h-5 w-5" />
+                Continue with GitHub (Redirect)
+              </Button>
+            </div>
           )}
-          {isSigningIn && (
+          {isRedirecting && (
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="relative">
+                <div className="w-24 h-24 rounded-full border-4 border-primary/30 animate-spin"></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Github className="w-12 h-12 text-primary" />
+                </div>
+              </div>
+              <p className="text-lg text-white font-medium">Redirecting to GitHub...</p>
+              <p className="text-sm text-muted-foreground">Please complete authentication on GitHub</p>
+            </div>
+          )}
+          {loading && (
             <div className="flex flex-col items-center gap-4 text-center">
               <div className="relative">
                 <div className="w-24 h-24 rounded-full border-4 border-primary/30 animate-spin"></div>
@@ -212,115 +230,118 @@ export default function Home() {
               <p className="text-lg text-white font-medium">Connecting to GitHub...</p>
             </div>
           )}
-          {(user || loading) && !isSigningIn && (
-            <div className="flex flex-col items-center gap-4 text-center">
-              <div className="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center">
-                <CheckCircle className="h-8 w-8 text-white" />
-              </div>
-              <div className="space-y-2">
-                <div className="text-lg font-semibold text-green-500">Successfully signed in!</div>
-                <div className="text-sm text-muted-foreground">
-                  Redirecting to your dashboard...
+          {user && !loading && !isRedirecting && (
+            <div className="flex flex-col gap-4 items-center">
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center">
+                  <CheckCircle className="h-10 w-10 text-white" />
                 </div>
-                <div className="flex items-center gap-2 mt-4">
-                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <div className="w-2 h-2 bg-green-500/60 rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
-                  <div className="w-2 h-2 bg-green-500/40 rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
-                </div>
+                <h2 className="text-2xl font-bold text-green-500">Successfully signed in!</h2>
+                <p className="text-xl text-foreground">Welcome, {user.githubUser.login}!</p>
+                <p className="text-sm text-muted-foreground">Redirecting to dashboard...</p>
+                <Button 
+                  onClick={() => router.push('/dashboard')}
+                  size="lg" 
+                  className="mt-4 bg-primary hover:bg-primary/90 text-primary-foreground"
+                >
+                  Go to Dashboard
+                </Button>
               </div>
             </div>
           )}
         </div>
 
-        <section className="mt-16 w-full max-w-5xl">
-            <h2 className="text-3xl font-bold font-headline mb-8">How It Works</h2>
-            <div className="grid gap-8 md:grid-cols-3">
-              <Card className="border-2 border-primary/20">
-                <CardHeader className="items-center text-center">
-                    <div className="p-3 rounded-full bg-primary/10 mb-4">
-                        <ScanLine className="h-8 w-8 text-primary" />
-                    </div>
-                  <CardTitle>1. Comprehensive Analysis</CardTitle>
-                </CardHeader>
-                <CardContent className="text-center text-muted-foreground text-sm">
-                  Our system performs a deep static analysis of your codebase, meticulously identifying potential security vulnerabilities, logical flaws, and deviations from industry best practices.
-                </CardContent>
-              </Card>
-              <Card className="border-2 border-primary/20">
-                <CardHeader className="items-center text-center">
-                    <div className="p-3 rounded-full bg-primary/10 mb-4">
-                        <FileJson2 className="h-8 w-8 text-primary" />
-                    </div>
-                  <CardTitle>2. Intelligent Triage</CardTitle>
-                </CardHeader>
-                <CardContent className="text-center text-muted-foreground text-sm">
-                  Findings are compiled and categorized, with each issue assessed for severity and impact. This intelligent prioritization allows your team to focus on the most critical threats first.
-                </CardContent>
-              </Card>
-              <Card className="border-2 border-primary/20">
-                <CardHeader className="items-center text-center">
-                    <div className="p-3 rounded-full bg-primary/10 mb-4">
-                        <Wand2 className="h-8 w-8 text-primary" />
-                    </div>
-                  <CardTitle>3. AI-Powered Remediation</CardTitle>
-                </CardHeader>
-                <CardContent className="text-center text-muted-foreground text-sm">
-                  Receive actionable, context-aware code fixes and custom-generated prompts designed to resolve each specific security issue, including a master prompt to address all findings simultaneously.
-                </CardContent>
-              </Card>
-            </div>
-        </section>
+        {!user && (
+          <>
+            <section className="mt-16 w-full max-w-5xl">
+                <h2 className="text-3xl font-bold font-headline mb-8">How It Works</h2>
+                <div className="grid gap-8 md:grid-cols-3">
+                  <Card className="border-2 border-primary/20">
+                    <CardHeader className="items-center text-center">
+                        <div className="p-3 rounded-full bg-primary/10 mb-4">
+                            <ScanLine className="h-8 w-8 text-primary" />
+                        </div>
+                      <CardTitle>1. Comprehensive Analysis</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-center text-muted-foreground text-sm">
+                      Our system performs a deep static analysis of your codebase, meticulously identifying potential security vulnerabilities, logical flaws, and deviations from industry best practices.
+                    </CardContent>
+                  </Card>
+                  <Card className="border-2 border-primary/20">
+                    <CardHeader className="items-center text-center">
+                        <div className="p-3 rounded-full bg-primary/10 mb-4">
+                            <FileJson2 className="h-8 w-8 text-primary" />
+                        </div>
+                      <CardTitle>2. Intelligent Triage</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-center text-muted-foreground text-sm">
+                      Findings are compiled and categorized, with each issue assessed for severity and impact. This intelligent prioritization allows your team to focus on the most critical threats first.
+                    </CardContent>
+                  </Card>
+                  <Card className="border-2 border-primary/20">
+                    <CardHeader className="items-center text-center">
+                        <div className="p-3 rounded-full bg-primary/10 mb-4">
+                            <Wand2 className="h-8 w-8 text-primary" />
+                        </div>
+                      <CardTitle>3. AI-Powered Remediation</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-center text-muted-foreground text-sm">
+                      Receive actionable, context-aware code fixes and custom-generated prompts designed to resolve each specific security issue, including a master prompt to address all findings simultaneously.
+                    </CardContent>
+                  </Card>
+                </div>
+            </section>
 
-        <section className="mt-16 w-full max-w-5xl text-left">
-           <h2 className="text-3xl font-bold font-headline mb-8 text-center">Enterprise-Grade Reporting</h2>
-            <Card className="bg-card/50 border-2 border-primary/20 shadow-2xl shadow-primary/10">
-                <CardHeader>
-                    <div className="flex flex-col md:flex-row justify-between items-start mb-6">
-                        <div className="mb-4 md:mb-0">
-                            <CardTitle className="text-2xl">Audit Report: `your-awesome-repo`</CardTitle>
-                            <CardDescription>3 vulnerabilities found. See details below.</CardDescription>
-                        </div>
-                    </div>
-                    <div className="space-y-4 text-center">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-                                <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
-                                <p className="text-4xl font-bold">3</p>
-                            </div>
-                            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-                                <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
-                                <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
+            <section className="mt-16 w-full max-w-5xl text-left">
+               <h2 className="text-3xl font-bold font-headline mb-8 text-center">Enterprise-Grade Reporting</h2>
+                <Card className="bg-card/50 border-2 border-primary/20 shadow-2xl shadow-primary/10">
+                    <CardHeader>
+                        <div className="flex flex-col md:flex-row justify-between items-start mb-6">
+                            <div className="mb-4 md:mb-0">
+                                <CardTitle className="text-2xl">Audit Report: `your-awesome-repo`</CardTitle>
+                                <CardDescription>3 vulnerabilities found. See details below.</CardDescription>
                             </div>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
-                                <h4 className="text-sm font-medium text-red-400">Critical</h4>
-                                <p className="text-4xl font-bold text-red-500">1</p>
+                        <div className="space-y-4 text-center">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
+                                    <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
+                                    <p className="text-4xl font-bold">3</p>
+                                </div>
+                                <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
+                                    <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
+                                    <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
+                                </div>
                             </div>
-                            <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-4">
-                                <h4 className="text-sm font-medium text-orange-400">High</h4>
-                                <p className="text-4xl font-bold text-orange-500">1</p>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
+                                    <h4 className="text-sm font-medium text-red-400">Critical</h4>
+                                    <p className="text-4xl font-bold text-red-500">1</p>
+                                </div>
+                                <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-4">
+                                    <h4 className="text-sm font-medium text-orange-400">High</h4>
+                                    <p className="text-4xl font-bold text-orange-500">1</p>
+                                </div>
+                                <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-4">
+                                    <h4 className="text-sm font-medium text-yellow-400">Medium</h4>
+                                    <p className="text-4xl font-bold text-yellow-500">1</p>
+                                </div>
+                                <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-4">
+                                    <h4 className="text-sm font-medium text-green-400">Low</h4>
+                                    <p className="text-4xl font-bold text-green-500">0</p>
+                                </div>
                             </div>
-                            <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-4">
-                                <h4 className="text-sm font-medium text-yellow-400">Medium</h4>
-                                <p className="text-4xl font-bold text-yellow-500">1</p>
-                            </div>
-                            <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-4">
-                                <h4 className="text-sm font-medium text-green-400">Low</h4>
-                                <p className="text-4xl font-bold text-green-500">0</p>
-                            </div>
-                        </div>
-                        <Accordion type="single" collapsible className="w-full">
-                            <AccordionItem value="master-prompt" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
-                                <AccordionTrigger className="hover:no-underline px-4 py-3">
-                                    <div className="flex items-center gap-2 text-foreground">
-                                       <Terminal className="mr-2 h-4 w-4"/> View Master Prompt
-                                    </div>
-                                </AccordionTrigger>
-                                <AccordionContent className="px-4 pb-4">
-                                   <div className="bg-black/80 rounded-md p-3 text-left">
-                                        <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
-                                            {`You are an expert security engineer. Given the following list of vulnerabilities, provide the necessary code changes to remediate all of them. For each vulnerability, explain the risk and the fix.
+                            <Accordion type="single" collapsible className="w-full">
+                                <AccordionItem value="master-prompt" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
+                                    <AccordionTrigger className="hover:no-underline px-4 py-3">
+                                        <div className="flex items-center gap-2 text-foreground">
+                                           <Terminal className="mr-2 h-4 w-4"/> View Master Prompt
+                                        </div>
+                                    </AccordionTrigger>
+                                    <AccordionContent className="px-4 pb-4">
+                                       <div className="bg-black/80 rounded-md p-3 text-left">
+                                            <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
+                                                {`You are an expert security engineer. Given the following list of vulnerabilities, provide the necessary code changes to remediate all of them. For each vulnerability, explain the risk and the fix.
 
 Vulnerability 1: Cross-Site Scripting (XSS) in 'src/views/Profile.js' on line 78.
 Description: A reflected XSS vulnerability was discovered...
@@ -335,46 +356,48 @@ Description: Links using 'target=_blank' without 'rel=noopener noreferrer' are a
 ...
 
 Provide a git-compatible diff for each required code change.`}
-                                        </pre>
-                                    </div>
-                                </AccordionContent>
-                            </AccordionItem>
-                        </Accordion>
-                    </div>
-                </CardHeader>
-                <CardContent>
-                    <Accordion type="single" collapsible className="w-full">
-                         {mockVulnerabilities.map((vuln) => {
-                            const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
-                            return (
-                                <AccordionItem value={vuln.id} key={vuln.id} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
-                                    <AccordionTrigger className="hover:no-underline">
-                                        <div className="flex items-center gap-4 w-full">
-                                            {icon}
-                                            <div className="flex-grow text-left">
-                                                <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
-                                                <p className="text-sm text-muted-foreground font-mono">{vuln.file}:{vuln.line}</p>
-                                            </div>
-                                        </div>
-                                    </AccordionTrigger>
-                                    <AccordionContent className="pt-2">
-                                        <p className="text-sm text-foreground/80 mb-4">{vuln.description}</p>
-                                        <div className="bg-card/50 p-4 rounded-md border border-border">
-                                            <h4 className="font-semibold mb-2 flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation Prompt</h4>
-                                            <div className="bg-black/80 rounded-md p-3">
-                                                <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
-                                                    {`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`}
-                                                </pre>
-                                            </div>
+                                            </pre>
                                         </div>
                                     </AccordionContent>
                                 </AccordionItem>
-                            );
-                        })}
-                    </Accordion>
-                </CardContent>
-            </Card>
-        </section>
+                            </Accordion>
+                        </div>
+                    </CardHeader>
+                    <CardContent>
+                        <Accordion type="single" collapsible className="w-full">
+                             {mockVulnerabilities.map((vuln) => {
+                                const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
+                                return (
+                                    <AccordionItem value={vuln.id} key={vuln.id} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
+                                        <AccordionTrigger className="hover:no-underline">
+                                            <div className="flex items-center gap-4 w-full">
+                                                {icon}
+                                                <div className="flex-grow text-left">
+                                                    <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
+                                                    <p className="text-sm text-muted-foreground font-mono">{vuln.file}:{vuln.line}</p>
+                                                </div>
+                                            </div>
+                                        </AccordionTrigger>
+                                        <AccordionContent className="pt-2">
+                                            <p className="text-sm text-foreground/80 mb-4">{vuln.description}</p>
+                                            <div className="bg-card/50 p-4 rounded-md border border-border">
+                                                <h4 className="font-semibold mb-2 flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation Prompt</h4>
+                                                <div className="bg-black/80 rounded-md p-3">
+                                                    <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
+                                                        {`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`}
+                                                    </pre>
+                                                </div>
+                                            </div>
+                                        </AccordionContent>
+                                    </AccordionItem>
+                                );
+                            })}
+                        </Accordion>
+                    </CardContent>
+                </Card>
+            </section>
+          </>
+        )}
 
       </main>
       <AppFooter />

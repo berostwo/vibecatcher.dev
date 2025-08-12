@@ -1,4 +1,4 @@
-import { UserService } from './user-service';
+import { FirebaseUserService } from './firebase-user-service';
 
 export interface GitHubRepository {
   id: number;
@@ -17,7 +17,7 @@ export interface GitHubRepository {
 export class GitHubService {
   static async getAuthToken(userId: string): Promise<string | null> {
     try {
-      const token = await UserService.getGitHubToken(userId);
+      const token = await FirebaseUserService.getGitHubToken(userId);
       if (token) {
         console.log('GitHubService: Found token in Firebase for user:', userId);
         return token;
@@ -39,35 +39,52 @@ export class GitHubService {
       }
 
       console.log('GitHubService: Fetching repositories for user:', userId);
+      console.log('GitHubService: Token format check:', token.substring(0, 10) + '...');
       
-      // Try Bearer token first (standard OAuth)
-      let response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'VibeCatcher-Dev'
-        }
-      });
-
-      // If Bearer fails, try token format (personal access token)
-      if (response.status === 401) {
-        console.log('GitHubService: Bearer token failed, trying token format...');
-        response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
+      // For OAuth tokens (gho_), we should use Bearer format
+      // For personal access tokens (ghp_), we can use either format
+      const isOAuthToken = token.startsWith('gho_');
+      console.log('GitHubService: Token type - OAuth:', isOAuthToken);
+      
+      let response;
+      let authMethod = '';
+      
+      if (isOAuthToken) {
+        // OAuth tokens should use Bearer format
+        console.log('GitHubService: Using Bearer token for OAuth');
+        response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100&type=all&visibility=all', {
           headers: {
-            'Authorization': `token ${token}`,
+            'Authorization': `Bearer ${token}`,
             'Accept': 'application/vnd.github.v3+json',
             'User-Agent': 'VibeCatcher-Dev'
           }
         });
+        authMethod = 'Bearer';
+      } else {
+        // Personal access tokens can use either format
+        console.log('GitHubService: Using Bearer token for PAT');
+        response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100&type=all&visibility=all', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'VibeCatcher-Dev'
+          }
+        });
+        authMethod = 'Bearer';
       }
 
+      console.log('GitHubService: Repository API response status:', response.status);
+      console.log('GitHubService: Repository API response headers:', Object.fromEntries(response.headers.entries()));
+
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
         console.error('GitHubService: Failed to fetch repositories:', response.status, errorData);
+        console.error('GitHubService: Auth method used:', authMethod);
+        console.error('GitHubService: Token preview:', token.substring(0, 10) + '...');
         
         if (response.status === 401) {
           // Token is invalid, remove it from Firebase
-          await UserService.removeGitHubToken(userId);
+          await FirebaseUserService.removeGitHubToken(userId);
           throw new Error('GitHub access token is invalid. Please sign in with GitHub again.');
         }
         
@@ -75,6 +92,33 @@ export class GitHubService {
       }
 
       const repos: GitHubRepository[] = await response.json();
+      console.log('GitHubService: Raw repositories from API:', repos.length);
+      console.log('GitHubService: First few repos:', repos.slice(0, 3).map(r => ({ name: r.name, private: r.private, fork: r.fork })));
+      
+      // If we got 0 repos, let's check what the API actually returned
+      if (repos.length === 0) {
+        console.log('GitHubService: WARNING - 0 repositories returned from API');
+        console.log('GitHubService: Full API response:', repos);
+        console.log('GitHubService: Response status was:', response.status);
+        console.log('GitHubService: Response headers:', Object.fromEntries(response.headers.entries()));
+        
+        // Let's try a different endpoint to see if the user has any repos at all
+        console.log('GitHubService: Trying alternative endpoint to check user info...');
+        const userResponse = await fetch('https://api.github.com/user', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'VibeCatcher-Dev'
+          }
+        });
+        
+        if (userResponse.ok) {
+          const userData = await userResponse.json();
+          console.log('GitHubService: User data from alternative endpoint:', userData);
+          console.log('GitHubService: User public repos count:', userData.public_repos);
+          console.log('GitHubService: User total private repos count:', userData.total_private_repos);
+        }
+      }
       
       // Filter out forked repositories and sort by last updated
       const filteredRepos = repos
@@ -82,6 +126,7 @@ export class GitHubService {
         .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 
       console.log(`GitHubService: Successfully fetched ${filteredRepos.length} repositories (filtered from ${repos.length} total)`);
+      console.log('GitHubService: Filtered repos:', filteredRepos.map(r => r.name));
       
       return filteredRepos;
     } catch (error) {
@@ -158,7 +203,7 @@ export class GitHubService {
         
         if (response.status === 401) {
           // Token is invalid, remove it from Firebase
-          await UserService.removeGitHubToken(userId);
+          await FirebaseUserService.removeGitHubToken(userId);
           console.log('GitHubService: Invalid token removed from Firebase');
         }
         
@@ -173,7 +218,7 @@ export class GitHubService {
   // Static methods for token management (for backward compatibility)
   static async clearToken(userId: string): Promise<void> {
     try {
-      await UserService.removeGitHubToken(userId);
+      await FirebaseUserService.removeGitHubToken(userId);
       console.log('GitHubService: Token cleared from Firebase for user:', userId);
     } catch (error) {
       console.error('GitHubService: Error clearing token:', error);
@@ -184,7 +229,7 @@ export class GitHubService {
   static async refreshToken(userId: string): Promise<void> {
     try {
       // Remove expired token
-      await UserService.removeGitHubToken(userId);
+      await FirebaseUserService.removeGitHubToken(userId);
       console.log('GitHubService: Expired token removed, user needs to re-authenticate');
       // Note: In a production app, you might implement token refresh logic here
       // For now, we'll require re-authentication

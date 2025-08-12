@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GithubAuthProvider } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
@@ -20,17 +20,5 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
-
-// Configure GitHub OAuth provider with proper scopes
-export const githubProvider = new GithubAuthProvider();
-// Use minimal scopes that will return the access token
-githubProvider.addScope('read:user'); // Read user profile
-githubProvider.addScope('user:email'); // Read user email
-githubProvider.addScope('repo'); // Repository access (needed for security audits)
-
-// Set custom parameters to ensure we get the access token
-githubProvider.setCustomParameters({
-  prompt: 'consent' // Force consent screen to ensure token generation
-});
 
 export default app;

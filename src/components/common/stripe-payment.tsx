@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { ShoppingCart, CreditCard, CheckCircle } from 'lucide-react';
 import { AUDIT_PACKAGES } from '@/lib/stripe';
-import { useAuthContext } from '@/contexts/auth-context';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
+import { useGitHubAuth } from '@/contexts/github-auth-context';
 import { loadStripe } from '@stripe/stripe-js';
 
 // Load Stripe with your publishable key
@@ -22,7 +22,7 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
   const [error, setError] = useState<string | null>(null);
   const stripe = useStripe();
   const elements = useElements();
-  const { user } = useAuthContext();
+  const { user } = useGitHubAuth();
 
   const selectedPackage = AUDIT_PACKAGES.find(pkg => pkg.id === packageId);
 
@@ -53,7 +53,7 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
         },
         body: JSON.stringify({
           packageId,
-          userId: user?.uid,
+          userId: user?.firebaseUser?.uid,
         }),
       });
 
@@ -99,7 +99,7 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   paymentIntentId: paymentIntent?.id,
-                  userId: user?.uid,
+                  userId: user?.firebaseUser?.uid,
                   packageId
                 })
               });
@@ -149,8 +149,8 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
             layout: 'tabs',
             defaultValues: {
               billingDetails: {
-                name: user?.displayName || '',
-                email: user?.email || '',
+                name: user?.firebaseUser?.displayName || user?.githubUser?.name || '',
+                email: user?.firebaseUser?.email || user?.githubUser?.email || '',
               }
             }
           }}
@@ -205,7 +205,7 @@ export function StripePayment({
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
-  const { user } = useAuthContext();
+  const { user } = useGitHubAuth();
 
   const handlePackageSelect = async (packageId: string) => {
     if (!user) return;
@@ -221,7 +221,7 @@ export function StripePayment({
         },
         body: JSON.stringify({
           packageId,
-          userId: user.uid,
+          userId: user.firebaseUser.uid,
         }),
       });
 

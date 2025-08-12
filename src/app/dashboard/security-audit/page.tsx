@@ -7,9 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ShieldCheck, Github, RefreshCw, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react';
-import { useAuthContext } from '@/contexts/auth-context';
 import { GitHubService, GitHubRepository } from '@/lib/github-service';
-import { UserService } from '@/lib/user-service';
+import { useGitHubAuth } from '@/contexts/github-auth-context';
+import { FirebaseUserService } from '@/lib/firebase-user-service';
 
 // Mock audit results data (replace with real audit logic later)
 const mockAuditResultsData = {
@@ -29,7 +29,7 @@ const mockAuditResultsData = {
 };
 
 export default function SecurityAuditPage() {
-  const { user, forceGitHubReauth } = useAuthContext();
+  const { user, forceGitHubReauth } = useGitHubAuth();
   const [repositories, setRepositories] = useState<GitHubRepository[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<string>('');
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
@@ -46,13 +46,13 @@ export default function SecurityAuditPage() {
   }, [user]);
 
   const checkTokenAndLoadRepositories = async () => {
-    if (!user) return;
+    if (!user?.firebaseUser) return;
     
     setIsWaitingForToken(true);
     
     try {
       // First check if token is available
-      const token = await GitHubService.getAuthToken(user.uid);
+      const token = await GitHubService.getAuthToken(user.firebaseUser.uid);
       if (token) {
         console.log('GitHub token available, loading repositories...');
         setIsWaitingForToken(false);
@@ -61,7 +61,7 @@ export default function SecurityAuditPage() {
         console.log('GitHub token not available, checking if user needs to re-authenticate...');
         
         // Check if this is a returning user who never had a token stored
-        const userData = await UserService.getUserData(user.uid);
+        const userData = await FirebaseUserService.getUserByUid(user.firebaseUser.uid);
         if (userData && !userData.githubAccessToken) {
           console.log('User has no stored GitHub token - forcing re-authentication');
           setIsWaitingForToken(false);
@@ -90,14 +90,14 @@ export default function SecurityAuditPage() {
     
     try {
       // Test connection first
-      const isConnected = await GitHubService.testConnection(user.uid);
+      const isConnected = await GitHubService.testConnection(user.firebaseUser.uid);
       if (!isConnected) {
         setError('GitHub connection failed. Please check your authentication.');
         return;
       }
       
       // Fetch repositories
-      const repos = await GitHubService.getUserRepositories(user.uid);
+      const repos = await GitHubService.getUserRepositories(user.firebaseUser.uid);
       setRepositories(repos);
       
       if (repos.length === 0) {
@@ -152,8 +152,8 @@ export default function SecurityAuditPage() {
     try {
       console.log('Manual token check initiated...');
       
-      // Check if user has any token data in Firestore
-      const userData = await UserService.getUserData(user.uid);
+              // Check if user has any token data in Firestore
+        const userData = await FirebaseUserService.getUserByUid(user.firebaseUser.uid);
       console.log('User data from Firestore:', userData);
       
       if (!userData || !userData.githubAccessToken) {
@@ -163,10 +163,10 @@ export default function SecurityAuditPage() {
       }
       
       // Try to get the token
-      const token = await GitHubService.getAuthToken(user.uid);
+      const token = await GitHubService.getAuthToken(user.firebaseUser.uid);
       if (token) {
         console.log('Token found, testing with GitHub API...');
-        const isValid = await GitHubService.testConnection(user.uid);
+        const isValid = await GitHubService.testConnection(user.firebaseUser.uid);
         
         if (isValid) {
           console.log('Token is valid, loading repositories...');
@@ -324,7 +324,7 @@ export default function SecurityAuditPage() {
             <CardTitle className="text-sm text-muted-foreground">Debug Information</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
-            <div>User ID: {user?.uid}</div>
+            <div>User ID: {user?.firebaseUser?.uid}</div>
             <div>GitHub Token Status: {repositories.length > 0 ? 'Present' : 'Missing'}</div>
             <div>Repositories Loaded: {repositories.length}</div>
             <div className="space-y-2">
@@ -333,7 +333,7 @@ export default function SecurityAuditPage() {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const result = await GitHubService.testConnection(user.uid);
+                    const result = await GitHubService.testConnection(user.firebaseUser.uid);
                     console.log('Connection test result:', result);
                     alert(`Connection test: ${result ? 'SUCCESS' : 'FAILED'}`);
                   } catch (error) {
@@ -350,7 +350,7 @@ export default function SecurityAuditPage() {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const token = await GitHubService.getAuthToken(user.uid);
+                    const token = await GitHubService.getAuthToken(user.firebaseUser.uid);
                     if (token) {
                       const validation = await GitHubService.validateToken(token);
                       console.log('Token validation:', validation);

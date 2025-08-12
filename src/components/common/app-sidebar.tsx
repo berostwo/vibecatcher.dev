@@ -18,12 +18,13 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
 } from "@/components/ui/sidebar"
-import { useAuthContext } from "@/contexts/auth-context"
-import { GitHubService } from "@/lib/github-service"
 
-export function AppSidebar({ onPaymentSuccess }: { onPaymentSuccess?: (packageId: string) => void }) {
+import { GitHubService } from "@/lib/github-service"
+import { useGitHubAuth } from "@/contexts/github-auth-context"
+
+export function AppSidebar() {
   const pathname = usePathname()
-  const { signOut } = useAuthContext()
+  const { user } = useGitHubAuth()
 
   const menuItems = [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },

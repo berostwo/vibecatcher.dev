@@ -3,8 +3,8 @@
 import { PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarSeparator, SidebarProvider } from '@/components/ui/sidebar';
 import { LogOut } from 'lucide-react';
-import { useAuthContext } from '@/contexts/auth-context';
 import { PaymentModeProvider, usePaymentMode } from '@/contexts/payment-mode-context';
+import { useGitHubAuth } from '@/contexts/github-auth-context';
 import { StripePayment } from '@/components/common/stripe-payment';
 import { AppSidebar } from '@/components/common/app-sidebar';
 import { AppFooter } from '@/components/common/app-footer';
@@ -12,7 +12,7 @@ import { ProtectedRoute } from "@/components/common/protected-route";
 
 function DashboardContent({ children }: PropsWithChildren) {
   const { isPaymentMode, setIsPaymentMode } = usePaymentMode();
-  const { signOut, user } = useAuthContext();
+  const { user, signOut } = useGitHubAuth();
   const sidebarRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll sidebar to bottom when payment mode expands
@@ -62,7 +62,7 @@ function DashboardContent({ children }: PropsWithChildren) {
           >
             {/* Scrollable content area */}
             <div className="flex-1 overflow-y-auto scrollbar-hide">
-              <AppSidebar onPaymentSuccess={handlePaymentSuccess} />
+              <AppSidebar />
             </div>
             
             {/* Footer positioned at bottom */}
@@ -85,24 +85,10 @@ function DashboardContent({ children }: PropsWithChildren) {
                   <SidebarMenuButton 
                     onClick={async () => {
                       try {
-                        // Clear GitHub token first
-                        const { GitHubService } = await import('@/lib/github-service');
-                        await GitHubService.clearToken(user?.uid || '');
-                        
-                        // Then sign out from Firebase
                         await signOut();
-                        
-                        // Navigate to home page after successful sign out
                         window.location.href = '/';
                       } catch (error) {
                         console.error('Sign out failed:', error);
-                        // Even if Firebase sign out fails, clear tokens and redirect
-                        try {
-                          const { GitHubService } = await import('@/lib/github-service');
-                          await GitHubService.clearToken(user?.uid || '');
-                        } catch (clearError) {
-                          console.error('Failed to clear GitHub token:', clearError);
-                        }
                         window.location.href = '/';
                       }
                     }}

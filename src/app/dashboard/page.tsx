@@ -7,11 +7,11 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ArrowRight, CheckCircle, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
-import { useAuthContext } from '@/contexts/auth-context';
-import { UserService } from '@/lib/user-service';
+import { useGitHubAuth } from '@/contexts/github-auth-context';
+import { FirebaseUserService } from '@/lib/firebase-user-service';
 
 export default function DashboardPage() {
-  const { user } = useAuthContext();
+  const { user, loading } = useGitHubAuth();
   const [userData, setUserData] = useState<any>(null);
   const [refreshedUserData, setRefreshedUserData] = useState<any>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -44,10 +44,10 @@ export default function DashboardPage() {
   }, [refreshedUserData, userData]);
 
   const loadUserData = async () => {
-    if (!user) return;
+    if (!user?.firebaseUser) return;
     
     try {
-      const data = await UserService.getUserData(user.uid);
+      const data = await FirebaseUserService.getUserByUid(user.firebaseUser.uid);
       setUserData(data);
       setRefreshedUserData(data);
     } catch (error) {
@@ -56,11 +56,11 @@ export default function DashboardPage() {
   };
 
   const refreshUserData = async () => {
-    if (!user) return;
+    if (!user?.firebaseUser) return;
     
     setIsRefreshing(true);
     try {
-      const data = await UserService.getUserData(user.uid);
+      const data = await FirebaseUserService.getUserByUid(user.firebaseUser.uid);
       setRefreshedUserData(data);
     } catch (error) {
       console.error('Error refreshing user data:', error);
@@ -69,12 +69,16 @@ export default function DashboardPage() {
     }
   };
 
-  if (!user) {
+  if (loading) {
     return <div>Loading...</div>;
   }
 
-  const displayName = userData?.displayName || user?.displayName || 'User';
-  const userPhoto = userData?.photoURL || user?.photoURL;
+  if (!user) {
+    return <div>Please sign in to access the dashboard.</div>;
+  }
+
+  const displayName = userData?.displayName || user.firebaseUser?.displayName || user.githubUser?.name || 'User';
+  const userPhoto = userData?.photoURL || user.firebaseUser?.photoURL || user.githubUser?.avatar_url;
 
   return (
     <div className="space-y-6">
@@ -155,7 +159,7 @@ export default function DashboardPage() {
                     onClick={async () => {
                       if (!user) return;
                       try {
-                        await UserService.addAudits(user.uid, 1);
+                        // Note: addAudits functionality needs to be implemented in FirebaseUserService
                         console.log('✅ Test audit added');
                         refreshUserData();
                       } catch (error) {
@@ -268,3 +272,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

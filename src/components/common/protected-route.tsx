@@ -1,20 +1,18 @@
 'use client';
 
-import { useAuthContext } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { useGitHubAuth } from '@/contexts/github-auth-context';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { user, loading } = useAuthContext();
   const router = useRouter();
+  const { user, loading } = useGitHubAuth();
 
   useEffect(() => {
-    console.log('ProtectedRoute: Auth state changed:', { user: !!user, loading, userId: user?.uid });
-    
     if (!loading && !user) {
       console.log('ProtectedRoute: No user, redirecting to home');
       router.push('/');
@@ -23,7 +21,6 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   // Show loading state while checking authentication
   if (loading) {
-    console.log('ProtectedRoute: Still loading auth state');
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="flex flex-col items-center gap-4">
@@ -35,12 +32,10 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   }
 
   // Don't render anything if user is not authenticated
-  if (!user || !user.uid) {
-    console.log('ProtectedRoute: No authenticated user, blocking access');
+  if (!user) {
     return null;
   }
 
-  console.log('ProtectedRoute: User authenticated, rendering dashboard');
   // Render protected content if user is authenticated
   return <>{children}</>;
 }
