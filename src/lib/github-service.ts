@@ -52,7 +52,7 @@ export class GitHubService {
       if (isOAuthToken) {
         // OAuth tokens should use Bearer format
         console.log('GitHubService: Using Bearer token for OAuth');
-        response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100&type=all&visibility=all', {
+        response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100&visibility=all', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Accept': 'application/vnd.github.v3+json',
@@ -63,7 +63,7 @@ export class GitHubService {
       } else {
         // Personal access tokens can use either format
         console.log('GitHubService: Using Bearer token for PAT');
-        response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100&type=all&visibility=all', {
+        response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100&visibility=all', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Accept': 'application/vnd.github.v3+json',
