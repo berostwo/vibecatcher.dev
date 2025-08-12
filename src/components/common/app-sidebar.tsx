@@ -9,7 +9,6 @@ import {
   User,
   LogOut,
   Shield,
-  ShoppingCart,
 } from "lucide-react"
 
 import {
@@ -18,17 +17,13 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
-  SidebarFooter,
-  SidebarSeparator,
 } from "@/components/ui/sidebar"
-import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { StripePayment } from "./stripe-payment"
-import { usePaymentMode } from "@/contexts/payment-mode-context"
+import { useAuthContext } from "@/contexts/auth-context"
+import { GitHubService } from "@/lib/github-service"
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const { isPaymentMode, setIsPaymentMode } = usePaymentMode()
+  const { signOut } = useAuthContext()
 
   const menuItems = [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -37,14 +32,6 @@ export function AppSidebar() {
     { href: "/dashboard/account", label: "Account", icon: User },
   ]
 
-  const handlePaymentStart = () => {
-    setIsPaymentMode(true)
-  }
-
-  const handlePaymentEnd = () => {
-    setIsPaymentMode(false)
-  }
-
   return (
     <>
       <SidebarHeader className="border-b border-sidebar-border justify-center">
@@ -52,7 +39,7 @@ export function AppSidebar() {
           vibecatcher<Shield fill="currentColor" className="inline-block h-2 w-2 mx-0.5" />dev
         </h2>
       </SidebarHeader>
-      <SidebarContent className="flex-grow p-2">
+      <SidebarContent className="flex-grow p-2 min-h-0">
         <SidebarMenu>
           {menuItems.map((item) => (
             <SidebarMenuItem key={item.href}>
@@ -69,32 +56,7 @@ export function AppSidebar() {
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
-        <div className={`mt-auto group-data-[collapsible=icon]:hidden transition-all duration-500 ease-in-out ${
-          isPaymentMode ? 'p-4' : 'p-2'
-        }`}>
-            <SidebarSeparator className="my-4" />
-            <div className={`transition-all duration-500 ease-in-out ${
-              isPaymentMode ? 'scale-105' : 'scale-100'
-            }`}>
-              <StripePayment 
-                onPaymentStart={handlePaymentStart}
-                onPaymentEnd={handlePaymentEnd}
-              />
-            </div>
-        </div>
       </SidebarContent>
-      <SidebarFooter>
-         <SidebarMenu>
-           <SidebarMenuItem>
-             <SidebarMenuButton asChild tooltip={{ children: 'Sign Out', side: 'right', align: 'center' }}>
-                <Link href="/">
-                    <LogOut />
-                    <span>Sign Out</span>
-                </Link>
-             </SidebarMenuButton>
-            </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
     </>
   )
 }

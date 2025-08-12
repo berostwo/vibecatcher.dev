@@ -60,18 +60,52 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
       const { clientSecret } = await response.json();
 
       // Confirm payment
-      const { error: confirmError } = await stripe.confirmPayment({
+      const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
         elements,
         clientSecret,
         confirmParams: {
           return_url: `${window.location.origin}/dashboard?success=true&package=${packageId}`,
         },
+        redirect: 'if_required', // Don't redirect, handle locally
       });
 
       if (confirmError) {
         setError(confirmError.message || 'Payment failed');
-      } else {
+      } else if (paymentIntent && paymentIntent.status === 'succeeded') {
+        // Payment succeeded locally, call success handler
         onSuccess();
+      } else {
+        // Payment is processing, wait for webhook
+        setError('Payment is processing. Please wait a moment...');
+        // Check payment status after a delay
+        setTimeout(async () => {
+          try {
+            const response = await fetch(`/api/check-payment-status?paymentIntentId=${paymentIntent?.id}`);
+            if (response.ok) {
+              onSuccess();
+            } else {
+              // If webhook didn't work, try to manually add audits
+              console.log('Webhook may not have worked, attempting manual audit addition...');
+              const manualResponse = await fetch('/api/manual-add-audits', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  paymentIntentId: paymentIntent?.id,
+                  userId: user?.uid,
+                  packageId
+                })
+              });
+              
+              if (manualResponse.ok) {
+                onSuccess();
+              } else {
+                setError('Payment processing. Your audits will be added shortly.');
+              }
+            }
+          } catch (err) {
+            setError('Payment processing. Your audits will be added shortly.');
+          }
+        }, 3000);
       }
     } catch (err) {
       setError('An unexpected error occurred');
@@ -213,6 +247,12 @@ export function StripePayment({
     // Notify parent component that payment mode has ended
     onPaymentEnd?.();
     
+    // Refresh the page to show updated audit count
+    // This ensures the user sees their new audit credits immediately
+    setTimeout(() => {
+      window.location.reload();
+    }, 3000);
+    
     // Hide success message after 5 seconds
     setTimeout(() => {
       setShowSuccess(false);
@@ -244,8 +284,12 @@ export function StripePayment({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">Complete Payment</h3>
-          <Button variant="ghost" size="sm" onClick={handleCancel}>
-            ← Back to packages
+          <Button 
+            size="sm" 
+            onClick={handleCancel}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+          >
+            ← Back
           </Button>
         </div>
         

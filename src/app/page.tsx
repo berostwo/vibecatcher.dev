@@ -108,21 +108,22 @@ export default function Home() {
   }, [user, loading, router]);
 
   const handleSignIn = async () => {
+    setIsSigningIn(true);
     try {
-      setIsSigningIn(true);
-      console.log('Starting GitHub sign-in...');
+      console.log('page: Starting GitHub sign-in...');
+      const user = await signInWithGithub();
+      console.log('page: Sign-in successful, user:', user.uid);
       
-      const result = await signInWithGithub();
-      console.log('GitHub sign-in result:', result);
+      // Check if GitHub token was stored
+      const storedToken = localStorage.getItem('github_access_token');
+      console.log('page: GitHub token stored:', !!storedToken, 'Length:', storedToken?.length);
       
-      // Don't set isSigningIn to false here - let the auth state change handle it
-      // The useEffect will redirect to dashboard when user is actually authenticated
+      // Redirect to dashboard
+      router.push('/dashboard');
     } catch (error) {
-      console.error('Sign in error:', error);
-      setIsSigningIn(false); // Only reset on error
-      
-      // Show error to user
-      alert('Sign in failed. Please try again.');
+      console.error('page: Sign-in failed:', error);
+      setIsSigningIn(false);
+      alert('Sign-in failed. Please try again.');
     }
   };
 
@@ -135,7 +136,7 @@ export default function Home() {
                 <div className="h-56 bg-gradient-to-r from-accent to-cyan-400 blur-3xl dark:h-96" />
             </div>
             <h1 className="text-5xl md:text-7xl font-bold font-headline tracking-tighter text-gray-200 flex items-baseline">
-            vibecatcher<Shield fill="currentColor" className="inline-block h-3 md:h-4 w-3 md:w-4 mx-0.5" />dev
+            VIBECATCHER<Shield fill="currentColor" className="inline-block h-3 md:h-4 w-3 md:w-4 mx-0.5" />DEV
             </h1>
         </div>
         <p className="mt-4 text-xl md:text-2xl text-muted-foreground max-w-2xl">

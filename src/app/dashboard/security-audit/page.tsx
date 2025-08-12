@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import {
   Select,
   SelectContent,
@@ -24,16 +24,11 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
-import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code } from "lucide-react"
+import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, AlertCircle, ShieldCheck } from "lucide-react"
+import { GitHubService, GitHubRepository } from "@/lib/github-service"
+import { useAuthContext } from "@/contexts/auth-context"
 
-// Mock data
-const mockRepos = [
-  { id: "1", name: "my-awesome-app" },
-  { id: "2", name: "legacy-backend" },
-  { id: "3", name: "new-frontend-library" },
-  { id: "4", name: "secure-app-example" },
-]
-
+// Mock data for audit results (keeping this for now until we implement real audits)
 const mockAuditResultsData = {
   "my-awesome-app": {
     repoName: "my-awesome-app",
@@ -218,13 +213,58 @@ export default function SecurityAuditPage() {
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [auditResults, setAuditResults] = useState<AuditResultsType>(null)
+  const [repositories, setRepositories] = useState<GitHubRepository[]>([])
+  const [isLoadingRepos, setIsLoadingRepos] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const { user, forceGitHubReauth } = useAuthContext();
+
+  useEffect(() => {
+    if (user) {
+      setIsLoadingRepos(true);
+      setError(null);
+      
+      // First test the GitHub connection
+      GitHubService.testConnection()
+        .then(isConnected => {
+          if (!isConnected) {
+            setError("GitHub connection failed. Please sign in with GitHub again.");
+            setIsLoadingRepos(false);
+            return;
+          }
+          
+          // If connection is good, fetch repositories
+          return GitHubService.getUserRepositories();
+        })
+        .then(repos => {
+          if (repos) {
+            setRepositories(repos);
+            if (repos.length > 0) {
+              setSelectedRepo(repos[0].name);
+            }
+          }
+        })
+        .catch(err => {
+          console.error("Failed to fetch repositories:", err);
+          setError(err.message || "Failed to fetch repositories. Please ensure you're signed in with GitHub.");
+        })
+        .finally(() => {
+          setIsLoadingRepos(false);
+        });
+    }
+  }, [user]);
 
   const handleAudit = () => {
     if (!selectedRepo) return
     setIsLoading(true)
     setAuditResults(null)
+    
+    // For now, use mock data until we implement the actual audit
     setTimeout(() => {
-      const results = mockAuditResultsData[selectedRepo as keyof typeof mockAuditResultsData] || { repoName: selectedRepo, summary: { totalIssues: 0, critical: 0, high: 0, medium: 0, low: 0 }, vulnerabilities: [] };
+      const results = mockAuditResultsData[selectedRepo as keyof typeof mockAuditResultsData] || { 
+        repoName: selectedRepo, 
+        summary: { totalIssues: 0, critical: 0, high: 0, medium: 0, low: 0 }, 
+        vulnerabilities: [] 
+      };
       setAuditResults(results)
       setIsLoading(false)
     }, 2000)
@@ -241,27 +281,157 @@ export default function SecurityAuditPage() {
 
       <Card className="border-2 border-primary/20">
         <CardHeader>
-          <CardTitle>Select Repository</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5" />
+            Security Audit
+          </CardTitle>
           <CardDescription>
-            Choose a repository from the list to begin the audit process.
+            Select a GitHub repository to perform a comprehensive security audit
           </CardDescription>
         </CardHeader>
+        
+        {/* Debug section - remove in production */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="px-6 py-2 bg-muted/50 border-b">
+            <details className="text-sm">
+              <summary className="cursor-pointer font-medium">Debug Info</summary>
+              <div className="mt-2 space-y-1 text-xs">
+                <div>User ID: {user?.uid || 'None'}</div>
+                <div>GitHub Token: {localStorage.getItem('github_access_token') ? 'Present' : 'Missing'}</div>
+                <div>Token Length: {localStorage.getItem('github_access_token')?.length || 0}</div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => {
+                    GitHubService.testConnection()
+                      .then(result => console.log('Connection test result:', result))
+                      .catch(err => console.error('Connection test error:', err));
+                  }}
+                >
+                  Test Connection
+                </Button>
+              </div>
+            </details>
+          </div>
+        )}
         <CardContent>
-          <Select onValueChange={setSelectedRepo} disabled={isLoading}>
-            <SelectTrigger className="w-full md:w-[300px]">
-              <SelectValue placeholder="Select a repository" />
-            </SelectTrigger>
-            <SelectContent>
-              {mockRepos.map((repo) => (
-                <SelectItem key={repo.id} value={repo.name}>
-                  {repo.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {isLoadingRepos ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Loading your repositories...</span>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-red-500">
+                <AlertCircle className="h-4 w-4" />
+                <span>{error}</span>
+              </div>
+              
+              {/* Token validation info */}
+              {error.includes('GitHub token') && (
+                <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded">
+                  <div className="font-medium mb-2">Token Analysis:</div>
+                  {(() => {
+                    const token = localStorage.getItem('github_access_token');
+                    if (token) {
+                      const validation = GitHubService.validateToken(token);
+                      return (
+                        <div className="space-y-1">
+                          <div>Length: {token.length} characters</div>
+                          <div>Format: {token.substring(0, 10)}...</div>
+                          {validation.suggestions.map((suggestion, i) => (
+                            <div key={i} className="text-orange-600">• {suggestion}</div>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return <div>No token found in storage</div>;
+                  })()}
+                </div>
+              )}
+              
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => {
+                    setError(null);
+                    setIsLoadingRepos(true);
+                    // Retry the connection
+                    GitHubService.testConnection()
+                      .then(isConnected => {
+                        if (isConnected) {
+                          return GitHubService.getUserRepositories();
+                        } else {
+                          throw new Error("GitHub connection failed. Please sign in with GitHub again.");
+                        }
+                      })
+                      .then(repos => {
+                        setRepositories(repos);
+                        if (repos.length > 0) {
+                          setSelectedRepo(repos[0].name);
+                        }
+                      })
+                      .catch(err => {
+                        setError(err.message || "Failed to fetch repositories.");
+                      })
+                      .finally(() => {
+                        setIsLoadingRepos(false);
+                      });
+                  }}
+                  disabled={isLoadingRepos}
+                >
+                  {isLoadingRepos ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Retrying...
+                    </>
+                  ) : (
+                    'Retry Connection'
+                  )}
+                </Button>
+                
+                {/* Force re-authentication button */}
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={forceGitHubReauth}
+                >
+                  Re-authenticate
+                </Button>
+              </div>
+            </div>
+          ) : repositories.length === 0 ? (
+            <div className="text-muted-foreground">
+              No repositories found. Make sure you have repositories on GitHub.
+            </div>
+          ) : (
+            <Select onValueChange={setSelectedRepo} disabled={isLoading}>
+              <SelectTrigger className="w-full md:w-[300px]">
+                <SelectValue placeholder="Select a repository" />
+              </SelectTrigger>
+              <SelectContent>
+                {repositories.map((repo) => (
+                  <SelectItem key={repo.id} value={repo.name}>
+                    <div className="flex flex-col">
+                      <span>{repo.name}</span>
+                      {repo.description && (
+                        <span className="text-xs text-muted-foreground truncate">
+                          {repo.description}
+                        </span>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </CardContent>
         <CardFooter>
-          <Button onClick={handleAudit} disabled={!selectedRepo || isLoading}>
+          <Button 
+            onClick={handleAudit} 
+            disabled={!selectedRepo || isLoading || isLoadingRepos || repositories.length === 0}
+          >
             {isLoading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

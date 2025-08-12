@@ -54,6 +54,11 @@ export function useAuth() {
       console.log('useAuth: Starting GitHub sign-in...');
       const result = await signInWithPopup(auth, githubProvider);
       
+      console.log('useAuth: Full OAuth result:', result);
+      console.log('useAuth: Credential object:', (result as any).credential);
+      console.log('useAuth: User object:', result.user);
+      console.log('useAuth: Provider data:', result.user.providerData);
+      
       // Extract GitHub username and photo from the OAuth result
       const githubUsername = (result as any).user?.reloadUserInfo?.screenName || 
                             (result as any).user?.providerData?.[0]?.displayName ||
@@ -63,7 +68,45 @@ export function useAuth() {
                          (result as any).user?.providerData?.[0]?.photoURL ||
                          result.user.photoURL;
       
-      console.log('useAuth: GitHub sign-in successful:', result.user.uid, 'Username:', githubUsername, 'Photo:', githubPhoto);
+      // Extract GitHub access token - try multiple possible locations
+      let githubToken = null;
+      
+      // Method 1: Try credential.accessToken (most common)
+      if ((result as any).credential?.accessToken) {
+        githubToken = (result as any).credential.accessToken;
+        console.log('useAuth: Found token in credential.accessToken');
+      }
+      // Method 2: Try credential.access_token (alternative format)
+      else if ((result as any).credential?.access_token) {
+        githubToken = (result as any).credential.access_token;
+        console.log('useAuth: Found token in credential.access_token');
+      }
+      // Method 3: Try user.accessToken
+      else if ((result as any).user?.accessToken) {
+        githubToken = (result as any).user.accessToken;
+        console.log('useAuth: Found token in user.accessToken');
+      }
+      // Method 4: Try providerData
+      else if ((result.user.providerData?.[0] as any)?.accessToken) {
+        githubToken = (result.user.providerData[0] as any).accessToken;
+        console.log('useAuth: Found token in providerData[0].accessToken');
+      }
+      // Method 5: Try to get token from Firebase auth state
+      else if ((result as any).user?.providerData?.[0]?.accessToken) {
+        githubToken = (result as any).user.providerData[0].accessToken;
+        console.log('useAuth: Found token in user.providerData[0].accessToken');
+      }
+      // Method 6: Try to get from the credential object directly
+      else if ((result as any).credential) {
+        const credential = (result as any).credential;
+        console.log('useAuth: Credential object keys:', Object.keys(credential));
+        // Log all credential properties to see what's available
+        for (const [key, value] of Object.entries(credential)) {
+          console.log(`useAuth: Credential.${key}:`, value);
+        }
+      }
+      
+      console.log('useAuth: GitHub sign-in successful:', result.user.uid, 'Username:', githubUsername, 'Photo:', githubPhoto, 'Token found:', !!githubToken);
       
       // Update the user's profile with GitHub info if available
       if ((githubUsername && !result.user.displayName) || (githubPhoto && !result.user.photoURL)) {
@@ -82,6 +125,16 @@ export function useAuth() {
         } catch (profileError) {
           console.warn('useAuth: Could not update profile:', profileError);
         }
+      }
+      
+      // Store GitHub token in localStorage for API calls
+      if (githubToken) {
+        localStorage.setItem('github_access_token', githubToken);
+        console.log('useAuth: Stored GitHub access token in localStorage, length:', githubToken.length);
+      } else {
+        console.warn('useAuth: No GitHub access token found in OAuth result');
+        console.warn('useAuth: This may prevent repository access');
+        console.warn('useAuth: Please check Firebase OAuth configuration and scopes');
       }
       
       return result.user;
@@ -113,9 +166,42 @@ export function useAuth() {
 
   const signOut = async () => {
     try {
+      console.log('useAuth: Starting sign out...');
+      
+      // Clear GitHub token from localStorage
+      localStorage.removeItem('github_access_token');
+      console.log('useAuth: Cleared GitHub access token from localStorage');
+      
+      // Clear user data state
+      setUserData(null);
+      
+      // Sign out from Firebase
       await firebaseSignOut(auth);
+      console.log('useAuth: Firebase sign out successful');
+      
+      // Clear user state (this will be handled by onAuthStateChanged)
+      setUser(null);
+      
     } catch (error) {
-      console.error('Error signing out:', error);
+      console.error('useAuth: Error signing out:', error);
+      throw error;
+    }
+  };
+
+  const forceGitHubReauth = async () => {
+    try {
+      console.log('useAuth: Forcing GitHub re-authentication...');
+      
+      // Clear current GitHub token
+      localStorage.removeItem('github_access_token');
+      
+      // Sign out from Firebase to clear OAuth state
+      await firebaseSignOut(auth);
+      
+      // Force a new GitHub sign-in
+      return await signInWithGithub();
+    } catch (error) {
+      console.error('useAuth: Force GitHub re-auth failed:', error);
       throw error;
     }
   };
@@ -128,5 +214,6 @@ export function useAuth() {
     signInWithEmail,
     signUpWithEmail,
     signOut,
+    forceGitHubReauth,
   };
 }

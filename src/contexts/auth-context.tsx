@@ -10,6 +10,7 @@ interface AuthContextType {
   loading: boolean;
   signInWithGithub: () => Promise<any>;
   signOut: () => Promise<void>;
+  forceGitHubReauth: () => Promise<any>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);

@@ -27,5 +27,12 @@ export const githubProvider = new GithubAuthProvider();
 githubProvider.addScope('repo'); // Full repository access (includes private repos)
 githubProvider.addScope('read:user'); // Read user profile
 githubProvider.addScope('user:email'); // Read user email
+githubProvider.addScope('read:org'); // Read organization data
+githubProvider.addScope('workflow'); // Read workflow files
+
+// Set custom parameters to ensure we get the access token
+githubProvider.setCustomParameters({
+  prompt: 'consent' // Force consent screen to ensure token generation
+});
 
 export default app;
