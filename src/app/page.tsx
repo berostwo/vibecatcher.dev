@@ -86,7 +86,18 @@ const getSeverityStyles = (severity: string) => {
 
 
 export default function Home() {
-  const { user, signInWithGithub, loading } = useAuthContext();
+  // FORCE REFRESH - Ensure new auth code runs
+  useEffect(() => {
+    const authVersion = localStorage.getItem('auth_provider_version');
+    if (authVersion !== '2.0.0') {
+      console.log('🔄 Auth version mismatch, forcing page refresh...');
+      localStorage.setItem('auth_provider_version', '2.0.0');
+      window.location.reload();
+      return;
+    }
+  }, []);
+  
+  const { user, loading, signInWithGithub } = useAuthContext();
   const [isSigningIn, setIsSigningIn] = useState(false);
   const router = useRouter();
   const healthScore = 47;
@@ -98,32 +109,61 @@ export default function Home() {
     return 'text-red-500';
   }
 
-  // Auto-redirect authenticated users to dashboard
-  useEffect(() => {
-    // Only redirect if we have a confirmed authenticated user
-    if (user && !loading && user.uid) {
-      console.log('User authenticated, redirecting to dashboard:', user.uid);
-      router.push('/dashboard');
-    }
-  }, [user, loading, router]);
+  // Remove the old useEffect that was causing automatic redirects
+  // useEffect(() => {
+  //   if (user && user.uid) {
+  //     console.log('User authenticated, redirecting to dashboard:', user.uid);
+  //     router.push('/dashboard');
+  //   }
+  // }, [user, router]);
 
   const handleSignIn = async () => {
     setIsSigningIn(true);
     try {
       console.log('page: Starting GitHub sign-in...');
+      
+      // Sign in with GitHub and wait for token storage to complete
       const user = await signInWithGithub();
-      console.log('page: Sign-in successful, user:', user.uid);
       
-      // Check if GitHub token was stored
-      const storedToken = localStorage.getItem('github_access_token');
-      console.log('page: GitHub token stored:', !!storedToken, 'Length:', storedToken?.length);
-      
-      // Redirect to dashboard
-      router.push('/dashboard');
+      if (user) {
+        console.log('page: Sign-in successful, user:', user.uid);
+        
+        // Wait a moment for token storage to complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Check if token is available before redirecting
+        try {
+          const { UserService } = await import('@/lib/user-service');
+          const token = await UserService.getGitHubToken(user.uid);
+          
+          if (token) {
+            console.log('page: GitHub token confirmed available, redirecting to dashboard');
+            // Token is ready, redirect to dashboard
+            window.location.href = '/dashboard';
+          } else {
+            console.log('page: GitHub token not yet available, waiting...');
+            // Wait a bit more and try again
+            setTimeout(() => {
+              if (user) {
+                window.location.href = '/dashboard';
+              }
+            }, 2000);
+          }
+        } catch (error) {
+          console.error('page: Error checking token availability:', error);
+          // If there's an error, redirect anyway after a delay
+          setTimeout(() => {
+            if (user) {
+              window.location.href = '/dashboard';
+            }
+          }, 2000);
+        }
+      }
     } catch (error) {
       console.error('page: Sign-in failed:', error);
-      setIsSigningIn(false);
       alert('Sign-in failed. Please try again.');
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -148,6 +188,7 @@ export default function Home() {
           Drop your repo link. Get an actionable security report in minutes. We
           tailor prompts to fix your security risks with OpenAI GPT.
         </p>
+        
         <div className="mt-8">
           {!user && !loading && !isSigningIn && (
             <Button 
@@ -161,24 +202,32 @@ export default function Home() {
             </Button>
           )}
           {isSigningIn && (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-              <span>Signing in with GitHub...</span>
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="relative">
+                <div className="w-24 h-24 rounded-full border-4 border-primary/30 animate-spin"></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Github className="w-12 h-12 text-primary" />
+                </div>
+              </div>
+              <p className="text-lg text-white font-medium">Connecting to GitHub...</p>
             </div>
           )}
           {(user || loading) && !isSigningIn && (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              {loading ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                  <span>Loading...</span>
-                </>
-              ) : (
-                <>
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span>Redirecting to dashboard...</span>
-                </>
-              )}
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center">
+                <CheckCircle className="h-8 w-8 text-white" />
+              </div>
+              <div className="space-y-2">
+                <div className="text-lg font-semibold text-green-500">Successfully signed in!</div>
+                <div className="text-sm text-muted-foreground">
+                  Redirecting to your dashboard...
+                </div>
+                <div className="flex items-center gap-2 mt-4">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <div className="w-2 h-2 bg-green-500/60 rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
+                  <div className="w-2 h-2 bg-green-500/40 rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
+                </div>
+              </div>
             </div>
           )}
         </div>

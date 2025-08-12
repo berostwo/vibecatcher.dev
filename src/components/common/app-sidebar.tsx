@@ -21,7 +21,7 @@ import {
 import { useAuthContext } from "@/contexts/auth-context"
 import { GitHubService } from "@/lib/github-service"
 
-export function AppSidebar() {
+export function AppSidebar({ onPaymentSuccess }: { onPaymentSuccess?: (packageId: string) => void }) {
   const pathname = usePathname()
   const { signOut } = useAuthContext()
 

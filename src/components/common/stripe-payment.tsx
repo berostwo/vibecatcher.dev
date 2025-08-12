@@ -69,21 +69,29 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
         redirect: 'if_required', // Don't redirect, handle locally
       });
 
+      console.log('💳 Payment confirmation result:', { confirmError, paymentIntent });
+
       if (confirmError) {
+        console.error('❌ Payment confirmation error:', confirmError);
         setError(confirmError.message || 'Payment failed');
       } else if (paymentIntent && paymentIntent.status === 'succeeded') {
+        console.log('✅ Payment succeeded locally, calling success handler');
         // Payment succeeded locally, call success handler
         onSuccess();
       } else {
+        console.log('⏳ Payment is processing, waiting for webhook...');
         // Payment is processing, wait for webhook
         setError('Payment is processing. Please wait a moment...');
         // Check payment status after a delay
         setTimeout(async () => {
           try {
+            console.log('🔍 Checking payment status...');
             const response = await fetch(`/api/check-payment-status?paymentIntentId=${paymentIntent?.id}`);
             if (response.ok) {
+              console.log('✅ Payment status check successful, calling success handler');
               onSuccess();
             } else {
+              console.log('⚠️ Payment status check failed, attempting manual audit addition...');
               // If webhook didn't work, try to manually add audits
               console.log('Webhook may not have worked, attempting manual audit addition...');
               const manualResponse = await fetch('/api/manual-add-audits', {
@@ -97,12 +105,15 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
               });
               
               if (manualResponse.ok) {
+                console.log('✅ Manual audit addition successful');
                 onSuccess();
               } else {
+                console.log('❌ Manual audit addition failed');
                 setError('Payment processing. Your audits will be added shortly.');
               }
             }
           } catch (err) {
+            console.error('❌ Error checking payment status:', err);
             setError('Payment processing. Your audits will be added shortly.');
           }
         }, 3000);
@@ -183,10 +194,12 @@ function PaymentForm({ packageId, onSuccess, onCancel }: PaymentFormProps) {
 
 export function StripePayment({ 
   onPaymentStart, 
-  onPaymentEnd 
+  onPaymentEnd,
+  onPaymentSuccess
 }: { 
   onPaymentStart?: () => void;
   onPaymentEnd?: () => void;
+  onPaymentSuccess?: (packageId: string) => void;
 }) {
   const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
@@ -240,6 +253,7 @@ export function StripePayment({
   };
 
   const handleSuccess = () => {
+    console.log('🎉 Payment success handler called');
     setShowSuccess(true);
     setSelectedPackage(null);
     setClientSecret(null);
@@ -247,11 +261,15 @@ export function StripePayment({
     // Notify parent component that payment mode has ended
     onPaymentEnd?.();
     
-    // Refresh the page to show updated audit count
-    // This ensures the user sees their new audit credits immediately
-    setTimeout(() => {
-      window.location.reload();
-    }, 3000);
+    // Notify parent component that payment succeeded (for audit counter update)
+    if (selectedPackage) {
+      onPaymentSuccess?.(selectedPackage);
+    }
+    
+    console.log('✅ Payment completed successfully - audits should be added via webhook');
+    
+    // Don't refresh the page - let the webhook update the audit counter
+    // The dashboard will auto-refresh every 30 seconds to show the new count
     
     // Hide success message after 5 seconds
     setTimeout(() => {

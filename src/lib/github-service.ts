@@ -1,3 +1,5 @@
+import { UserService } from './user-service';
+
 export interface GitHubRepository {
   id: number;
   name: string;
@@ -9,92 +11,78 @@ export interface GitHubRepository {
   updated_at: string;
   html_url: string;
   clone_url: string;
+  default_branch: string;
 }
 
 export class GitHubService {
-  private static async getAuthToken(): Promise<string | null> {
+  static async getAuthToken(userId: string): Promise<string | null> {
     try {
-      // Get the GitHub access token from localStorage (stored during OAuth sign-in)
-      const token = localStorage.getItem('github_access_token');
-      
+      const token = await UserService.getGitHubToken(userId);
       if (token) {
-        console.log('GitHubService: Found token in localStorage, length:', token.length);
-        // Check if token looks valid (should be a long string)
-        if (token.length > 20) {
-          console.log('GitHubService: Token appears valid');
-          return token;
-        } else {
-          console.warn('GitHubService: Token seems too short, may be invalid');
-          return null;
-        }
+        console.log('GitHubService: Found token in Firebase for user:', userId);
+        return token;
       } else {
-        console.warn('GitHubService: No token found in localStorage');
+        console.log('GitHubService: No valid token found in Firebase for user:', userId);
         return null;
       }
     } catch (error) {
-      console.error('GitHubService: Failed to get GitHub auth token:', error);
+      console.error('GitHubService: Error getting token from Firebase:', error);
       return null;
     }
   }
 
-  static async getUserRepositories(): Promise<GitHubRepository[]> {
+  static async getUserRepositories(userId: string): Promise<GitHubRepository[]> {
     try {
-      const token = await this.getAuthToken();
-      
+      const token = await this.getAuthToken(userId);
       if (!token) {
         throw new Error('No GitHub access token available. Please sign in with GitHub again.');
       }
 
-      console.log('GitHubService: Fetching repositories with token...');
-      console.log('GitHubService: Token preview (first 10 chars):', token.substring(0, 10) + '...');
+      console.log('GitHubService: Fetching repositories for user:', userId);
       
-      // Try both authorization header formats
-      const headers = {
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'VibeCatcher-Dev'
-      };
-      
-      // Method 1: Try Bearer token format (OAuth app)
+      // Try Bearer token first (standard OAuth)
       let response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
         headers: {
-          ...headers,
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'VibeCatcher-Dev'
         }
       });
 
-      // Method 2: If Bearer fails, try token format (Personal Access Token)
-      if (!response.ok && response.status === 401) {
+      // If Bearer fails, try token format (personal access token)
+      if (response.status === 401) {
         console.log('GitHubService: Bearer token failed, trying token format...');
         response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
           headers: {
-            ...headers,
-            'Authorization': `token ${token}`
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'VibeCatcher-Dev'
           }
         });
       }
 
-      console.log('GitHubService: API response status:', response.status);
-      console.log('GitHubService: API response headers:', Object.fromEntries(response.headers.entries()));
-
       if (!response.ok) {
+        const errorData = await response.json();
+        console.error('GitHubService: Failed to fetch repositories:', response.status, errorData);
+        
         if (response.status === 401) {
-          throw new Error('GitHub token is invalid or expired. Please sign in again.');
-        } else if (response.status === 403) {
-          throw new Error('GitHub API rate limit exceeded or insufficient permissions.');
-        } else {
-          throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+          // Token is invalid, remove it from Firebase
+          await UserService.removeGitHubToken(userId);
+          throw new Error('GitHub access token is invalid. Please sign in with GitHub again.');
         }
+        
+        throw new Error(`Failed to fetch repositories: ${errorData.message || response.statusText}`);
       }
 
       const repos: GitHubRepository[] = await response.json();
-      console.log('GitHubService: Successfully fetched', repos.length, 'repositories');
       
       // Filter out forked repositories and sort by last updated
       const filteredRepos = repos
         .filter(repo => !repo.fork)
         .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+      console.log(`GitHubService: Successfully fetched ${filteredRepos.length} repositories (filtered from ${repos.length} total)`);
       
-      console.log('GitHubService: Returning', filteredRepos.length, 'non-forked repositories');
       return filteredRepos;
     } catch (error) {
       console.error('GitHubService: Failed to fetch GitHub repositories:', error);
@@ -102,38 +90,35 @@ export class GitHubService {
     }
   }
 
-  static async getRepositoryDetails(owner: string, repo: string): Promise<GitHubRepository> {
+  static async getRepositoryDetails(userId: string, owner: string, repo: string): Promise<any> {
     try {
-      const token = await this.getAuthToken();
-      
+      const token = await this.getAuthToken(userId);
       if (!token) {
         throw new Error('No GitHub access token available');
       }
 
       const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
         headers: {
-          'Authorization': `token ${token}`,
+          'Authorization': `Bearer ${token}`,
           'Accept': 'application/vnd.github.v3+json',
           'User-Agent': 'VibeCatcher-Dev'
         }
       });
 
       if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+        throw new Error(`Failed to fetch repository details: ${response.statusText}`);
       }
 
       return await response.json();
     } catch (error) {
-      console.error('Failed to fetch repository details:', error);
+      console.error('GitHubService: Failed to fetch repository details:', error);
       throw error;
     }
   }
 
-  // Test method to verify GitHub API connectivity
-  static async testConnection(): Promise<boolean> {
+  static async testConnection(userId: string): Promise<boolean> {
     try {
-      const token = await this.getAuthToken();
-      
+      const token = await this.getAuthToken(userId);
       if (!token) {
         console.log('GitHubService: No token available for connection test');
         return false;
@@ -141,39 +126,42 @@ export class GitHubService {
 
       console.log('GitHubService: Testing GitHub API connection...');
       console.log('GitHubService: Token preview (first 10 chars):', token.substring(0, 10) + '...');
-      
-      // Try both authorization header formats
-      const headers = {
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'VibeCatcher-Dev'
-      };
-      
-      // Method 1: Try Bearer token format (OAuth app)
+
+      // Try Bearer token first
       let response = await fetch('https://api.github.com/user', {
         headers: {
-          ...headers,
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'VibeCatcher-Dev'
         }
       });
 
-      // Method 2: If Bearer fails, try token format (Personal Access Token)
-      if (!response.ok && response.status === 401) {
+      // If Bearer fails, try token format
+      if (response.status === 401) {
         console.log('GitHubService: Bearer token failed, trying token format...');
         response = await fetch('https://api.github.com/user', {
           headers: {
-            ...headers,
-            'Authorization': `token ${token}`
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'VibeCatcher-Dev'
           }
         });
       }
 
       if (response.ok) {
         const userData = await response.json();
-        console.log('GitHubService: Connection test successful, user:', userData.login);
+        console.log('GitHubService: Connection successful, user:', userData.login);
         return true;
       } else {
-        console.warn('GitHubService: Connection test failed, status:', response.status);
-        console.warn('GitHubService: Response headers:', Object.fromEntries(response.headers.entries()));
+        console.log('GitHubService: Connection test failed, status:', response.status);
+        console.log('GitHubService: Response headers:', Object.fromEntries(response.headers.entries()));
+        
+        if (response.status === 401) {
+          // Token is invalid, remove it from Firebase
+          await UserService.removeGitHubToken(userId);
+          console.log('GitHubService: Invalid token removed from Firebase');
+        }
+        
         return false;
       }
     } catch (error) {
@@ -182,58 +170,43 @@ export class GitHubService {
     }
   }
 
-  // Method to clear stored token (useful for sign out)
-  static clearToken(): void {
-    localStorage.removeItem('github_access_token');
-    console.log('GitHubService: Cleared stored GitHub token');
-  }
-
-  // Method to refresh token by forcing re-authentication
-  static async refreshToken(): Promise<boolean> {
+  // Static methods for token management (for backward compatibility)
+  static async clearToken(userId: string): Promise<void> {
     try {
-      console.log('GitHubService: Attempting to refresh GitHub token...');
-      
-      // Clear the old token
-      this.clearToken();
-      
-      // Check if we're in a browser environment
-      if (typeof window !== 'undefined') {
-        // Redirect to GitHub OAuth flow
-        console.log('GitHubService: Redirecting to GitHub OAuth...');
-        // This will trigger the sign-in flow again
-        return true;
-      }
-      
-      return false;
+      await UserService.removeGitHubToken(userId);
+      console.log('GitHubService: Token cleared from Firebase for user:', userId);
     } catch (error) {
-      console.error('GitHubService: Failed to refresh token:', error);
-      return false;
+      console.error('GitHubService: Error clearing token:', error);
+      throw error;
     }
   }
 
-  // Method to validate token format and suggest fixes
-  static validateToken(token: string): { isValid: boolean; suggestions: string[] } {
-    const suggestions: string[] = [];
-    let isValid = true;
-
-    if (!token || token.length < 20) {
-      isValid = false;
-      suggestions.push('Token appears too short');
+  static async refreshToken(userId: string): Promise<void> {
+    try {
+      // Remove expired token
+      await UserService.removeGitHubToken(userId);
+      console.log('GitHubService: Expired token removed, user needs to re-authenticate');
+      // Note: In a production app, you might implement token refresh logic here
+      // For now, we'll require re-authentication
+    } catch (error) {
+      console.error('GitHubService: Error refreshing token:', error);
+      throw error;
     }
+  }
 
-    if (token.includes(' ')) {
-      isValid = false;
-      suggestions.push('Token contains spaces - may be malformed');
+  static async validateToken(token: string): Promise<{ isValid: boolean; message: string }> {
+    try {
+      if (!token || token.length < 10) {
+        return { isValid: false, message: 'Token appears to be too short' };
+      }
+
+      if (!token.startsWith('ghp_') && !token.startsWith('gho_') && !token.startsWith('ghu_') && !token.startsWith('ghs_') && !token.startsWith('ghr_')) {
+        return { isValid: false, message: 'Token format does not match GitHub personal access token pattern' };
+      }
+
+      return { isValid: true, message: 'Token format appears valid' };
+    } catch (error) {
+      return { isValid: false, message: 'Error validating token format' };
     }
-
-    if (token.startsWith('ghp_')) {
-      suggestions.push('Token appears to be a GitHub Personal Access Token');
-    } else if (token.startsWith('gho_')) {
-      suggestions.push('Token appears to be a GitHub OAuth App token');
-    } else {
-      suggestions.push('Token format not recognized - may be malformed');
-    }
-
-    return { isValid, suggestions };
   }
 }

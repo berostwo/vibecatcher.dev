@@ -23,12 +23,10 @@ export const storage = getStorage(app);
 
 // Configure GitHub OAuth provider with proper scopes
 export const githubProvider = new GithubAuthProvider();
-// Add scopes for repository access
-githubProvider.addScope('repo'); // Full repository access (includes private repos)
+// Use minimal scopes that will return the access token
 githubProvider.addScope('read:user'); // Read user profile
 githubProvider.addScope('user:email'); // Read user email
-githubProvider.addScope('read:org'); // Read organization data
-githubProvider.addScope('workflow'); // Read workflow files
+githubProvider.addScope('repo'); // Repository access (needed for security audits)
 
 // Set custom parameters to ensure we get the access token
 githubProvider.setCustomParameters({

@@ -1,469 +1,427 @@
-"use client"
+'use client';
 
-import { useState, useMemo, useEffect } from "react"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
-import { Badge } from "@/components/ui/badge"
-import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, AlertCircle, ShieldCheck } from "lucide-react"
-import { GitHubService, GitHubRepository } from "@/lib/github-service"
-import { useAuthContext } from "@/contexts/auth-context"
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { ShieldCheck, Github, RefreshCw, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react';
+import { useAuthContext } from '@/contexts/auth-context';
+import { GitHubService, GitHubRepository } from '@/lib/github-service';
+import { UserService } from '@/lib/user-service';
 
-// Mock data for audit results (keeping this for now until we implement real audits)
+// Mock audit results data (replace with real audit logic later)
 const mockAuditResultsData = {
-  "my-awesome-app": {
-    repoName: "my-awesome-app",
-    summary: { totalIssues: 3, critical: 1, high: 1, medium: 1, low: 0 },
-    vulnerabilities: [
-      { id: "VULN-002", title: "Cross-Site Scripting (XSS)", severity: "Critical", file: "src/components/Comment.tsx", line: 42, description: "User-provided content is rendered without proper sanitization, allowing for potential XSS attacks.", remediation: "Use a library like `dompurify` to sanitize HTML content before rendering it with `dangerouslySetInnerHTML`." },
-      { id: "VULN-001", title: "Outdated Dependency: `react-scripts`", severity: "High", file: "package.json", line: 25, description: "The version of `react-scripts` used in this project is outdated and has known security vulnerabilities.", remediation: "Update `react-scripts` to the latest version by running `npm install react-scripts@latest`." },
-      { id: "VULN-003", title: "Insecure `target='_blank'` usage", severity: "Medium", file: "src/components/Footer.tsx", line: 15, description: "Links using `target='_blank'` without `rel='noopener noreferrer'` are a security risk.", remediation: "Add `rel='noopener noreferrer'` to all `<a>` tags that have `target='_blank'`." },
-    ],
-  },
-  "legacy-backend": {
-    repoName: "legacy-backend",
-    summary: { totalIssues: 2, critical: 1, high: 0, medium: 1, low: 0 },
-    vulnerabilities: [
-      { id: "VULN-004", title: "SQL Injection", severity: "Critical", file: "server/db/queries.js", line: 112, description: "Database queries are constructed with raw user input, making them vulnerable to SQL injection.", remediation: "Use parameterized queries or an ORM to interact with the database safely." },
-      { id: "VULN-005", title: "Missing CSRF Protection", severity: "Medium", file: "server/app.js", line: 56, description: "No CSRF tokens are used, leaving state-changing endpoints vulnerable to Cross-Site Request Forgery.", remediation: "Implement CSRF token validation for all non-GET requests. Libraries like `csurf` can help." },
-    ]
-  },
-  "secure-app-example": {
-    repoName: "secure-app-example",
-    summary: { totalIssues: 0, critical: 0, high: 0, medium: 0, low: 0 },
-    vulnerabilities: [],
-  },
-}
-
-const getSeverityStyles = (severity: string) => {
-  switch (severity) {
-    case 'Critical':
-      return {
-        icon: <ShieldAlert className="h-5 w-5 text-red-500" />,
-        badgeVariant: 'destructive' as const,
-        borderColor: 'border-red-500/50',
-        bgColor: 'bg-red-500/10',
-        textColor: 'text-red-500',
-      };
-    case 'High':
-      return {
-        icon: <AlertTriangle className="h-5 w-5 text-orange-500" />,
-        badgeVariant: 'destructive' as const,
-        borderColor: 'border-orange-500/50',
-        bgColor: 'bg-orange-500/10',
-        textColor: 'text-orange-500',
-      };
-    case 'Medium':
-      return {
-        icon: <Info className="h-5 w-5 text-yellow-500" />,
-        badgeVariant: 'secondary' as const,
-        borderColor: 'border-yellow-500/50',
-        bgColor: 'bg-yellow-500/10',
-        textColor: 'text-yellow-500',
-      };
-    default:
-      return {
-        icon: <CheckCircle className="h-5 w-5 text-green-500" />,
-        badgeVariant: 'outline' as const,
-        borderColor: 'border-gray-500/50',
-        bgColor: 'bg-green-500/10',
-        textColor: 'text-green-500',
-      };
-  }
+  critical: 2,
+  high: 5,
+  medium: 8,
+  low: 12,
+  total: 27,
+  score: 78,
+  recommendations: [
+    'Update dependencies to latest versions',
+    'Implement proper input validation',
+    'Add rate limiting to API endpoints',
+    'Enable security headers',
+    'Review authentication flow'
+  ]
 };
 
-
-type AuditResultsType = typeof mockAuditResultsData[keyof typeof mockAuditResultsData] | null;
-
-const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) => {
-    const healthScore = useMemo(() => {
-        if (!results.summary.totalIssues) return 100;
-        const weightedScore = (results.summary.critical * 10) + (results.summary.high * 5) + (results.summary.medium * 2) + (results.summary.low * 1);
-        const maxScore = results.summary.totalIssues * 10;
-        return Math.max(0, Math.round((1 - (weightedScore / maxScore)) * 100));
-    }, [results]);
-    
-  const getHealthColor = (score: number) => {
-    if (score > 85) return 'text-green-500';
-    if (score > 60) return 'text-yellow-500';
-    if (score > 40) return 'text-orange-500';
-    return 'text-red-500';
-  }
-
-  const severityOrder = useMemo(() => ['Critical', 'High', 'Medium', 'Low'], []);
-  const sortedVulnerabilities = useMemo(() => {
-    return results.vulnerabilities.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity)) || [];
-  }, [results, severityOrder]);
-
-  return (
-    <Card className="bg-card/50 border-2 border-primary/20 shadow-2xl shadow-primary/10">
-      <CardHeader>
-        <div className="flex flex-col md:flex-row justify-between items-start mb-6">
-          <div className="mb-4 md:mb-0">
-            <CardTitle className="text-2xl">Audit Report: `{results.repoName}`</CardTitle>
-            <CardDescription>{results.summary.totalIssues} vulnerabilities found. See details below.</CardDescription>
-          </div>
-        </div>
-        <div className="space-y-4 text-center">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
-              <p className="text-4xl font-bold">{results.summary.totalIssues}</p>
-            </div>
-            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
-              <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-red-400">Critical</h4>
-              <p className="text-4xl font-bold text-red-500">{results.summary.critical}</p>
-            </div>
-            <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-orange-400">High</h4>
-              <p className="text-4xl font-bold text-orange-500">{results.summary.high}</p>
-            </div>
-            <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-yellow-400">Medium</h4>
-              <p className="text-4xl font-bold text-yellow-500">{results.summary.medium}</p>
-            </div>
-            <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-green-400">Low</h4>
-              <p className="text-4xl font-bold text-green-500">{results.summary.low}</p>
-            </div>
-          </div>
-          <Accordion type="single" collapsible className="w-full">
-            <AccordionItem value="master-prompt" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-4 py-3">
-                <div className="flex items-center gap-2 text-foreground">
-                  <Terminal className="mr-2 h-4 w-4" /> View Master Prompt
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-4 pb-4">
-                <div className="bg-black/80 rounded-md p-3 text-left">
-                  <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
-                    {`You are an expert security engineer. Given the following list of vulnerabilities, provide the necessary code changes to remediate all of them. For each vulnerability, explain the risk and the fix.
-
-${sortedVulnerabilities.map((v, i) => `Vulnerability ${i + 1}: ${v.title} in '${v.file}' on line ${v.line}.\nDescription: ${v.description}...`).join('\n\n')}
-
-Provide a git-compatible diff for each required code change.`}
-                  </pre>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Accordion type="single" collapsible className="w-full">
-          {sortedVulnerabilities.map((vuln) => {
-            const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
-            return (
-              <AccordionItem value={vuln.id} key={vuln.id} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
-                <AccordionTrigger className="hover:no-underline">
-                  <div className="flex items-center gap-4 w-full">
-                    {icon}
-                    <div className="flex-grow text-left">
-                      <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
-                      <p className="text-sm text-muted-foreground font-mono">{vuln.file}:{vuln.line}</p>
-                    </div>
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className="pt-2">
-                  <p className="text-sm text-foreground/80 mb-4">{vuln.description}</p>
-                  <div className="bg-card/50 p-4 rounded-md border border-border">
-                    <h4 className="font-semibold mb-2 flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation Prompt</h4>
-                    <div className="bg-black/80 rounded-md p-3">
-                      <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
-                        {`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`}
-                      </pre>
-                    </div>
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            );
-          })}
-        </Accordion>
-      </CardContent>
-    </Card>
-  )
-}
-
 export default function SecurityAuditPage() {
-  const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [auditResults, setAuditResults] = useState<AuditResultsType>(null)
-  const [repositories, setRepositories] = useState<GitHubRepository[]>([])
-  const [isLoadingRepos, setIsLoadingRepos] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const { user, forceGitHubReauth } = useAuthContext();
+  const [repositories, setRepositories] = useState<GitHubRepository[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState<string>('');
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [isWaitingForToken, setIsWaitingForToken] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isAuditing, setIsAuditing] = useState(false);
 
+  // Load user data on component mount
   useEffect(() => {
     if (user) {
-      setIsLoadingRepos(true);
-      setError(null);
-      
-      // First test the GitHub connection
-      GitHubService.testConnection()
-        .then(isConnected => {
-          if (!isConnected) {
-            setError("GitHub connection failed. Please sign in with GitHub again.");
-            setIsLoadingRepos(false);
-            return;
-          }
-          
-          // If connection is good, fetch repositories
-          return GitHubService.getUserRepositories();
-        })
-        .then(repos => {
-          if (repos) {
-            setRepositories(repos);
-            if (repos.length > 0) {
-              setSelectedRepo(repos[0].name);
-            }
-          }
-        })
-        .catch(err => {
-          console.error("Failed to fetch repositories:", err);
-          setError(err.message || "Failed to fetch repositories. Please ensure you're signed in with GitHub.");
-        })
-        .finally(() => {
-          setIsLoadingRepos(false);
-        });
+      // Check if GitHub token is available before loading repositories
+      checkTokenAndLoadRepositories();
     }
   }, [user]);
 
-  const handleAudit = () => {
-    if (!selectedRepo) return
-    setIsLoading(true)
-    setAuditResults(null)
+  const checkTokenAndLoadRepositories = async () => {
+    if (!user) return;
     
-    // For now, use mock data until we implement the actual audit
-    setTimeout(() => {
-      const results = mockAuditResultsData[selectedRepo as keyof typeof mockAuditResultsData] || { 
-        repoName: selectedRepo, 
-        summary: { totalIssues: 0, critical: 0, high: 0, medium: 0, low: 0 }, 
-        vulnerabilities: [] 
-      };
-      setAuditResults(results)
-      setIsLoading(false)
-    }, 2000)
+    setIsWaitingForToken(true);
+    
+    try {
+      // First check if token is available
+      const token = await GitHubService.getAuthToken(user.uid);
+      if (token) {
+        console.log('GitHub token available, loading repositories...');
+        setIsWaitingForToken(false);
+        loadRepositories();
+      } else {
+        console.log('GitHub token not available, checking if user needs to re-authenticate...');
+        
+        // Check if this is a returning user who never had a token stored
+        const userData = await UserService.getUserData(user.uid);
+        if (userData && !userData.githubAccessToken) {
+          console.log('User has no stored GitHub token - forcing re-authentication');
+          setIsWaitingForToken(false);
+          setError('GitHub authentication required. Please sign out and sign in again to access repositories.');
+          return;
+        }
+        
+        // If user has a token but it's invalid, wait a bit and try again
+        console.log('GitHub token not yet available, waiting...');
+        setTimeout(() => {
+          checkTokenAndLoadRepositories();
+        }, 1000);
+      }
+    } catch (error) {
+      console.error('Error checking token availability:', error);
+      setIsWaitingForToken(false);
+      setError('Failed to check GitHub authentication. Please try again.');
+    }
+  };
+
+  const loadRepositories = async () => {
+    if (!user) return;
+    
+    setIsLoadingRepos(true);
+    setError(null);
+    
+    try {
+      // Test connection first
+      const isConnected = await GitHubService.testConnection(user.uid);
+      if (!isConnected) {
+        setError('GitHub connection failed. Please check your authentication.');
+        return;
+      }
+      
+      // Fetch repositories
+      const repos = await GitHubService.getUserRepositories(user.uid);
+      setRepositories(repos);
+      
+      if (repos.length === 0) {
+        setError('No repositories found. Make sure you have access to repositories on GitHub.');
+      }
+    } catch (error: any) {
+      console.error('Error loading repositories:', error);
+      setError(error.message || 'Failed to load repositories');
+    } finally {
+      setIsLoadingRepos(false);
+    }
+  };
+
+  const handleRetryConnection = () => {
+    loadRepositories();
+  };
+
+  const handleReauthenticate = async () => {
+    try {
+      await forceGitHubReauth();
+      // This will redirect to sign-in page
+    } catch (error) {
+      console.error('Re-authentication failed:', error);
+      setError('Re-authentication failed. Please try signing out and back in.');
+    }
+  };
+
+  const handleStartAudit = async () => {
+    if (!selectedRepo) return;
+    
+    setIsAuditing(true);
+    try {
+      // Mock audit process (replace with real audit logic)
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Redirect to results or show results
+      console.log('Audit completed for:', selectedRepo);
+    } catch (error) {
+      console.error('Audit failed:', error);
+      setError('Audit failed. Please try again.');
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
+  const handleManualTokenCheck = async () => {
+    if (!user) return;
+    
+    setIsWaitingForToken(true);
+    setError(null);
+    
+    try {
+      console.log('Manual token check initiated...');
+      
+      // Check if user has any token data in Firestore
+      const userData = await UserService.getUserData(user.uid);
+      console.log('User data from Firestore:', userData);
+      
+      if (!userData || !userData.githubAccessToken) {
+        setError('No GitHub token found. You need to sign out and sign in again to get a fresh token.');
+        setIsWaitingForToken(false);
+        return;
+      }
+      
+      // Try to get the token
+      const token = await GitHubService.getAuthToken(user.uid);
+      if (token) {
+        console.log('Token found, testing with GitHub API...');
+        const isValid = await GitHubService.testConnection(user.uid);
+        
+        if (isValid) {
+          console.log('Token is valid, loading repositories...');
+          setIsWaitingForToken(false);
+          loadRepositories();
+        } else {
+          setError('GitHub token is invalid. Please sign out and sign in again.');
+          setIsWaitingForToken(false);
+        }
+      } else {
+        setError('Failed to retrieve GitHub token. Please sign out and sign in again.');
+        setIsWaitingForToken(false);
+      }
+    } catch (error) {
+      console.error('Manual token check failed:', error);
+      setError('Token check failed. Please sign out and sign in again.');
+      setIsWaitingForToken(false);
+    }
+  };
+
+  if (!user) {
+    return <div>Loading...</div>;
   }
 
   return (
-    <div className="space-y-6 animate-fade-in-up">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-6xl font-bold font-headline uppercase italic -mb-6 text-primary/50">Security Audit</h1>
-        <p className="text-muted-foreground mt-4">
-          Select a GitHub repository to start your security audit.
+        <h1 className="text-3xl font-bold">Security Audit</h1>
+        <p className="text-muted-foreground">
+          Select a repository to perform a comprehensive security analysis
         </p>
       </div>
 
-      <Card className="border-2 border-primary/20">
+      {/* Repository Selection */}
+      <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5" />
-            Security Audit
+            <Github className="h-5 w-5" />
+            Select Repository
           </CardTitle>
           <CardDescription>
-            Select a GitHub repository to perform a comprehensive security audit
+            Choose a repository from your GitHub account to audit
           </CardDescription>
         </CardHeader>
-        
-        {/* Debug section - remove in production */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="px-6 py-2 bg-muted/50 border-b">
-            <details className="text-sm">
-              <summary className="cursor-pointer font-medium">Debug Info</summary>
-              <div className="mt-2 space-y-1 text-xs">
-                <div>User ID: {user?.uid || 'None'}</div>
-                <div>GitHub Token: {localStorage.getItem('github_access_token') ? 'Present' : 'Missing'}</div>
-                <div>Token Length: {localStorage.getItem('github_access_token')?.length || 0}</div>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => {
-                    GitHubService.testConnection()
-                      .then(result => console.log('Connection test result:', result))
-                      .catch(err => console.error('Connection test error:', err));
-                  }}
-                >
-                  Test Connection
-                </Button>
-              </div>
-            </details>
-          </div>
-        )}
-        <CardContent>
-          {isLoadingRepos ? (
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Loading your repositories...</span>
-            </div>
-          ) : error ? (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-red-500">
-                <AlertCircle className="h-4 w-4" />
-                <span>{error}</span>
-              </div>
-              
-              {/* Token validation info */}
-              {error.includes('GitHub token') && (
-                <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded">
-                  <div className="font-medium mb-2">Token Analysis:</div>
-                  {(() => {
-                    const token = localStorage.getItem('github_access_token');
-                    if (token) {
-                      const validation = GitHubService.validateToken(token);
-                      return (
-                        <div className="space-y-1">
-                          <div>Length: {token.length} characters</div>
-                          <div>Format: {token.substring(0, 10)}...</div>
-                          {validation.suggestions.map((suggestion, i) => (
-                            <div key={i} className="text-orange-600">• {suggestion}</div>
-                          ))}
-                        </div>
-                      );
-                    }
-                    return <div>No token found in storage</div>;
-                  })()}
+        <CardContent className="space-y-4">
+          {error && (
+            <Alert variant="destructive" className="mb-6">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Authentication Error</AlertTitle>
+              <AlertDescription className="mt-2">
+                {error}
+                <div className="mt-3">
+                  <Button 
+                    onClick={handleReauthenticate} 
+                    variant="outline" 
+                    size="sm"
+                    className="mr-2"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Re-authenticate with GitHub
+                  </Button>
+                  <Button 
+                    onClick={() => setError(null)} 
+                    variant="ghost" 
+                    size="sm"
+                  >
+                    Dismiss
+                  </Button>
                 </div>
-              )}
-              
-              <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => {
-                    setError(null);
-                    setIsLoadingRepos(true);
-                    // Retry the connection
-                    GitHubService.testConnection()
-                      .then(isConnected => {
-                        if (isConnected) {
-                          return GitHubService.getUserRepositories();
-                        } else {
-                          throw new Error("GitHub connection failed. Please sign in with GitHub again.");
-                        }
-                      })
-                      .then(repos => {
-                        setRepositories(repos);
-                        if (repos.length > 0) {
-                          setSelectedRepo(repos[0].name);
-                        }
-                      })
-                      .catch(err => {
-                        setError(err.message || "Failed to fetch repositories.");
-                      })
-                      .finally(() => {
-                        setIsLoadingRepos(false);
-                      });
-                  }}
-                  disabled={isLoadingRepos}
-                >
-                  {isLoadingRepos ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Retrying...
-                    </>
-                  ) : (
-                    'Retry Connection'
-                  )}
-                </Button>
-                
-                {/* Force re-authentication button */}
-                <Button 
-                  variant="destructive" 
-                  size="sm" 
-                  onClick={forceGitHubReauth}
-                >
-                  Re-authenticate
-                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {isWaitingForToken && (
+            <div className="flex items-center justify-center py-8">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-5 w-5 animate-spin" />
+                <span>Waiting for GitHub authentication...</span>
               </div>
             </div>
-          ) : repositories.length === 0 ? (
-            <div className="text-muted-foreground">
-              No repositories found. Make sure you have repositories on GitHub.
-            </div>
-          ) : (
-            <Select onValueChange={setSelectedRepo} disabled={isLoading}>
-              <SelectTrigger className="w-full md:w-[300px]">
-                <SelectValue placeholder="Select a repository" />
-              </SelectTrigger>
-              <SelectContent>
-                {repositories.map((repo) => (
-                  <SelectItem key={repo.id} value={repo.name}>
-                    <div className="flex flex-col">
-                      <span>{repo.name}</span>
-                      {repo.description && (
-                        <span className="text-xs text-muted-foreground truncate">
-                          {repo.description}
-                        </span>
-                      )}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           )}
-        </CardContent>
-        <CardFooter>
-          <Button 
-            onClick={handleAudit} 
-            disabled={!selectedRepo || isLoading || isLoadingRepos || repositories.length === 0}
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Auditing...
+
+          {isLoadingRepos ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-5 w-5 animate-spin" />
+                <span>Loading repositories...</span>
+              </div>
+            </div>
+          ) : repositories.length > 0 ? (
+            <div className="space-y-4">
+              <Select value={selectedRepo} onValueChange={setSelectedRepo}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a repository to audit" />
+            </SelectTrigger>
+            <SelectContent>
+                  {repositories.map((repo) => (
+                    <SelectItem key={repo.id} value={repo.full_name}>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{repo.name}</span>
+                        <Badge variant="outline" className="text-xs">
+                          {repo.private ? 'Private' : 'Public'}
+                        </Badge>
+                        {repo.language && (
+                          <Badge variant="secondary" className="text-xs">
+                            {repo.language}
+                          </Badge>
+                        )}
+                      </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+              {selectedRepo && (
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <h3 className="font-semibold mb-2">Selected Repository</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {selectedRepo}
+                  </p>
+                  <Button 
+                    onClick={handleStartAudit}
+                    disabled={isAuditing}
+                    className="mt-3"
+                  >
+                    {isAuditing ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Starting Audit...
               </>
             ) : (
               <>
-                Start Audit <ArrowRight className="ml-2 h-4 w-4" />
+                        <ShieldCheck className="h-4 w-4 mr-2" />
+                        Start Security Audit
               </>
             )}
           </Button>
-        </CardFooter>
+                </div>
+              )}
+            </div>
+          ) : !error ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Github className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No repositories found</p>
+              <p className="text-sm">Make sure you have access to repositories on GitHub</p>
+            </div>
+          ) : null}
+        </CardContent>
       </Card>
 
-      {auditResults && auditResults.summary.totalIssues > 0 && (
-        <AuditReport results={auditResults} />
-      )}
-
-      {auditResults && auditResults.summary.totalIssues === 0 && (
-         <Card className="border-green-500/30">
-            <CardHeader className="flex-row items-center gap-4">
-                <CheckCircle className="w-8 h-8 text-green-500" />
-                <div>
-                    <CardTitle>No Issues Found!</CardTitle>
-                    <CardDescription>
-                        Excellent! Your repository `{auditResults.repoName}` passed the security audit.
-                    </CardDescription>
-                </div>
-            </CardHeader>
+      {/* Debug Panel - Development Only */}
+      {process.env.NODE_ENV === 'development' && (
+        <Card className="border-dashed">
+          <CardHeader>
+            <CardTitle className="text-sm text-muted-foreground">Debug Information</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs">
+            <div>User ID: {user?.uid}</div>
+            <div>GitHub Token Status: {repositories.length > 0 ? 'Present' : 'Missing'}</div>
+            <div>Repositories Loaded: {repositories.length}</div>
+            <div className="space-y-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={async () => {
+                  try {
+                    const result = await GitHubService.testConnection(user.uid);
+                    console.log('Connection test result:', result);
+                    alert(`Connection test: ${result ? 'SUCCESS' : 'FAILED'}`);
+                  } catch (error) {
+                    console.error('Connection test error:', error);
+                    alert('Connection test failed');
+                  }
+                }}
+                className="w-full"
+              >
+                Test GitHub Connection
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={async () => {
+                  try {
+                    const token = await GitHubService.getAuthToken(user.uid);
+                    if (token) {
+                      const validation = await GitHubService.validateToken(token);
+                      console.log('Token validation:', validation);
+                      alert(`Token validation: ${validation.message}`);
+                    } else {
+                      alert('No token found');
+                    }
+                  } catch (error) {
+                    console.error('Token validation error:', error);
+                    alert('Token validation failed');
+                  }
+                }}
+                className="w-full"
+              >
+                Validate GitHub Token
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleManualTokenCheck}
+              >
+                Manual Token Check
+              </Button>
+            </div>
+          </CardContent>
         </Card>
       )}
 
+      {/* Mock Results Preview */}
+      {selectedRepo && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Audit Preview</CardTitle>
+                    <CardDescription>
+              This is a preview of what the audit results will look like
+                    </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-red-500">{mockAuditResultsData.critical}</div>
+                <div className="text-sm text-muted-foreground">Critical</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-orange-500">{mockAuditResultsData.high}</div>
+                <div className="text-sm text-muted-foreground">High</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-yellow-500">{mockAuditResultsData.medium}</div>
+                <div className="text-sm text-muted-foreground">Medium</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-500">{mockAuditResultsData.low}</div>
+                <div className="text-sm text-muted-foreground">Low</div>
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <h4 className="font-semibold">Top Recommendations:</h4>
+              <ul className="space-y-1">
+                {mockAuditResultsData.recommendations.slice(0, 3).map((rec, index) => (
+                  <li key={index} className="flex items-start gap-2 text-sm">
+                    <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                    <span>{rec}</span>
+                  </li>
+                ))}
+              </ul>
+                </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
-  )
+  );
 }
