@@ -24,7 +24,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
-import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, Github, RefreshCw, GitBranch, Search, Brain, FileText, XCircle, Play } from "lucide-react"
+import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, Github, RefreshCw, GitBranch, Search, Brain, FileText, XCircle, Play, Activity } from "lucide-react"
 import { DashboardPage, DashboardPageHeader } from "@/components/common/dashboard-page"
 import { useAuth } from "@/contexts/auth-context"
 import { GitHubService, GitHubRepository } from "@/lib/github-service"
@@ -417,12 +417,21 @@ export default function SecurityAuditPage() {
     message: string;
     startTime: Date | null;
     estimatedDuration: number;
+    details: {
+      filesScanned?: number;
+      vulnerabilitiesFound?: number;
+      currentRule?: string;
+      cloneStatus?: string;
+      semgrepStatus?: string;
+      gptStatus?: string;
+    };
   }>({
     phase: 'idle',
     progress: 0,
     message: 'Ready to start audit',
     startTime: null,
-    estimatedDuration: 0
+    estimatedDuration: 0,
+    details: {}
   });
   const { toast } = useToast();
 
@@ -486,7 +495,12 @@ export default function SecurityAuditPage() {
       progress: 0,
       message: 'Initializing security audit...',
       startTime,
-      estimatedDuration
+      estimatedDuration,
+      details: {
+        cloneStatus: 'Preparing...',
+        semgrepStatus: 'Waiting...',
+        gptStatus: 'Waiting...'
+      }
     });
 
     try {
@@ -507,7 +521,19 @@ export default function SecurityAuditPage() {
         ...requestBody,
         github_token: githubToken ? `${githubToken.substring(0, 10)}...` : 'None'
       });
-      
+
+      // Update progress to cloning phase
+      setAuditProgress(prev => ({
+        ...prev,
+        phase: 'cloning',
+        progress: 10,
+        message: 'Cloning repository...',
+        details: {
+          ...prev.details,
+          cloneStatus: 'Cloning repository from GitHub...'
+        }
+      }));
+
       const response = await fetch(process.env.NEXT_PUBLIC_SECURITY_WORKER_URL!, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -526,18 +552,56 @@ export default function SecurityAuditPage() {
         throw new Error(`Audit failed: ${response.status} - ${errorText}`);
       }
       
-      const auditResults = await response.json();
-      console.log('✅ Audit completed successfully:', auditResults);
-      setAuditResults(auditResults);
-      
-      // Complete progress
+      // Update progress to scanning phase
       setAuditProgress(prev => ({
         ...prev,
+        phase: 'scanning',
+        progress: 50,
+        message: 'Running security scan...',
+        details: {
+          ...prev.details,
+          cloneStatus: 'Repository cloned successfully',
+          semgrepStatus: 'Running Semgrep security scan...'
+        }
+      }));
+      
+      const auditResults = await response.json();
+      console.log('✅ Audit completed successfully:', auditResults);
+      
+      // Update progress to analysis phase
+      setAuditProgress(prev => ({
+        ...prev,
+        phase: 'analyzing',
+        progress: 80,
+        message: 'Analyzing findings...',
+        details: {
+          ...prev.details,
+          semgrepStatus: 'Security scan completed',
+          gptStatus: 'Analyzing findings with GPT-4...'
+        }
+      }));
+      
+      // Update progress with final results
+      const finalProgress = {
         phase: 'completed',
         progress: 100,
-        message: 'Audit completed successfully!'
+        message: 'Audit completed successfully!',
+        details: {
+          filesScanned: auditResults.summary?.files_scanned || 0,
+          vulnerabilitiesFound: auditResults.summary?.total_vulnerabilities || 0,
+          cloneStatus: 'Repository cloned successfully',
+          semgrepStatus: `Scanned ${auditResults.summary?.files_scanned || 0} files`,
+          gptStatus: 'Analysis completed'
+        }
+      };
+      
+      setAuditProgress(prev => ({
+        ...prev,
+        ...finalProgress
       }));
-
+      
+      setAuditResults(auditResults);
+      
       toast({
         title: "Audit completed!",
         description: `Found ${auditResults.summary?.total_vulnerabilities || 0} security issues.`,
@@ -588,7 +652,8 @@ export default function SecurityAuditPage() {
           progress: 0,
           message: 'Ready to start audit',
           startTime: null,
-          estimatedDuration: 0
+          estimatedDuration: 0,
+          details: {}
         });
       }, 3000);
     }
@@ -631,6 +696,19 @@ export default function SecurityAuditPage() {
       case 'completed': return 'text-green-600';
       case 'failed': return 'text-red-600';
       default: return 'text-gray-600';
+    }
+  };
+
+  const getPhaseDescription = (phase: string) => {
+    switch (phase) {
+      case 'starting': return 'Initializing security audit...';
+      case 'cloning': return 'Cloning repository from GitHub...';
+      case 'scanning': return 'Running Semgrep security scan...';
+      case 'analyzing': return 'Analyzing findings with GPT-4...';
+      case 'generating': return 'Generating final report...';
+      case 'completed': return 'Audit completed successfully!';
+      case 'failed': return 'Audit failed - check error details';
+      default: return 'Ready to start audit';
     }
   };
 
@@ -798,38 +876,119 @@ export default function SecurityAuditPage() {
         </Card>
       )}
 
-      {/* Progress Tracking */}
-      {auditProgress.phase !== 'idle' && (
-        <Card className="border-2 border-primary/20 mt-6">
-          <CardHeader className="flex-row items-center gap-4">
-            <div className={`flex items-center gap-2 ${getPhaseColor(auditProgress.phase)}`}>
-              {getPhaseIcon(auditProgress.phase)}
-              <span className="font-semibold">{auditProgress.message}</span>
+      {/* Progress Tracking Card */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-5 w-5" />
+            Progress Tracking
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {/* Current Phase */}
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-full ${getPhaseColor(auditProgress.phase)} bg-opacity-10`}>
+                {getPhaseIcon(auditProgress.phase)}
+              </div>
+              <div>
+                <p className="font-medium">{getPhaseDescription(auditProgress.phase)}</p>
+                <p className="text-sm text-gray-600">{auditProgress.message}</p>
+              </div>
             </div>
-            <div className="flex-1 text-right text-sm text-muted-foreground">
-              {auditProgress.progress}%
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="w-full bg-gray-200 rounded-full h-2 dark:bg-gray-700">
-              <div
-                className="bg-primary h-2 rounded-full"
+
+            {/* Progress Bar */}
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                 style={{ width: `${auditProgress.progress}%` }}
-              ></div>
+              />
             </div>
+
+            {/* Phase Details */}
+            {auditProgress.details && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="font-medium text-gray-700">Clone Status</p>
+                  <p className="text-gray-600">{auditProgress.details.cloneStatus || 'Waiting...'}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="font-medium text-gray-700">Semgrep Status</p>
+                  <p className="text-gray-600">{auditProgress.details.semgrepStatus || 'Waiting...'}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="font-medium text-gray-700">GPT Analysis</p>
+                  <p className="text-gray-600">{auditProgress.details.gptStatus || 'Waiting...'}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Results Summary */}
+            {auditProgress.phase === 'completed' && auditProgress.details && (
+              <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                <h4 className="font-medium text-green-800 mb-2">Audit Results Summary</h4>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-green-700">Files Scanned:</p>
+                    <p className="font-medium">{auditProgress.details.filesScanned || 0}</p>
+                  </div>
+                  <div>
+                    <p className="text-green-700">Vulnerabilities Found:</p>
+                    <p className="font-medium">{auditProgress.details.vulnerabilitiesFound || 0}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Timing Information */}
             {auditProgress.startTime && (
-              <p className="text-xs text-muted-foreground mt-2">
-                Started at: {new Date(auditProgress.startTime).toLocaleTimeString()}
-              </p>
+              <div className="text-sm text-gray-600">
+                <p>Started: {auditProgress.startTime.toLocaleTimeString()}</p>
+                {auditProgress.phase === 'completed' && (
+                  <p>Duration: {Math.round((Date.now() - auditProgress.startTime.getTime()) / 1000)}s</p>
+                )}
+              </div>
             )}
-            {auditProgress.estimatedDuration > 0 && (
-              <p className="text-xs text-muted-foreground">
-                Estimated Duration: {Math.round(auditProgress.estimatedDuration / 60000)} minutes
-              </p>
+
+            {/* Debug Information */}
+            {auditProgress.phase !== 'idle' && (
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <h4 className="font-medium text-blue-800 mb-2">Debug Information</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-blue-700">Current Phase:</span>
+                    <span className="font-mono">{auditProgress.phase}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-700">Progress:</span>
+                    <span className="font-mono">{auditProgress.progress}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-blue-700">Message:</span>
+                    <span className="font-mono">{auditProgress.message}</span>
+                  </div>
+                  {auditProgress.details && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-blue-700">Clone Status:</span>
+                        <span className="font-mono">{auditProgress.details.cloneStatus || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-blue-700">Semgrep Status:</span>
+                        <span className="font-mono">{auditProgress.details.semgrepStatus || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-blue-700">GPT Status:</span>
+                        <span className="font-mono">{auditProgress.details.gptStatus || 'N/A'}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        </CardContent>
+      </Card>
 
     </DashboardPage>
   )

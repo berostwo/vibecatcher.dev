@@ -572,6 +572,71 @@ class SecurityAuditor:
                 
                 logger.info(f"Repository cloned successfully to {repo_path} (size: {repo_size_mb:.1f}MB)")
                 
+                # Enhanced repository validation
+                logger.info("🔍 Validating cloned repository...")
+                
+                # Check what files were actually cloned
+                all_files = []
+                for root, dirs, files in os.walk(repo_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(file_path, repo_path)
+                        all_files.append(rel_path)
+                
+                logger.info(f"🔍 Total files in repository: {len(all_files)}")
+                logger.info(f"🔍 Repository structure:")
+                
+                # Show directory structure
+                for root, dirs, files in os.walk(repo_path):
+                    level = root.replace(repo_path, '').count(os.sep)
+                    indent = ' ' * 2 * level
+                    logger.info(f"{indent}{os.path.basename(root)}/")
+                    subindent = ' ' * 2 * (level + 1)
+                    for file in files[:10]:  # Show first 10 files per directory
+                        logger.info(f"{subindent}{file}")
+                    if len(files) > 10:
+                        logger.info(f"{subindent}... and {len(files) - 10} more files")
+                
+                # Check for common security-relevant file types
+                security_file_types = {
+                    '.py': 'Python',
+                    '.js': 'JavaScript',
+                    '.ts': 'TypeScript',
+                    '.go': 'Go',
+                    '.java': 'Java',
+                    '.php': 'PHP',
+                    '.rb': 'Ruby',
+                    '.yml': 'YAML',
+                    '.yaml': 'YAML',
+                    '.json': 'JSON',
+                    '.xml': 'XML',
+                    '.sh': 'Shell',
+                    'Dockerfile': 'Docker',
+                    '.dockerfile': 'Docker'
+                }
+                
+                file_type_counts = {}
+                for file_path in all_files:
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext in security_file_types:
+                        file_type = security_file_types[ext]
+                        file_type_counts[file_type] = file_type_counts.get(file_type, 0) + 1
+                    elif file_path in security_file_types:
+                        file_type = security_file_types[file_path]
+                        file_type_counts[file_type] = file_type_counts.get(file_type, 0) + 1
+                
+                logger.info(f"🔍 Security-relevant file types found:")
+                for file_type, count in file_type_counts.items():
+                    logger.info(f"  - {file_type}: {count} files")
+                
+                # Validate repository completeness
+                if len(all_files) < 10:
+                    logger.warning("⚠️ Repository seems very small - might be incomplete clone")
+                elif len(all_files) < 50:
+                    logger.info("🔍 Repository size seems reasonable")
+                else:
+                    logger.info("🔍 Repository appears to be complete")
+                
                 self.performance_monitor.end_phase('clone')
                 return repo_path
                 
@@ -598,19 +663,38 @@ class SecurityAuditor:
         """Run comprehensive Semgrep security scan with enterprise-grade rules and retry logic"""
         self.performance_monitor.start_phase('semgrep')
         
-        # Primary rules to try first
+        # Enterprise-grade rule sets (stable and comprehensive)
         primary_rules = [
-            'p/owasp-top-ten',       # OWASP Top 10 - most stable
-            'p/secrets',             # Secrets detection - essential
+            'p/owasp-top-ten',        # OWASP Top 10 - most stable
+            'p/secrets',              # Secrets detection - essential
+            'p/security-audit',       # Security audit patterns
+            'p/python',               # Python security patterns
+            'p/javascript',           # JavaScript/Node.js security
+            'p/go',                   # Go security patterns
+            'p/java',                 # Java security patterns
+            'p/django',               # Django security
+            'p/flask',                # Flask security
+            'p/react',                # React security
+            'p/api-security',         # API security patterns
+            'p/cloud-security',       # Cloud security patterns
+            'p/container-security',   # Docker/K8s security
         ]
         
-        # Fallback rules if primary rules fail
-        fallback_rules = SEMGREP_FALLBACK_RULES
+        # Fallback rules if primary rules fail (more conservative)
+        fallback_rules = [
+            'p/owasp-top-ten',        # Most stable fallback
+            'p/secrets',              # Essential secrets detection
+            'p/python',               # Python basics
+            'p/javascript',           # JavaScript basics
+        ]
         
         while self.error_handler.can_retry('semgrep'):
             try:
                 # Try primary rules first, then fallback if needed
                 attempt_rules = primary_rules if self.error_handler.recovery_attempts.get('semgrep', 0) == 0 else fallback_rules
+                
+                logger.info(f"🔍 Running Semgrep scan with {len(attempt_rules)} enterprise rule sets (attempt {self.error_handler.recovery_attempts.get('semgrep', 0) + 1})")
+                logger.info(f"🔍 Rule sets: {', '.join(attempt_rules)}")
                 
                 # Build comprehensive scan command
                 scan_command = [
@@ -620,6 +704,22 @@ class SecurityAuditor:
                     '--max-memory', '4096',  # 4GB memory limit
                     '--verbose',             # Detailed output
                     '--metrics', 'off',      # Disable metrics for privacy
+                    '--no-git-ignore',       # Don't skip gitignored files
+                    '--no-ignore',           # Don't skip ignored files
+                    '--include', '*.py',     # Include Python files
+                    '--include', '*.js',     # Include JavaScript files
+                    '--include', '*.ts',     # Include TypeScript files
+                    '--include', '*.go',     # Include Go files
+                    '--include', '*.java',   # Include Java files
+                    '--include', '*.php',    # Include PHP files
+                    '--include', '*.rb',     # Include Ruby files
+                    '--include', '*.yml',    # Include YAML files
+                    '--include', '*.yaml',   # Include YAML files
+                    '--include', '*.json',   # Include JSON files
+                    '--include', '*.xml',    # Include XML files
+                    '--include', '*.sh',     # Include Shell scripts
+                    '--include', '*.dockerfile', # Include Dockerfiles
+                    '--include', 'Dockerfile',   # Include Dockerfiles
                 ]
                 
                 # Add rules
@@ -629,8 +729,8 @@ class SecurityAuditor:
                 # Add target path
                 scan_command.append(repo_path)
                 
-                logger.info(f"🔍 Running Semgrep scan with {len(attempt_rules)} rule sets (attempt {self.error_handler.recovery_attempts.get('semgrep', 0) + 1})")
-                logger.info(f"🔍 Scan command: {' '.join(scan_command)}")
+                logger.info(f"🔍 Scan command: {' '.join(scan_command[:10])}... (truncated for readability)")
+                logger.info(f"🔍 Target repository: {repo_path}")
                 
                 # Run semgrep scan with comprehensive security rules
                 process = await asyncio.create_subprocess_exec(
@@ -659,11 +759,56 @@ class SecurityAuditor:
                 logger.info(f"🔍 Files scanned: {files_scanned}")
                 logger.info(f"🔍 Security findings: {findings_count}")
                 
+                # Enhanced logging for scan results
+                if findings_count > 0:
+                    logger.info("🔍 Sample findings details:")
+                    for i, finding in enumerate(scan_results.get('results', [])[:3]):  # Show first 3 findings
+                        rule_id = finding.get('check_id', 'Unknown')
+                        severity = finding.get('extra', {}).get('severity', 'Unknown')
+                        file_path = finding.get('path', 'Unknown')
+                        line_number = finding.get('start', {}).get('line', 'Unknown')
+                        message = finding.get('extra', {}).get('message', 'Unknown')
+                        logger.info(f"  Finding {i+1}: {rule_id} ({severity}) - {file_path}:{line_number} - {message}")
+                else:
+                    logger.warning("⚠️ No security findings detected - this might indicate:")
+                    logger.warning("  - Clean codebase (unlikely for 98 files)")
+                    logger.warning("  - Rule sets not matching code patterns")
+                    logger.warning("  - Scan scope issues")
+                    logger.warning("  - Rule configuration problems")
+                
                 # Log scan statistics
                 if 'stats' in scan_results:
                     stats = scan_results['stats']
                     logger.info(f"🔍 Scan duration: {stats.get('time', {}).get('total', 'Unknown')}s")
                     logger.info(f"🔍 Rules run: {stats.get('rules', {}).get('total', 'Unknown')}")
+                    logger.info(f"🔍 Rules with findings: {stats.get('rules', {}).get('rules_with_findings', 'Unknown')}")
+                else:
+                    logger.warning("⚠️ No scan statistics available")
+                
+                # Log file coverage information
+                if 'paths' in scan_results:
+                    paths = scan_results['paths']
+                    scanned_files = paths.get('scanned', [])
+                    ignored_files = paths.get('ignored', [])
+                    logger.info(f"🔍 File coverage:")
+                    logger.info(f"  - Scanned: {len(scanned_files)} files")
+                    logger.info(f"  - Ignored: {len(ignored_files)} files")
+                    
+                    if scanned_files:
+                        logger.info("  - Sample scanned files:")
+                        for file_path in scanned_files[:5]:  # Show first 5 files
+                            logger.info(f"    {file_path}")
+                        if len(scanned_files) > 5:
+                            logger.info(f"    ... and {len(scanned_files) - 5} more files")
+                    
+                    if ignored_files:
+                        logger.info("  - Sample ignored files:")
+                        for file_path in ignored_files[:5]:  # Show first 5 files
+                            logger.info(f"    {file_path}")
+                        if len(ignored_files) > 5:
+                            logger.info(f"    ... and {len(ignored_files) - 5} more files")
+                else:
+                    logger.warning("⚠️ No file path information available")
                 
                 self.performance_monitor.end_phase('semgrep')
                 return scan_results
@@ -1077,54 +1222,71 @@ Focus on practical remediation steps that developers can implement immediately."
                 
                 vulnerabilities = []
                 
-                # Group findings by rule type and count occurrences
-                rule_groups = {}
-                for finding in findings:
-                    rule_id = finding.get('check_id', 'Unknown')
-                    if rule_id not in rule_groups:
-                        rule_groups[rule_id] = {
-                            'findings': [],
-                            'severity': finding.get('extra', {}).get('severity', 'Unknown'),
-                            'message': finding.get('extra', {}).get('message', 'Unknown'),
-                            'description': finding.get('extra', {}).get('description', 'No description available'),
-                            'rule_metadata': finding.get('extra', {}).get('metadata', {}),
+                # Enhanced vulnerability processing with better categorization
+                if findings:
+                    logger.info("🔍 Processing individual security findings...")
+                    
+                    # Group findings by rule type and count occurrences
+                    rule_groups = {}
+                    for finding in findings:
+                        rule_id = finding.get('check_id', 'Unknown')
+                        if rule_id not in rule_groups:
+                            rule_groups[rule_id] = {
+                                'findings': [],
+                                'severity': finding.get('extra', {}).get('severity', 'Unknown'),
+                                'message': finding.get('extra', {}).get('message', 'Unknown'),
+                                'description': finding.get('extra', {}).get('description', 'No description available'),
+                                'rule_metadata': finding.get('extra', {}).get('metadata', {}),
+                                'cwe_ids': finding.get('extra', {}).get('metadata', {}).get('cwe', []),
+                                'owasp_ids': finding.get('extra', {}).get('metadata', {}).get('owasp', []),
+                            }
+                        rule_groups[rule_id]['findings'].append(finding)
+                    
+                    logger.info(f"📊 Unique rule types found: {len(rule_groups)}")
+                    
+                    # Create condensed vulnerability entries with enhanced categorization
+                    for rule_id, group_data in rule_groups.items():
+                        findings_list = group_data['findings']
+                        
+                        # Collect all line numbers and file paths for this rule
+                        locations = []
+                        for finding in findings_list:
+                            file_path = finding.get('path', 'Unknown')
+                            line_number = finding.get('start', {}).get('line', 0)
+                            locations.append({
+                                'file_path': file_path,
+                                'line_number': line_number,
+                                'message': finding.get('extra', {}).get('message', 'Unknown'),
+                                'code_snippet': finding.get('extra', {}).get('lines', 'No code available')
+                            })
+                        
+                        # Enhanced vulnerability categorization
+                        vuln = Vulnerability(
+                            rule_id=rule_id,
+                            message=group_data['message'],
+                            severity=group_data['severity'],
+                            file_path=locations[0]['file_path'],  # Primary location
+                            line_number=locations[0]['line_number'],  # Primary line
+                            description=group_data['description'],
+                            remediation='See GPT analysis for detailed remediation steps'
+                        )
+                        
+                        # Add enhanced occurrence data to the vulnerability
+                        vuln.occurrences = len(findings_list)
+                        vuln.locations = locations
+                        vuln.rule_metadata = {
+                            **group_data['rule_metadata'],
+                            'cwe_ids': group_data['cwe_ids'],
+                            'owasp_ids': group_data['owasp_ids'],
+                            'total_occurrences': len(findings_list),
+                            'files_affected': len(set(loc['file_path'] for loc in locations))
                         }
-                    rule_groups[rule_id]['findings'].append(finding)
-                
-                logger.info(f"📊 Unique rule types found: {len(rule_groups)}")
-                
-                # Create condensed vulnerability entries
-                for rule_id, group_data in rule_groups.items():
-                    findings_list = group_data['findings']
-                    
-                    # Collect all line numbers and file paths for this rule
-                    locations = []
-                    for finding in findings_list:
-                        file_path = finding.get('path', 'Unknown')
-                        line_number = finding.get('start', {}).get('line', 0)
-                        locations.append({
-                            'file_path': file_path,
-                            'line_number': line_number,
-                            'message': finding.get('extra', {}).get('message', 'Unknown')
-                        })
-                    
-                    # Create condensed vulnerability entry
-                    vuln = Vulnerability(
-                        rule_id=rule_id,
-                        message=group_data['message'],
-                        severity=group_data['severity'],
-                        file_path=locations[0]['file_path'],  # Primary location
-                        line_number=locations[0]['line_number'],  # Primary line
-                        description=group_data['description'],
-                        remediation='See GPT analysis for detailed remediation steps'
-                    )
-                    
-                    # Add occurrence data to the vulnerability
-                    vuln.occurrences = len(findings_list)
-                    vuln.locations = locations
-                    vuln.rule_metadata = group_data['rule_metadata']
-                    
-                    vulnerabilities.append(vuln)
+                        
+                        vulnerabilities.append(vuln)
+                        
+                        logger.info(f"🔍 Processed vulnerability: {rule_id} - {len(findings_list)} occurrences in {len(set(loc['file_path'] for loc in locations))} files")
+                else:
+                    logger.info("🔍 No security findings detected - this might indicate a clean codebase or scan issues")
                 
                 logger.info(f"✅ Processed {len(vulnerabilities)} vulnerability types")
                 process_duration = (datetime.utcnow() - process_start).total_seconds()
