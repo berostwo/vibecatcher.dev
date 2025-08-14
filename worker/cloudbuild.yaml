@@ -41,7 +41,7 @@ images:
 # Build options and logging configuration
 options:
   logging: CLOUD_LOGGING_ONLY
-  defaultLogsBucket: gs://$PROJECT_ID-cloudbuild-logs
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
 
 # Substitution variables
 substitutions:
