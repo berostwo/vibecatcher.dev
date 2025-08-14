@@ -160,7 +160,6 @@ class SecurityAuditor:
                 '--json',
                 '--timeout', '600',      # 10 minute timeout for comprehensive scan
                 '--max-memory', '4096',  # 4GB memory limit
-                '--max-target-size', '1000000',  # 1M lines max
                 '--verbose',             # Detailed output
                 '--metrics', 'off',      # Disable metrics for privacy
             ]
