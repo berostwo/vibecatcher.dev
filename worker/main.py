@@ -9,408 +9,308 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import logging
+from flask import Flask, request, jsonify
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @dataclass
-class SecurityFinding:
+class Vulnerability:
     rule_id: str
     message: str
     severity: str
-    confidence: str
     file_path: str
     line_number: int
-    end_line_number: int
-    code_snippet: str
-    metadata: Dict[str, Any]
+    description: str
+    remediation: str
 
 @dataclass
-class SemgrepResult:
-    findings: List[SecurityFinding]
-    scan_time: float
-    total_files_scanned: int
+class AuditSummary:
+    total_vulnerabilities: int
+    high_severity: int
+    medium_severity: int
+    low_severity: int
+    files_scanned: int
+    scan_duration: float
 
 @dataclass
-class GPTAnalysis:
-    security_assessment: str
-    risk_level: str
-    remediation_prompts: List[str]
-    master_prompt: str
-    analysis_time: float
-
-@dataclass
-class AuditReport:
-    repository_name: str
-    scan_timestamp: datetime
-    semgrep_results: SemgrepResult
-    gpt_analysis: GPTAnalysis
-    total_issues: int
-    critical_issues: int
-    high_issues: int
-    medium_issues: int
-    low_issues: int
+class AuditResults:
+    summary: AuditSummary
+    vulnerabilities: List[Vulnerability]
+    repository_info: Dict[str, Any]
+    scan_timestamp: str
+    gpt_analysis: Dict[str, Any]
 
 class SecurityAuditor:
-    def __init__(self):
-        self.openai_api_key = os.getenv('OPENAI_API_KEY')
-        self.openai_base_url = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-        self.model = os.getenv('GPT_MODEL', 'gpt-4-turbo-preview')
-        
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is required")
+    def __init__(self, openai_api_key: str, gpt_model: str = "gpt-4-turbo-preview"):
+        self.openai_api_key = openai_api_key
+        self.gpt_model = gpt_model
+        self.session = None
     
-    async def clone_repository(self, repo_url: str, branch: str = "main") -> str:
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
+    
+    async def clone_repository(self, repo_url: str, temp_dir: str) -> str:
         """Clone repository to temporary directory"""
-        temp_dir = tempfile.mkdtemp()
         try:
-            logger.info(f"Cloning repository: {repo_url}")
-            result = subprocess.run([
-                'git', 'clone', '--depth', '1', '--branch', branch, repo_url, temp_dir
-            ], capture_output=True, text=True, timeout=300)
+            # Extract repo name from URL
+            repo_name = repo_url.split('/')[-1].replace('.git', '')
+            repo_path = os.path.join(temp_dir, repo_name)
             
-            if result.returncode != 0:
-                raise Exception(f"Failed to clone repository: {result.stderr}")
+            # Clone the repository
+            process = await asyncio.create_subprocess_exec(
+                'git', 'clone', repo_url, repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
             
-            logger.info(f"Repository cloned successfully to {temp_dir}")
-            return temp_dir
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                raise Exception(f"Git clone failed: {stderr.decode()}")
+            
+            logger.info(f"Repository cloned successfully to {repo_path}")
+            return repo_path
+            
         except Exception as e:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            raise e
+            logger.error(f"Error cloning repository: {e}")
+            raise
     
-    async def run_semgrep_scan(self, repo_path: str) -> SemgrepResult:
+    async def run_semgrep_scan(self, repo_path: str) -> Dict[str, Any]:
         """Run Semgrep security scan on repository"""
-        start_time = asyncio.get_event_loop().time()
-        
         try:
-            logger.info("Starting Semgrep security scan...")
-            
-            # Run Semgrep with optimized rules and output format
-            cmd = [
-                'semgrep', 'scan',
-                '--config', 'auto',  # Use Semgrep's auto-config for security rules
-                '--json',  # JSON output for parsing
-                '--no-git-ignore',  # Scan all files
-                '--max-target-bytes', '1000000',  # Limit file size to 1MB
-                '--timeout', '300',  # 5 minute timeout per file
-                '--max-memory', '4096',  # 4GB memory limit
-                repo_path
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-            
-            if result.returncode not in [0, 1]:  # Semgrep returns 1 when findings are found
-                raise Exception(f"Semgrep scan failed: {result.stderr}")
-            
-            # Parse Semgrep JSON output
-            try:
-                semgrep_data = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse Semgrep JSON output, using stderr")
-                semgrep_data = {"results": []}
-            
-            findings = []
-            for result_item in semgrep_data.get('results', []):
-                finding = SecurityFinding(
-                    rule_id=result_item.get('check_id', 'unknown'),
-                    message=result_item.get('message', ''),
-                    severity=result_item.get('extra', {}).get('severity', 'medium'),
-                    confidence=result_item.get('extra', {}).get('confidence', 'medium'),
-                    file_path=result_item.get('path', ''),
-                    line_number=result_item.get('start', {}).get('line', 0),
-                    end_line_number=result_item.get('end', {}).get('line', 0),
-                    code_snippet=result_item.get('extra', {}).get('lines', ''),
-                    metadata=result_item.get('extra', {})
-                )
-                findings.append(finding)
-            
-            scan_time = asyncio.get_event_loop().time() - start_time
-            total_files = len(semgrep_data.get('paths', {}).get('scanned', []))
-            
-            logger.info(f"Semgrep scan completed: {len(findings)} findings in {scan_time:.2f}s")
-            
-            return SemgrepResult(
-                findings=findings,
-                scan_time=scan_time,
-                total_files_scanned=total_files
+            # Run semgrep scan
+            process = await asyncio.create_subprocess_exec(
+                'semgrep', 'scan', '--json', '--config', 'auto', repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
             
-        except Exception as e:
-            logger.error(f"Semgrep scan failed: {e}")
-            raise
-    
-    async def analyze_with_gpt4(self, findings: List[SecurityFinding], repo_name: str) -> GPTAnalysis:
-        """Analyze security findings with GPT-4 for quick assessment and remediation"""
-        start_time = asyncio.get_event_loop().time()
-        
-        try:
-            logger.info("Starting GPT-4 security analysis...")
+            stdout, stderr = await process.communicate()
             
-            # Prepare findings summary for GPT-4
-            findings_summary = []
-            for finding in findings:
-                findings_summary.append({
-                    'rule': finding.rule_id,
-                    'severity': finding.severity,
-                    'message': finding.message,
-                    'file': finding.file_path,
-                    'line': finding.line_number,
-                    'code': finding.code_snippet[:200]  # Limit code snippet length
-                })
+            if process.returncode != 0 and process.returncode != 1:  # Semgrep returns 1 for findings
+                raise Exception(f"Semgrep scan failed: {stderr.decode()}")
             
-            # Create optimized prompt for GPT-4
-            prompt = self._create_gpt_prompt(findings_summary, repo_name)
+            # Parse JSON output
+            scan_results = json.loads(stdout.decode())
+            logger.info(f"Semgrep scan completed with {len(scan_results.get('results', []))} findings")
             
-            # Make GPT-4 API call
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    'Authorization': f'Bearer {self.openai_api_key}',
-                    'Content-Type': 'application/json'
-                }
-                
-                payload = {
-                    'model': self.model,
-                    'messages': [
-                        {
-                            'role': 'system',
-                            'content': 'You are an expert security engineer specializing in static code analysis and security remediation. Provide concise, actionable security assessments and remediation guidance.'
-                        },
-                        {
-                            'role': 'user',
-                            'content': prompt
-                        }
-                    ],
-                    'max_tokens': 2000,
-                    'temperature': 0.1,  # Low temperature for consistent security advice
-                    'timeout': 60
-                }
-                
-                async with session.post(
-                    f'{self.openai_base_url}/chat/completions',
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120)
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        raise Exception(f"OpenAI API error: {response.status} - {error_text}")
-                    
-                    result = await response.json()
-                    gpt_response = result['choices'][0]['message']['content']
-            
-            # Parse GPT-4 response
-            analysis = self._parse_gpt_response(gpt_response)
-            analysis_time = asyncio.get_event_loop().time() - start_time
-            
-            logger.info(f"GPT-4 analysis completed in {analysis_time:.2f}s")
-            
-            return GPTAnalysis(
-                security_assessment=analysis['assessment'],
-                risk_level=analysis['risk_level'],
-                remediation_prompts=analysis['remediation_prompts'],
-                master_prompt=analysis['master_prompt'],
-                analysis_time=analysis_time
-            )
+            return scan_results
             
         except Exception as e:
-            logger.error(f"GPT-4 analysis failed: {e}")
+            logger.error(f"Error running Semgrep scan: {e}")
             raise
     
-    def _create_gpt_prompt(self, findings: List[Dict], repo_name: str) -> str:
-        """Create optimized prompt for GPT-4 analysis"""
-        findings_text = json.dumps(findings, indent=2)
-        
-        return f"""Analyze these security findings from repository '{repo_name}' and provide:
-
-1. **Quick Security Assessment** (2-3 sentences)
-2. **Overall Risk Level** (Critical/High/Medium/Low)
-3. **Individual Remediation Prompts** (one per finding, concise)
-4. **Master Remediation Prompt** (comprehensive fix for all issues)
-
-Findings: {findings_text}
-
-Format your response as JSON:
-{{
-  "assessment": "brief security assessment",
-  "risk_level": "Critical/High/Medium/Low",
-  "remediation_prompts": ["prompt1", "prompt2"],
-  "master_prompt": "comprehensive remediation prompt"
-}}
-
-Be concise and actionable. Focus on common security mistakes and quick fixes."""
-    
-    def _parse_gpt_response(self, response: str) -> Dict[str, Any]:
-        """Parse GPT-4 response and extract structured data"""
+    async def analyze_with_gpt4(self, semgrep_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze Semgrep results with GPT-4"""
         try:
-            # Try to extract JSON from response
-            start_idx = response.find('{')
-            end_idx = response.rfind('}') + 1
+            # Create prompt for GPT-4
+            prompt = self._create_gpt_prompt(semgrep_results)
             
-            if start_idx != -1 and end_idx != -1:
-                json_str = response[start_idx:end_idx]
-                return json.loads(json_str)
-            else:
-                # Fallback parsing if JSON extraction fails
-                return self._fallback_parse(response)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse GPT response as JSON, using fallback")
-            return self._fallback_parse(response)
-    
-    def _fallback_parse(self, response: str) -> Dict[str, Any]:
-        """Fallback parsing for GPT response"""
-        lines = response.split('\n')
-        assessment = ""
-        risk_level = "Medium"
-        remediation_prompts = []
-        master_prompt = ""
-        
-        for line in lines:
-            line = line.strip()
-            if line.startswith('Assessment:') or line.startswith('Security Assessment:'):
-                assessment = line.split(':', 1)[1].strip()
-            elif line.startswith('Risk Level:') or line.startswith('Risk:'):
-                risk_level = line.split(':', 1)[1].strip()
-            elif line.startswith('Remediation:') or line.startswith('Fix:'):
-                remediation_prompts.append(line.split(':', 1)[1].strip())
-            elif line.startswith('Master Prompt:') or line.startswith('Comprehensive Fix:'):
-                master_prompt = line.split(':', 1)[1].strip()
-        
-        return {
-            'assessment': assessment or "Security analysis completed",
-            'risk_level': risk_level,
-            'remediation_prompts': remediation_prompts or ["Review and fix identified security issues"],
-            'master_prompt': master_prompt or "Address all security findings systematically"
-        }
-    
-    async def generate_audit_report(self, repo_name: str, semgrep_results: SemgrepResult, gpt_analysis: GPTAnalysis) -> AuditReport:
-        """Generate comprehensive audit report"""
-        # Count issues by severity
-        severity_counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
-        for finding in semgrep_results.findings:
-            severity = finding.severity.lower()
-            if severity in severity_counts:
-                severity_counts[severity] += 1
-        
-        return AuditReport(
-            repository_name=repo_name,
-            scan_timestamp=datetime.utcnow(),
-            semgrep_results=semgrep_results,
-            gpt_analysis=gpt_analysis,
-            total_issues=len(semgrep_results.findings),
-            critical_issues=severity_counts['critical'],
-            high_issues=severity_counts['high'],
-            medium_issues=severity_counts['medium'],
-            low_issues=severity_counts['low']
-        )
-
-async def security_audit_worker(request_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Main worker function for Google Cloud Run"""
-    try:
-        logger.info("Starting security audit worker...")
-        
-        # Extract request data
-        repo_url = request_data.get('repository_url')
-        repo_name = request_data.get('repository_name', 'unknown')
-        branch = request_data.get('branch', 'main')
-        
-        if not repo_url:
-            return {'error': 'repository_url is required'}
-        
-        # Initialize security auditor
-        auditor = SecurityAuditor()
-        
-        # Clone repository
-        repo_path = await auditor.clone_repository(repo_url, branch)
-        
-        try:
-            # Run Semgrep scan
-            semgrep_results = await auditor.run_semgrep_scan(repo_path)
-            
-            # Analyze with GPT-4
-            gpt_analysis = await auditor.analyze_with_gpt4(semgrep_results.findings, repo_name)
-            
-            # Generate audit report
-            audit_report = await auditor.generate_audit_report(repo_name, semgrep_results, gpt_analysis)
-            
-            # Convert to JSON-serializable format
-            report_dict = asdict(audit_report)
-            report_dict['scan_timestamp'] = report_dict['scan_timestamp'].isoformat()
-            
-            logger.info(f"Security audit completed successfully for {repo_name}")
-            
-            return {
-                'success': True,
-                'audit_report': report_dict,
-                'execution_time': semgrep_results.scan_time + gpt_analysis.analysis_time
+            # Call OpenAI API
+            headers = {
+                'Authorization': f'Bearer {self.openai_api_key}',
+                'Content-Type': 'application/json'
             }
             
-        finally:
-            # Clean up cloned repository
-            shutil.rmtree(repo_path, ignore_errors=True)
+            data = {
+                'model': self.gpt_model,
+                'messages': [
+                    {
+                        'role': 'system',
+                        'content': 'You are a security expert analyzing code vulnerabilities. Provide clear, actionable remediation advice.'
+                    },
+                    {
+                        'role': 'user',
+                        'content': prompt
+                    }
+                ],
+                'max_tokens': 2000,
+                'temperature': 0.1
+            }
+            
+            async with self.session.post(
+                'https://api.openai.com/v1/chat/completions',
+                headers=headers,
+                json=data
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"OpenAI API error: {response.status} - {error_text}")
+                
+                result = await response.json()
+                analysis = self._parse_gpt_response(result)
+                
+                logger.info("GPT-4 analysis completed successfully")
+                return analysis
+                
+        except Exception as e:
+            logger.error(f"Error analyzing with GPT-4: {e}")
+            # Fallback to basic analysis
+            return self._fallback_parse(semgrep_results)
+    
+    def _create_gpt_prompt(self, semgrep_results: Dict[str, Any]) -> str:
+        """Create prompt for GPT-4 analysis"""
+        findings = semgrep_results.get('results', [])
+        
+        if not findings:
+            return "No security vulnerabilities found in the codebase. Please confirm this is accurate."
+        
+        prompt = f"""Analyze these {len(findings)} security findings from Semgrep:
+
+"""
+        
+        for i, finding in enumerate(findings[:10], 1):  # Limit to first 10 findings
+            prompt += f"""Finding {i}:
+- Rule: {finding.get('check_id', 'Unknown')}
+- Severity: {finding.get('extra', {}).get('severity', 'Unknown')}
+- File: {finding.get('path', 'Unknown')}:{finding.get('start', {}).get('line', 'Unknown')}
+- Message: {finding.get('extra', {}).get('message', 'Unknown')}
+
+"""
+        
+        prompt += """For each finding, provide:
+1. A clear description of the security risk
+2. Specific remediation steps with code examples
+3. Why this vulnerability is dangerous
+4. Best practices to prevent similar issues
+
+Also provide a master summary of all critical issues and their priority order."""
+        
+        return prompt
+    
+    def _parse_gpt_response(self, gpt_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse GPT-4 response into structured format"""
+        try:
+            content = gpt_result['choices'][0]['message']['content']
+            
+            return {
+                'analysis': content,
+                'model_used': self.gpt_model,
+                'tokens_used': gpt_result.get('usage', {}).get('total_tokens', 0),
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error parsing GPT response: {e}")
+            return self._fallback_parse({})
+    
+    def _fallback_parse(self, semgrep_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback analysis when GPT-4 fails"""
+        findings = semgrep_results.get('results', [])
+        
+        return {
+            'analysis': f"Fallback analysis: Found {len(findings)} security issues. Please review manually.",
+            'model_used': 'fallback',
+            'tokens_used': 0,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+    
+    async def generate_audit_report(self, repo_url: str) -> AuditResults:
+        """Generate complete security audit report"""
+        start_time = datetime.utcnow()
+        
+        try:
+            # Create temporary directory
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Clone repository
+                repo_path = await self.clone_repository(repo_url, temp_dir)
+                
+                # Run Semgrep scan
+                semgrep_results = await self.run_semgrep_scan(repo_path)
+                
+                # Analyze with GPT-4
+                gpt_analysis = await self.analyze_with_gpt4(semgrep_results)
+                
+                # Process findings
+                findings = semgrep_results.get('results', [])
+                vulnerabilities = []
+                
+                for finding in findings:
+                    vuln = Vulnerability(
+                        rule_id=finding.get('check_id', 'Unknown'),
+                        message=finding.get('extra', {}).get('message', 'Unknown'),
+                        severity=finding.get('extra', {}).get('severity', 'Unknown'),
+                        file_path=finding.get('path', 'Unknown'),
+                        line_number=finding.get('start', {}).get('line', 0),
+                        description=finding.get('extra', {}).get('description', 'No description available'),
+                        remediation='See GPT analysis for detailed remediation steps'
+                    )
+                    vulnerabilities.append(vuln)
+                
+                # Calculate summary
+                high_sev = len([v for v in vulnerabilities if v.severity.lower() == 'error'])
+                medium_sev = len([v for v in vulnerabilities if v.severity.lower() == 'warning'])
+                low_sev = len([v for v in vulnerabilities if v.severity.lower() not in ['error', 'warning']])
+                
+                end_time = datetime.utcnow()
+                duration = (end_time - start_time).total_seconds()
+                
+                summary = AuditSummary(
+                    total_vulnerabilities=len(vulnerabilities),
+                    high_severity=high_sev,
+                    medium_severity=medium_sev,
+                    low_severity=low_sev,
+                    files_scanned=len(semgrep_results.get('paths', {}).get('scanned', [])),
+                    scan_duration=duration
+                )
+                
+                # Create final results
+                results = AuditResults(
+                    summary=summary,
+                    vulnerabilities=vulnerabilities,
+                    repository_info={
+                        'url': repo_url,
+                        'name': repo_url.split('/')[-1].replace('.git', ''),
+                        'scan_timestamp': start_time.isoformat()
+                    },
+                    scan_timestamp=end_time.isoformat(),
+                    gpt_analysis=gpt_analysis
+                )
+                
+                logger.info(f"Audit completed successfully in {duration:.2f} seconds")
+                return results
+                
+        except Exception as e:
+            logger.error(f"Error generating audit report: {e}")
+            raise
+
+async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Main worker function for security audits"""
+    try:
+        # Extract parameters
+        repo_url = data.get('repository_url')
+        if not repo_url:
+            raise ValueError("repository_url is required")
+        
+        # Get API keys from environment
+        openai_api_key = os.environ.get('OPENAI_API_KEY')
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is required")
+        
+        gpt_model = os.environ.get('GPT_MODEL', 'gpt-4-turbo-preview')
+        
+        # Create auditor and run analysis
+        async with SecurityAuditor(openai_api_key, gpt_model) as auditor:
+            results = await auditor.generate_audit_report(repo_url)
+            
+            # Convert to dict for JSON serialization
+            return asdict(results)
             
     except Exception as e:
-        logger.error(f"Security audit worker failed: {e}")
+        logger.error(f"Worker error: {e}")
         return {
-            'success': False,
             'error': str(e),
-            'error_type': type(e).__name__
+            'timestamp': datetime.utcnow().isoformat()
         }
 
-# Google Cloud Run entry point
-def security_audit(request):
-    """HTTP Cloud Function entry point"""
-    from flask import Request, jsonify
-    
-    if request.method != 'POST':
-        return jsonify({'error': 'Only POST method is supported'}), 405
-    
-    try:
-        request_data = request.get_json()
-        if not request_data:
-            return jsonify({'error': 'No JSON data provided'}), 400
-        
-        # Run async worker
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(security_audit_worker(request_data))
-            return jsonify(result)
-        finally:
-            loop.close()
-            
-    except Exception as e:
-        logger.error(f"HTTP handler error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-def health_check(request):
-    """Health check endpoint for Cloud Run"""
-    from flask import jsonify
-    
-    return jsonify({
-        'status': 'healthy',
-        'service': 'security-audit-worker',
-        'timestamp': datetime.utcnow().isoformat(),
-        'version': '1.0.0'
-    })
-
-if __name__ == "__main__":
-    # For local testing
-    import sys
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], 'r') as f:
-            test_data = json.load(f)
-        
-        async def test():
-            result = await security_audit_worker(test_data)
-            print(json.dumps(result, indent=2))
-        
-        asyncio.run(test())
-    else:
-        print("Usage: python main.py <test_data.json>")
-
-from flask import Flask, request, jsonify
-
+# Create Flask app
 app = Flask(__name__)
 
 @app.route('/', methods=['GET'])
