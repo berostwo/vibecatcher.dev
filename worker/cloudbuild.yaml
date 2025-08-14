@@ -31,8 +31,9 @@ steps:
       - '10'
       - '--max-instances'
       - '5'
-      - '--set-env-vars'
-      - 'OPENAI_API_KEY=${_OPENAI_API_KEY},GPT_MODEL=${_GPT_MODEL}'
+  env:
+    - 'CLOUD_RUN_REGION=us-central1'
+    - 'CLOUD_RUN_SERVICE=security-audit-worker'
 
 # Store images in Google Cloud Storage
 images:
@@ -42,8 +43,3 @@ images:
 options:
   logging: CLOUD_LOGGING_ONLY
   defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
-
-# Substitution variables
-substitutions:
-  _OPENAI_API_KEY: 'your-openai-api-key-here'
-  _GPT_MODEL: 'gpt-4-turbo-preview'
