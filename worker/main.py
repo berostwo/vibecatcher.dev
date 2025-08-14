@@ -268,7 +268,7 @@ Also provide a master summary of all critical issues and their priority order.""
         start_time = datetime.utcnow()
         
         try:
-            # Create temporary directory
+            # Create temporary director
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Clone repository
                 repo_path = await self.clone_repository(repo_url, temp_dir)
