@@ -368,6 +368,46 @@ async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
 # Create Flask app
 app = Flask(__name__)
 
+# Add CORS headers
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get('Origin')
+    allowed_origins = [
+        'http://localhost:9002',
+        'http://localhost:3000',
+        'https://vibecatcher.dev',
+        'http://vibecatcher.dev'
+    ]
+    
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    else:
+        response.headers['Access-Control-Allow-Origin'] = 'http://localhost:9002'  # Default fallback
+    
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+@app.route('/', methods=['OPTIONS'])
+def handle_options():
+    origin = request.headers.get('Origin')
+    allowed_origins = [
+        'http://localhost:9002',
+        'http://localhost:3000',
+        'https://vibecatcher.dev',
+        'http://vibecatcher.dev'
+    ]
+    
+    response = jsonify({'status': 'ok'})
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    else:
+        response.headers['Access-Control-Allow-Origin'] = 'http://localhost:9002'  # Default fallback
+    
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
 @app.route('/', methods=['GET'])
 def health_check():
     """Health check endpoint for Cloud Run"""

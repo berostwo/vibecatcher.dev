@@ -257,16 +257,35 @@ export default function SecurityAuditPage() {
     fetchRepositories()
   }, [user, githubToken])
 
-  const handleAudit = () => {
-    if (!selectedRepo) return
-    setIsLoading(true)
-    setAuditResults(null)
-    setTimeout(() => {
-      const results = mockAuditResultsData[selectedRepo] || mockAuditResultsData["default"] || { repoName: selectedRepo, summary: { totalIssues: 0, critical: 0, high: 0, medium: 0, low: 0 }, vulnerabilities: [] };
-      setAuditResults(results)
-      setIsLoading(false)
-    }, 2000)
-  }
+  const handleAudit = async () => {
+    if (!selectedRepo || !user) return;
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const response = await fetch(process.env.NEXT_PUBLIC_SECURITY_WORKER_URL!, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repository_url: `https://github.com/berostwo/${selectedRepo}`
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Audit failed: ${response.statusText}`);
+      }
+      
+      const auditResults = await response.json();
+      setAuditResults(auditResults);
+      
+    } catch (error) {
+      console.error('Audit failed:', error);
+      setError(error instanceof Error ? error.message : 'Audit failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleRefreshRepos = async () => {
     if (!user) return
