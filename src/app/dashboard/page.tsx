@@ -1,10 +1,26 @@
+'use client';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Github, History, ShieldCheck, ArrowRight, CheckCircle, ShoppingCart } from 'lucide-react'
 import Link from 'next/link'
 import { DashboardPage, DashboardPageHeader } from '@/components/common/dashboard-page'
+import { useAuth } from '@/contexts/auth-context'
 
 export default function DashboardPageContent() {
+  const { user, githubToken, isLoading } = useAuth();
+  
+  if (isLoading) {
+    return (
+      <DashboardPage>
+        <DashboardPageHeader title="Dashboard" description="An overview of your account and security audits." />
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </DashboardPage>
+    );
+  }
+  
   return (
     <DashboardPage>
       <DashboardPageHeader title="Dashboard" description="An overview of your account and security audits." />
@@ -12,10 +28,34 @@ export default function DashboardPageContent() {
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="bg-gradient-to-r from-primary/10 to-accent/10 border-2 border-primary/20">
             <CardHeader>
-                <CardTitle>Hello, User!</CardTitle>
-                 <CardDescription>
-                    Ready to secure your code?
-                </CardDescription>
+                <div className="flex items-center space-x-4">
+                    {user?.photoURL && (
+                        <img 
+                            src={user.photoURL} 
+                            alt="Profile" 
+                            className="w-16 h-16 rounded-full border-2 border-primary/30"
+                        />
+                    )}
+                    <div>
+                        <CardTitle className="flex items-center space-x-2">
+                            <span>Hello, {user?.displayName || user?.email || 'User'}!</span>
+                            {githubToken && (
+                                <div className="flex items-center space-x-1 text-xs">
+                                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                    <span className="text-green-600 font-medium">GitHub Connected</span>
+                                </div>
+                            )}
+                        </CardTitle>
+                        {user?.displayName && user.displayName !== user.email && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                                Welcome back to your security dashboard
+                            </p>
+                        )}
+                        <CardDescription>
+                            Ready to secure your code?
+                        </CardDescription>
+                    </div>
+                </div>
             </CardHeader>
             <CardContent>
                 <Button asChild>

@@ -1,0 +1,44 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA', '.']
+  
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA']
+  
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'security-audit-worker'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '4Gi'
+      - '--cpu'
+      - '2'
+      - '--timeout'
+      - '900'
+      - '--concurrency'
+      - '10'
+      - '--max-instances'
+      - '5'
+      - '--set-env-vars'
+      - 'OPENAI_API_KEY=${_OPENAI_API_KEY},GPT_MODEL=${_GPT_MODEL}'
+
+# Store images in Google Cloud Storage
+images:
+  - 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA'
+
+# Substitution variables
+substitutions:
+  _OPENAI_API_KEY: 'your-openai-api-key-here'
+  _GPT_MODEL: 'gpt-4-turbo-preview'

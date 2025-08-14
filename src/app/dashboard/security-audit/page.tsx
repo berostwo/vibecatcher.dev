@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import {
   Select,
   SelectContent,
@@ -24,40 +24,47 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
-import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code } from "lucide-react"
+import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, Github, RefreshCw } from "lucide-react"
 import { DashboardPage, DashboardPageHeader } from "@/components/common/dashboard-page"
+import { useAuth } from "@/contexts/auth-context"
+import { GitHubService, GitHubRepository } from "@/lib/github-service"
 
-// Mock data
-const mockRepos = [
-  { id: "1", name: "my-awesome-app" },
-  { id: "2", name: "legacy-backend" },
-  { id: "3", name: "new-frontend-library" },
-  { id: "4", name: "secure-app-example" },
-]
+// Types for audit data
+interface Vulnerability {
+  id: string;
+  title: string;
+  severity: 'Critical' | 'High' | 'Medium' | 'Low';
+  file: string;
+  line: number;
+  description: string;
+  remediation: string;
+}
 
-const mockAuditResultsData = {
-  "my-awesome-app": {
-    repoName: "my-awesome-app",
+interface AuditSummary {
+  totalIssues: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+interface AuditResults {
+  repoName: string;
+  summary: AuditSummary;
+  vulnerabilities: Vulnerability[];
+}
+
+// Mock audit results data (keeping this for now as placeholder)
+const mockAuditResultsData: Record<string, AuditResults> = {
+  "default": {
+    repoName: "default",
     summary: { totalIssues: 3, critical: 1, high: 1, medium: 1, low: 0 },
     vulnerabilities: [
       { id: "VULN-002", title: "Cross-Site Scripting (XSS)", severity: "Critical", file: "src/components/Comment.tsx", line: 42, description: "User-provided content is rendered without proper sanitization, allowing for potential XSS attacks.", remediation: "Use a library like `dompurify` to sanitize HTML content before rendering it with `dangerouslySetInnerHTML`." },
       { id: "VULN-001", title: "Outdated Dependency: `react-scripts`", severity: "High", file: "package.json", line: 25, description: "The version of `react-scripts` used in this project is outdated and has known security vulnerabilities.", remediation: "Update `react-scripts` to the latest version by running `npm install react-scripts@latest`." },
       { id: "VULN-003", title: "Insecure `target='_blank'` usage", severity: "Medium", file: "src/components/Footer.tsx", line: 15, description: "Links using `target='_blank'` without `rel='noopener noreferrer'` are a security risk.", remediation: "Add `rel='noopener noreferrer'` to all `<a>` tags that have `target='_blank'`." },
     ],
-  },
-  "legacy-backend": {
-    repoName: "legacy-backend",
-    summary: { totalIssues: 2, critical: 1, high: 0, medium: 1, low: 0 },
-    vulnerabilities: [
-      { id: "VULN-004", title: "SQL Injection", severity: "Critical", file: "server/db/queries.js", line: 112, description: "Database queries are constructed with raw user input, making them vulnerable to SQL injection.", remediation: "Use parameterized queries or an ORM to interact with the database safely." },
-      { id: "VULN-005", title: "Missing CSRF Protection", severity: "Medium", file: "server/app.js", line: 56, description: "No CSRF tokens are used, leaving state-changing endpoints vulnerable to Cross-Site Request Forgery.", remediation: "Implement CSRF token validation for all non-GET requests. Libraries like `csurf` can help." },
-    ]
-  },
-  "secure-app-example": {
-    repoName: "secure-app-example",
-    summary: { totalIssues: 0, critical: 0, high: 0, medium: 0, low: 0 },
-    vulnerabilities: [],
-  },
+  }
 }
 
 const getSeverityStyles = (severity: string) => {
@@ -98,7 +105,7 @@ const getSeverityStyles = (severity: string) => {
 };
 
 
-type AuditResultsType = typeof mockAuditResultsData[keyof typeof mockAuditResultsData] | null;
+type AuditResultsType = AuditResults | null;
 
 const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) => {
     const healthScore = useMemo(() => {
@@ -216,47 +223,176 @@ Provide a git-compatible diff for each required code change.`}
 }
 
 export default function SecurityAuditPage() {
+  const { user, githubToken } = useAuth()
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [auditResults, setAuditResults] = useState<AuditResultsType>(null)
+  const [repositories, setRepositories] = useState<GitHubRepository[]>([])
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Fetch user's GitHub repositories
+  useEffect(() => {
+    const fetchRepositories = async () => {
+      if (!user || !githubToken) {
+        setError("Please sign in with GitHub to access your repositories")
+        return
+      }
+
+      setIsLoadingRepos(true)
+      setError(null)
+      
+      try {
+        const repos = await GitHubService.getUserRepositories(user.uid)
+        setRepositories(repos)
+        console.log('Fetched repositories:', repos)
+      } catch (err) {
+        console.error('Error fetching repositories:', err)
+        setError(err instanceof Error ? err.message : 'Failed to fetch repositories')
+      } finally {
+        setIsLoadingRepos(false)
+      }
+    }
+
+    fetchRepositories()
+  }, [user, githubToken])
 
   const handleAudit = () => {
     if (!selectedRepo) return
     setIsLoading(true)
     setAuditResults(null)
     setTimeout(() => {
-      const results = mockAuditResultsData[selectedRepo as keyof typeof mockAuditResultsData] || { repoName: selectedRepo, summary: { totalIssues: 0, critical: 0, high: 0, medium: 0, low: 0 }, vulnerabilities: [] };
+      const results = mockAuditResultsData[selectedRepo] || mockAuditResultsData["default"] || { repoName: selectedRepo, summary: { totalIssues: 0, critical: 0, high: 0, medium: 0, low: 0 }, vulnerabilities: [] };
       setAuditResults(results)
       setIsLoading(false)
     }, 2000)
   }
 
+  const handleRefreshRepos = async () => {
+    if (!user) return
+    setIsLoadingRepos(true)
+    setError(null)
+    try {
+      const repos = await GitHubService.getUserRepositories(user.uid)
+      setRepositories(repos)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh repositories')
+    } finally {
+      setIsLoadingRepos(false)
+    }
+  }
+
   return (
     <DashboardPage>
       <DashboardPageHeader title="Security Audit" description="Select a GitHub repository to start your security audit." />
+      
+      {/* Repository Selection Card */}
       <Card className="border-2 border-primary/20">
         <CardHeader>
-          <CardTitle>Select Repository</CardTitle>
-          <CardDescription>
-            Choose a repository from the list to begin the audit process.
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Github className="h-5 w-5" />
+                Select Repository
+                {repositories.length > 0 && (
+                  <Badge variant="outline" className="ml-2">
+                    {repositories.length} repo{repositories.length !== 1 ? 's' : ''}
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Choose a repository from your GitHub account to begin the audit process.
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefreshRepos}
+              disabled={isLoadingRepos}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoadingRepos ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
-          <Select onValueChange={setSelectedRepo} disabled={isLoading}>
-            <SelectTrigger className="w-full md:w-[300px]">
-              <SelectValue placeholder="Select a repository" />
-            </SelectTrigger>
-            <SelectContent>
-              {mockRepos.map((repo) => (
-                <SelectItem key={repo.id} value={repo.name}>
-                  {repo.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-md">
+              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            </div>
+          )}
+          
+          {isLoadingRepos ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Loading your repositories...</span>
+            </div>
+          ) : repositories.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Github className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p className="text-lg font-medium mb-2">No repositories found</p>
+              <p className="text-sm">
+                {!user || !githubToken 
+                  ? "Please sign in with GitHub to access your repositories"
+                  : "You don't have any repositories yet, or they're all private"
+                }
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <Select onValueChange={setSelectedRepo} disabled={isLoading}>
+                <SelectTrigger className="w-full md:w-[300px]">
+                  <SelectValue placeholder="Select a repository" />
+                </SelectTrigger>
+                <SelectContent>
+                  {repositories.map((repo) => (
+                    <SelectItem key={repo.id} value={repo.name}>
+                      <div className="flex items-center gap-2">
+                        <span>{repo.name}</span>
+                        {repo.private && (
+                          <Badge variant="secondary" className="text-xs">Private</Badge>
+                        )}
+                        {repo.language && (
+                          <Badge variant="outline" className="text-xs">{repo.language}</Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              
+              {selectedRepo && (
+                <div className="mt-4 p-4 bg-muted/50 rounded-lg border">
+                  <h4 className="font-medium mb-2">Selected Repository</h4>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Name:</span>
+                      <p className="font-mono">{selectedRepo}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Language:</span>
+                      <p>{repositories.find(r => r.name === selectedRepo)?.language || 'Unknown'}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Visibility:</span>
+                      <p>{repositories.find(r => r.name === selectedRepo)?.private ? 'Private' : 'Public'}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Last Updated:</span>
+                      <p>{repositories.find(r => r.name === selectedRepo)?.updated_at ? new Date(repositories.find(r => r.name === selectedRepo)!.updated_at).toLocaleDateString() : 'Unknown'}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
         <CardFooter>
-          <Button onClick={handleAudit} disabled={!selectedRepo || isLoading}>
+          <Button 
+            onClick={handleAudit} 
+            disabled={!selectedRepo || isLoading || repositories.length === 0}
+          >
             {isLoading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

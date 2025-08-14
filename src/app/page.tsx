@@ -3,7 +3,7 @@
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Github, ScanLine, FileJson2, Wand2, ShieldAlert, Code, Terminal, AlertTriangle, Info, CheckCircle, Shield } from 'lucide-react'
+import { Github, ScanLine, FileJson2, Wand2, ShieldAlert, Code, Terminal, AlertTriangle, Info, CheckCircle, Shield, LogOut } from 'lucide-react'
 import Link from 'next/link'
 import {
   Accordion,
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/accordion"
 import { Badge } from '@/components/ui/badge'
 import { AppFooter } from '@/components/common/app-footer'
+import { useAuth } from '@/contexts/auth-context'
 
 
 const mockVulnerabilities = [
@@ -84,6 +85,7 @@ const getSeverityStyles = (severity: string) => {
 
 
 export default function Home() {
+  const { user, githubToken, signOut, isLoading, setGitHubToken } = useAuth();
   const healthScore = 47;
   const getHealthColor = (score: number) => {
     if (score > 85) return 'text-green-500';
@@ -109,18 +111,120 @@ export default function Home() {
           <br />
           We catch the bad vibes first.
         </p>
-        <p className="mt-6 text-sm text-muted-foreground max-w-md">
-          Drop your repo link. Get an actionable security report in minutes. We
-          tailor prompts to fix your security risks with OpenAI GPT.
-        </p>
-        <div className="mt-8">
-          <Button asChild size="lg" className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105">
-            <Link href="/dashboard">
+        {isLoading ? (
+          <div className="mt-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          </div>
+        ) : user && githubToken ? (
+          <div className="mt-8 space-y-4">
+            <div className="flex items-center justify-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <img 
+                  src={user.photoURL || '/default-avatar.png'} 
+                  alt="Profile" 
+                  className="w-8 h-8 rounded-full"
+                />
+                <span className="text-sm font-medium">
+                  Welcome back, {user.displayName || user.email}
+                </span>
+              </div>
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={signOut}
+                className="flex items-center space-x-2"
+              >
+                <LogOut className="h-4 w-4" />
+                Sign Out
+              </Button>
+            </div>
+            <Button asChild size="lg" className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105">
+              <Link href="/dashboard">
+                <Github className="mr-2 h-5 w-5" />
+                Go to Dashboard
+              </Link>
+            </Button>
+          </div>
+        ) : (
+          <div className="mt-8">
+            <p className="mb-4 text-sm text-muted-foreground max-w-md">
+              Drop your repo link. Get an actionable security report in minutes. We
+              tailor prompts to fix your security risks with OpenAI GPT.
+            </p>
+            <Button 
+              size="lg" 
+              className="bg-primary hover:bg-black text-primary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105"
+              onClick={async () => {
+                try {
+                  // Check if required environment variables are set
+                  if (!process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID) {
+                    throw new Error('GitHub Client ID not configured. Please check your environment variables.');
+                  }
+                  
+                  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
+                    throw new Error('Firebase configuration not found. Please check your environment variables.');
+                  }
+                  
+                  const { GitHubOAuthService } = await import('@/lib/github-oauth');
+                  console.log('Starting GitHub OAuth...');
+                  
+                  // Try popup first
+                  const accessToken = await GitHubOAuthService.initiateOAuth();
+                  console.log('OAuth successful, access token received');
+                  
+                  if (accessToken) {
+                    // Get user info from GitHub
+                    const userInfo = await GitHubOAuthService.getUserInfo(accessToken);
+                    console.log('GitHub user info:', userInfo);
+                    
+                    // Create/update Firebase user
+                    const { FirebaseUserService } = await import('@/lib/firebase-user-service');
+                    const firebaseUser = await FirebaseUserService.createUserFromGitHub(
+                      {
+                        id: userInfo.id,
+                        login: userInfo.login,
+                        name: userInfo.name || userInfo.login,
+                        email: userInfo.email,
+                        avatar_url: userInfo.avatar_url
+                      },
+                      accessToken
+                    );
+                    
+                    console.log('Firebase user created/updated:', firebaseUser);
+                    
+                    // Store token on server (secure)
+                    await GitHubOAuthService.storeTokenOnServer(firebaseUser.uid, accessToken);
+                    
+                    // Set token in auth context (from server)
+                    setGitHubToken(accessToken);
+                    
+                    // Redirect to dashboard
+                    window.location.href = '/dashboard';
+                  }
+                } catch (error) {
+                  console.error('OAuth failed:', error);
+                  
+                  if (error instanceof Error && error.message.includes('not configured')) {
+                    alert('Configuration error: ' + error.message);
+                    return;
+                  }
+                  
+                  // Fallback to redirect method
+                  try {
+                    const { GitHubOAuthService } = await import('@/lib/github-oauth');
+                    GitHubOAuthService.initiateOAuthRedirect();
+                  } catch (redirectError) {
+                    console.error('Redirect fallback also failed:', redirectError);
+                    alert('Authentication failed. Please try again.');
+                  }
+                }
+              }}
+            >
               <Github className="mr-2 h-5 w-5" />
               Continue with GitHub
-            </Link>
-          </Button>
-        </div>
+            </Button>
+          </div>
+        )}
 
         <section className="mt-16 w-full max-w-5xl">
             <h2 className="text-3xl font-bold font-headline mb-8">How It Works</h2>

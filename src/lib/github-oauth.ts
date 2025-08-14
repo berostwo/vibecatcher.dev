@@ -1,4 +1,6 @@
 // GitHub OAuth Configuration
+// SECURITY: GitHub tokens are NEVER stored in localStorage or sessionStorage
+// They are only stored on the server and temporarily in memory for the current session
 const GITHUB_CLIENT_ID = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID;
 
 // Helper function to get redirect URI safely
@@ -95,25 +97,34 @@ export class GitHubOAuthService {
           console.log('Received message from popup:', event.data);
           
           if (event.data.type === 'GITHUB_OAUTH_CALLBACK') {
-            const { code, state } = event.data;
+            const { code, state, accessToken } = event.data;
             console.log('Received OAuth callback from popup - code:', code.substring(0, 10) + '...', 'state:', state);
             
-            // Complete the authentication flow in the parent window
-            this.handleCallback(code, state, true) // Skip state validation for popup context
-              .then((accessToken) => {
-                console.log('OAuth success, received access token:', accessToken ? 'Present' : 'Not present');
-                popup.close();
-                window.removeEventListener('message', messageListener);
-                this.isOAuthInProgress = false; // Reset flag
-                resolve(accessToken);
-              })
-              .catch((error) => {
-                console.error('OAuth callback failed:', error);
-                popup.close();
-                window.removeEventListener('message', messageListener);
-                this.isOAuthInProgress = false; // Reset flag
-                reject(error);
-              });
+            if (accessToken) {
+              // Popup already handled the OAuth flow, just return the token
+              console.log('OAuth success, received access token from popup:', accessToken ? 'Present' : 'Not present');
+              popup.close();
+              window.removeEventListener('message', messageListener);
+              this.isOAuthInProgress = false; // Reset flag
+              resolve(accessToken);
+            } else {
+              // Fallback: complete the authentication flow in the parent window
+              this.handleCallback(code, state, true) // Skip state validation for popup context
+                .then((accessToken) => {
+                  console.log('OAuth success, received access token:', accessToken ? 'Present' : 'Not present');
+                  popup.close();
+                  window.removeEventListener('message', messageListener);
+                  this.isOAuthInProgress = false; // Reset flag
+                  resolve(accessToken);
+                })
+                .catch((error) => {
+                  console.error('OAuth callback failed:', error);
+                  popup.close();
+                  window.removeEventListener('message', messageListener);
+                  this.isOAuthInProgress = false; // Reset flag
+                  reject(error);
+                });
+            }
           } else if (event.data.type === 'GITHUB_OAUTH_SUCCESS') {
             // Legacy success message - should not be used anymore
             console.log('Received legacy success message, ignoring');
@@ -495,16 +506,14 @@ export class GitHubOAuthService {
 
   /**
    * Store GitHub access token securely
+   * NOTE: Tokens are only stored on the server, not locally for security
    */
   static storeAccessToken(token: string): void {
-    // Use sessionStorage instead of localStorage for better security
-    // SessionStorage is cleared when the tab is closed
-    sessionStorage.setItem('github_access_token', token);
-    
-    // Also store in memory for immediate access
+    // Store token in memory temporarily for the current session only
+    // This is cleared when the page refreshes or tab is closed
     this._accessToken = token;
     
-    console.log('Access token stored securely');
+    console.log('Access token stored in memory only (server-side storage is secure)');
   }
 
   /**
@@ -571,34 +580,23 @@ export class GitHubOAuthService {
    * Get stored GitHub access token
    */
   static getAccessToken(): string | null {
-    // Check memory first, then sessionStorage
-    if (this._accessToken) {
-      return this._accessToken;
-    }
-    
-    const token = sessionStorage.getItem('github_access_token');
-    if (token) {
-      this._accessToken = token;
-      return token;
-    }
-    
-    return null;
+    // Only check memory storage - no local storage for security
+    return this._accessToken || null;
   }
 
   /**
    * Clear GitHub access token
    */
   static clearAccessToken(): void {
-    sessionStorage.removeItem('github_access_token');
     this._accessToken = null;
-    console.log('Access token cleared');
+    console.log('Access token cleared from memory');
   }
 
   /**
    * Clear all OAuth-related data
    */
   static async clearAllOAuthData(userId?: string): Promise<void> {
-    sessionStorage.removeItem('github_access_token');
+    // Only clear OAuth state and return URL - tokens are server-side only
     sessionStorage.removeItem('github_oauth_state');
     sessionStorage.removeItem('github_oauth_return_url');
     this._accessToken = null;
@@ -608,11 +606,12 @@ export class GitHubOAuthService {
       await this.clearTokenFromServer(userId);
     }
     
-    console.log('Cleared all OAuth data');
+    console.log('Cleared all OAuth data (tokens remain secure on server)');
   }
 
   /**
    * Check if user is currently authenticated with GitHub
+   * Note: This only checks memory storage. For persistent auth, check server-side.
    */
   static isAuthenticated(): boolean {
     return !!this.getAccessToken();
