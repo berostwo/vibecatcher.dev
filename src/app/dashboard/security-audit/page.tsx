@@ -31,45 +31,99 @@ import { GitHubService, GitHubRepository } from "@/lib/github-service"
 
 // Types for audit data
 interface Vulnerability {
-  id: string;
-  title: string;
-  severity: 'Critical' | 'High' | 'Medium' | 'Low';
-  file: string;
-  line: number;
+  rule_id: string;
+  message: string;
+  severity: string;
+  file_path: string;
+  line_number: number;
   description: string;
   remediation: string;
 }
 
 interface AuditSummary {
-  totalIssues: number;
-  critical: number;
-  high: number;
-  medium: number;
-  low: number;
+  total_vulnerabilities: number;
+  high_severity: number;
+  medium_severity: number;
+  low_severity: number;
+  files_scanned: number;
+  scan_duration: number;
 }
 
 interface AuditResults {
-  repoName: string;
   summary: AuditSummary;
   vulnerabilities: Vulnerability[];
+  repository_info: {
+    url: string;
+    name: string;
+    scan_timestamp: string;
+  };
+  scan_timestamp: string;
+  gpt_analysis: {
+    analysis: string;
+    model_used: string;
+    tokens_used: number;
+    timestamp: string;
+  };
 }
 
 // Mock audit results data (keeping this for now as placeholder)
 const mockAuditResultsData: Record<string, AuditResults> = {
   "default": {
-    repoName: "default",
-    summary: { totalIssues: 3, critical: 1, high: 1, medium: 1, low: 0 },
+    summary: { 
+      total_vulnerabilities: 3, 
+      high_severity: 1, 
+      medium_severity: 1, 
+      low_severity: 1, 
+      files_scanned: 10,
+      scan_duration: 45.2
+    },
     vulnerabilities: [
-      { id: "VULN-002", title: "Cross-Site Scripting (XSS)", severity: "Critical", file: "src/components/Comment.tsx", line: 42, description: "User-provided content is rendered without proper sanitization, allowing for potential XSS attacks.", remediation: "Use a library like `dompurify` to sanitize HTML content before rendering it with `dangerouslySetInnerHTML`." },
-      { id: "VULN-001", title: "Outdated Dependency: `react-scripts`", severity: "High", file: "package.json", line: 25, description: "The version of `react-scripts` used in this project is outdated and has known security vulnerabilities.", remediation: "Update `react-scripts` to the latest version by running `npm install react-scripts@latest`." },
-      { id: "VULN-003", title: "Insecure `target='_blank'` usage", severity: "Medium", file: "src/components/Footer.tsx", line: 15, description: "Links using `target='_blank'` without `rel='noopener noreferrer'` are a security risk.", remediation: "Add `rel='noopener noreferrer'` to all `<a>` tags that have `target='_blank'`." },
+      { 
+        rule_id: "VULN-002", 
+        message: "Cross-Site Scripting (XSS)", 
+        severity: "error", 
+        file_path: "src/components/Comment.tsx", 
+        line_number: 42, 
+        description: "User-provided content is rendered without proper sanitization, allowing for potential XSS attacks.", 
+        remediation: "Use a library like `dompurify` to sanitize HTML content before rendering it with `dangerouslySetInnerHTML`." 
+      },
+      { 
+        rule_id: "VULN-001", 
+        message: "Outdated Dependency: `react-scripts`", 
+        severity: "warning", 
+        file_path: "package.json", 
+        line_number: 25, 
+        description: "The version of `react-scripts` used in this project is outdated and has known security vulnerabilities.", 
+        remediation: "Update `react-scripts` to the latest version by running `npm install react-scripts@latest`." 
+      },
+      { 
+        rule_id: "VULN-003", 
+        message: "Insecure `target='_blank'` usage", 
+        severity: "info", 
+        file_path: "src/components/Footer.tsx", 
+        line_number: 15, 
+        description: "Links using `target='_blank'` without `rel='noopener noreferrer'` are a security risk.", 
+        remediation: "Add `rel='noopener noreferrer'` to all `<a>` tags that have `target='_blank'`." 
+      },
     ],
+    repository_info: {
+      url: "https://github.com/berostwo/default",
+      name: "default",
+      scan_timestamp: "2025-08-14T10:00:00Z"
+    },
+    scan_timestamp: "2025-08-14T10:00:45Z",
+    gpt_analysis: {
+      analysis: "Mock GPT-4 analysis for testing purposes.",
+      model_used: "gpt-4-turbo-preview",
+      tokens_used: 150,
+      timestamp: "2025-08-14T10:00:45Z"
+    }
   }
 }
 
 const getSeverityStyles = (severity: string) => {
-  switch (severity) {
-    case 'Critical':
+  switch (severity.toLowerCase()) {
+    case 'error':
       return {
         icon: <ShieldAlert className="h-5 w-5 text-red-500" />,
         badgeVariant: 'destructive' as const,
@@ -77,7 +131,7 @@ const getSeverityStyles = (severity: string) => {
         bgColor: 'bg-red-500/10',
         textColor: 'text-red-500',
       };
-    case 'High':
+    case 'warning':
       return {
         icon: <AlertTriangle className="h-5 w-5 text-orange-500" />,
         badgeVariant: 'destructive' as const,
@@ -85,7 +139,7 @@ const getSeverityStyles = (severity: string) => {
         bgColor: 'bg-orange-500/10',
         textColor: 'text-orange-500',
       };
-    case 'Medium':
+    case 'info':
       return {
         icon: <Info className="h-5 w-5 text-yellow-500" />,
         badgeVariant: 'secondary' as const,
@@ -98,8 +152,8 @@ const getSeverityStyles = (severity: string) => {
         icon: <CheckCircle className="h-5 w-5 text-green-500" />,
         badgeVariant: 'outline' as const,
         borderColor: 'border-gray-500/50',
-        bgColor: 'bg-green-500/10',
-        textColor: 'text-green-500',
+        bgColor: 'bg-gray-500/10',
+        textColor: 'text-gray-500',
       };
   }
 };
@@ -109,9 +163,9 @@ type AuditResultsType = AuditResults | null;
 
 const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) => {
     const healthScore = useMemo(() => {
-        if (!results.summary.totalIssues) return 100;
-        const weightedScore = (results.summary.critical * 10) + (results.summary.high * 5) + (results.summary.medium * 2) + (results.summary.low * 1);
-        const maxScore = results.summary.totalIssues * 10;
+        if (!results.summary.total_vulnerabilities) return 100;
+        const weightedScore = (results.summary.high_severity * 10) + (results.summary.medium_severity * 5) + (results.summary.low_severity * 2);
+        const maxScore = results.summary.total_vulnerabilities * 10;
         return Math.max(0, Math.round((1 - (weightedScore / maxScore)) * 100));
     }, [results]);
     
@@ -122,7 +176,7 @@ const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) =>
     return 'text-red-500';
   }
 
-  const severityOrder = useMemo(() => ['Critical', 'High', 'Medium', 'Low'], []);
+  const severityOrder = useMemo(() => ['error', 'warning', 'info'], []);
   const sortedVulnerabilities = useMemo(() => {
     return results.vulnerabilities.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity)) || [];
   }, [results, severityOrder]);
@@ -132,54 +186,50 @@ const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) =>
       <CardHeader>
         <div className="flex flex-col md:flex-row justify-between items-start mb-6">
           <div className="mb-4 md:mb-0">
-            <CardTitle className="text-2xl">Audit Report: `{results.repoName}`</CardTitle>
-            <CardDescription>{results.summary.totalIssues} vulnerabilities found. See details below.</CardDescription>
+            <CardTitle className="text-2xl">Audit Report: `{results.repository_info.name}`</CardTitle>
+            <CardDescription>{results.summary.total_vulnerabilities} vulnerabilities found. See details below.</CardDescription>
           </div>
         </div>
         <div className="space-y-4 text-center">
           <div className="grid grid-cols-2 gap-4">
             <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
               <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
-              <p className="text-4xl font-bold">{results.summary.totalIssues}</p>
+              <p className="text-4xl font-bold">{results.summary.total_vulnerabilities}</p>
             </div>
             <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
+              <h4 className="text-sm font-medium text-foreground">Codebase Health</h4>
               <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-red-400">Critical</h4>
-              <p className="text-4xl font-bold text-red-500">{results.summary.critical}</p>
+              <h4 className="text-sm font-medium text-red-400">High</h4>
+              <p className="text-4xl font-bold text-red-500">{results.summary.high_severity}</p>
             </div>
             <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-orange-400">High</h4>
-              <p className="text-4xl font-bold text-orange-500">{results.summary.high}</p>
+              <h4 className="text-sm font-medium text-orange-400">Medium</h4>
+              <p className="text-4xl font-bold text-orange-500">{results.summary.medium_severity}</p>
             </div>
             <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-yellow-400">Medium</h4>
-              <p className="text-4xl font-bold text-yellow-500">{results.summary.medium}</p>
+              <h4 className="text-sm font-medium text-yellow-400">Low</h4>
+              <p className="text-4xl font-bold text-yellow-500">{results.summary.low_severity}</p>
             </div>
-            <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-green-400">Low</h4>
-              <p className="text-4xl font-bold text-green-500">{results.summary.low}</p>
+            <div className="border border-blue-500/50 bg-blue-500/10 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-blue-400">Files Scanned</h4>
+              <p className="text-4xl font-bold text-blue-500">{results.summary.files_scanned}</p>
             </div>
           </div>
           <Accordion type="single" collapsible className="w-full">
-            <AccordionItem value="master-prompt" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
+            <AccordionItem value="gpt-analysis" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
               <AccordionTrigger className="hover:no-underline px-4 py-3">
                 <div className="flex items-center gap-2 text-foreground">
-                  <Terminal className="mr-2 h-4 w-4" /> View Master Prompt
+                  <Terminal className="mr-2 h-4 w-4" /> View GPT-4 Analysis
                 </div>
               </AccordionTrigger>
               <AccordionContent className="px-4 pb-4">
                 <div className="bg-black/80 rounded-md p-3 text-left">
                   <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
-                    {`You are an expert security engineer. Given the following list of vulnerabilities, provide the necessary code changes to remediate all of them. For each vulnerability, explain the risk and the fix.
-
-${sortedVulnerabilities.map((v, i) => `Vulnerability ${i + 1}: ${v.title} in '${v.file}' on line ${v.line}.\nDescription: ${v.description}...`).join('\n\n')}
-
-Provide a git-compatible diff for each required code change.`}
+                    {results.gpt_analysis.analysis}
                   </pre>
                 </div>
               </AccordionContent>
@@ -189,27 +239,32 @@ Provide a git-compatible diff for each required code change.`}
       </CardHeader>
       <CardContent>
         <Accordion type="single" collapsible className="w-full">
-          {sortedVulnerabilities.map((vuln) => {
+          {sortedVulnerabilities.map((vuln, index) => {
             const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
             return (
-              <AccordionItem value={vuln.id} key={vuln.id} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
+              <AccordionItem value={`vuln-${index}`} key={index} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
                 <AccordionTrigger className="hover:no-underline">
                   <div className="flex items-center gap-4 w-full">
                     {icon}
                     <div className="flex-grow text-left">
-                      <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
-                      <p className="text-sm text-muted-foreground font-mono">{vuln.file}:{vuln.line}</p>
+                      <div className="font-medium">{vuln.rule_id}</div>
+                      <div className="text-sm text-muted-foreground">{vuln.file_path}:{vuln.line_number}</div>
                     </div>
                   </div>
                 </AccordionTrigger>
-                <AccordionContent className="pt-2">
-                  <p className="text-sm text-foreground/80 mb-4">{vuln.description}</p>
-                  <div className="bg-card/50 p-4 rounded-md border border-border">
-                    <h4 className="font-semibold mb-2 flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation Prompt</h4>
-                    <div className="bg-black/80 rounded-md p-3">
-                      <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
-                        {`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`}
-                      </pre>
+                <AccordionContent className="px-4 pb-4">
+                  <div className="space-y-3">
+                    <div>
+                      <h4 className="font-medium mb-2">Description</h4>
+                      <p className="text-sm text-muted-foreground">{vuln.description}</p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium mb-2">Message</h4>
+                      <p className="text-sm text-muted-foreground">{vuln.message}</p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium mb-2">Remediation</h4>
+                      <p className="text-sm text-muted-foreground">{vuln.remediation}</p>
                     </div>
                   </div>
                 </AccordionContent>
@@ -219,8 +274,8 @@ Provide a git-compatible diff for each required code change.`}
         </Accordion>
       </CardContent>
     </Card>
-  )
-}
+  );
+};
 
 export default function SecurityAuditPage() {
   const { user, githubToken } = useAuth()
@@ -447,21 +502,36 @@ export default function SecurityAuditPage() {
         </CardFooter>
       </Card>
 
-      {auditResults && auditResults.summary.totalIssues > 0 && (
+      {auditResults && auditResults.summary && auditResults.summary.total_vulnerabilities > 0 && (
         <AuditReport results={auditResults} />
       )}
 
-      {auditResults && auditResults.summary.totalIssues === 0 && (
+      {auditResults && auditResults.summary && auditResults.summary.total_vulnerabilities === 0 && (
          <Card className="border-green-500/30">
             <CardHeader className="flex-row items-center gap-4">
                 <CheckCircle className="w-8 h-8 text-green-500" />
                 <div>
                     <CardTitle>No Issues Found!</CardTitle>
                     <CardDescription>
-                        Excellent! Your repository `{auditResults.repoName}` passed the security audit.
+                        Excellent! Your repository `{auditResults.repository_info?.name || 'Unknown'}` passed the security audit.
                     </CardDescription>
                 </div>
             </CardHeader>
+        </Card>
+      )}
+
+      {/* Debug: Show raw audit results for troubleshooting */}
+      {auditResults && (
+        <Card className="border-blue-500/30 mt-4">
+          <CardHeader>
+            <CardTitle className="text-blue-600">Debug: Raw Audit Results</CardTitle>
+            <CardDescription>Raw data structure returned from worker</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-4 rounded overflow-auto">
+              {JSON.stringify(auditResults, null, 2)}
+            </pre>
+          </CardContent>
         </Card>
       )}
 

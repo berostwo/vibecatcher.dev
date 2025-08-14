@@ -69,7 +69,7 @@ def validate_repository_url(url: str) -> bool:
         return False
 
 class SecurityAuditor:
-    def __init__(self, openai_api_key: str, gpt_model: str = "gpt-4-turbo-preview"):
+    def __init__(self, openai_api_key: str, gpt_model: str = "gpt-4o"):
         self.openai_api_key = openai_api_key
         self.gpt_model = gpt_model
         self.session = None
@@ -352,7 +352,7 @@ async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
         
         # Get API keys from environment
         openai_api_key = os.environ.get('OPENAI_API_KEY')
-        gpt_model = os.environ.get('GPT_MODEL', 'gpt-4-turbo-preview')
+        gpt_model = os.environ.get('GPT_MODEL', 'gpt-4o')
         
         logger.info(f"🔑 OpenAI API Key present: {'YES' if openai_api_key else 'NO'}")
         logger.info(f"🤖 GPT Model: {gpt_model}")
