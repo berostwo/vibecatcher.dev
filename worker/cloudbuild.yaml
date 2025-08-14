@@ -38,6 +38,11 @@ steps:
 images:
   - 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA'
 
+# Build options and logging configuration
+options:
+  logging: CLOUD_LOGGING_ONLY
+  defaultLogsBucket: gs://$PROJECT_ID-cloudbuild-logs
+
 # Substitution variables
 substitutions:
   _OPENAI_API_KEY: 'your-openai-api-key-here'
