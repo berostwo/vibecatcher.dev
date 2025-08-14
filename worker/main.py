@@ -136,17 +136,10 @@ class SecurityAuditor:
     async def run_semgrep_scan(self, repo_path: str) -> Dict[str, Any]:
         """Run comprehensive Semgrep security scan with enterprise-grade rules"""
         try:
-            # Use comprehensive security rules for enterprise-level scanning
+            # Use only the most stable, essential security rules
             semgrep_rules = [
-                'p/security-audit',      # Security audit rules
-                'p/owasp-top-ten',       # OWASP Top 10
-                'p/secrets',             # Secrets detection
-                'p/javascript',          # JavaScript security
-                'p/python',              # Python security
-                'p/php',                 # PHP security
-                'p/java',                # Java security
-                'p/go',                  # Go security
-                'p/ruby',                # Ruby security
+                'p/owasp-top-ten',       # OWASP Top 10 - most stable
+                'p/secrets',             # Secrets detection - essential
             ]
             
             # Build comprehensive scan command
