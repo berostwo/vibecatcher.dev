@@ -275,7 +275,7 @@ Please provide a comprehensive analysis confirming this is accurate, including:
 3. Recommendations for ongoing security practices
 4. Compliance status assessment"""
         
-        # Group findings by rule for better analysis
+        # Group findings by rule for better analysi
         rule_groups = {}
         for finding in findings:
             rule_id = finding.get('check_id', 'Unknown')
