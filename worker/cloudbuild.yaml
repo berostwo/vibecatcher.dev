@@ -31,9 +31,11 @@ steps:
       - '10'
       - '--max-instances'
       - '5'
-  env:
-    - 'CLOUD_RUN_REGION=us-central1'
-    - 'CLOUD_RUN_SERVICE=security-audit-worker'
+
+# Environment variables for the build
+env:
+  - 'CLOUD_RUN_REGION=us-central1'
+  - 'CLOUD_RUN_SERVICE=security-audit-worker'
 
 # Store images in Google Cloud Storage
 images:
