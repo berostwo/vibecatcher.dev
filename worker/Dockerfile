@@ -12,13 +12,10 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     gnupg \
-    software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Semgrep
-RUN curl -L https://github.com/returntocorp/semgrep/releases/latest/download/semgrep-v1.60.0-ubuntu-20.04.tgz | tar -xz \
-    && mv semgrep-v1.60.0-ubuntu-20.04/semgrep /usr/local/bin/ \
-    && rm -rf semgrep-v1.60.0-ubuntu-20.04
+# Install Semgrep via pip (more reliable)
+RUN pip install semgrep
 
 # Set working directory
 WORKDIR /app
@@ -42,7 +39,7 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8080/ || exit 1
 
 # Run the application
 CMD ["python", "main.py"]

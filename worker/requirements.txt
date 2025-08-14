@@ -2,26 +2,12 @@
 aiohttp==3.9.1
 flask==3.0.0
 
-# Google Cloud dependencies
-google-cloud-functions==1.8.4
-google-cloud-logging==3.9.0
-
-# Security and analysis tools
-semgrep==1.60.0
-
 # HTTP and async support
 httpx==0.25.2
 requests==2.31.0
 
 # Data processing
 pydantic==2.5.2
-dataclasses-json==0.6.3
 
 # Logging and monitoring
 structlog==23.2.0
-
-# Development and testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-black==23.11.0
-flake8==6.1.0

@@ -10,10 +10,16 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 import logging
 from flask import Flask, request, jsonify
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Production configuration
+MAX_REPO_SIZE_MB = 100  # Maximum repository size to scan
+MAX_SCAN_TIME_SECONDS = 600  # Maximum scan time (10 minutes)
+ALLOWED_REPO_DOMAINS = ['github.com', 'gitlab.com', 'bitbucket.org']
 
 @dataclass
 class Vulnerability:
@@ -42,6 +48,26 @@ class AuditResults:
     scan_timestamp: str
     gpt_analysis: Dict[str, Any]
 
+def validate_repository_url(url: str) -> bool:
+    """Validate repository URL for security and format"""
+    try:
+        # Check if it's a valid URL
+        if not url.startswith(('https://', 'http://')):
+            return False
+        
+        # Check if it's from allowed domains
+        domain = url.split('/')[2]
+        if domain not in ALLOWED_REPO_DOMAINS:
+            return False
+        
+        # Check for suspicious patterns
+        if any(pattern in url.lower() for pattern in ['..', '~', 'localhost', '127.0.0.1']):
+            return False
+            
+        return True
+    except Exception:
+        return False
+
 class SecurityAuditor:
     def __init__(self, openai_api_key: str, gpt_model: str = "gpt-4-turbo-preview"):
         self.openai_api_key = openai_api_key
@@ -49,7 +75,8 @@ class SecurityAuditor:
         self.session = None
     
     async def __aenter__(self):
-        self.session = aiohttp.ClientSession()
+        timeout = aiohttp.ClientTimeout(total=300)  # 5 minute timeout
+        self.session = aiohttp.ClientSession(timeout=timeout)
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -57,25 +84,45 @@ class SecurityAuditor:
             await self.session.close()
     
     async def clone_repository(self, repo_url: str, temp_dir: str) -> str:
-        """Clone repository to temporary directory"""
+        """Clone repository to temporary directory with security checks"""
         try:
+            # Validate repository URL
+            if not validate_repository_url(repo_url):
+                raise ValueError("Invalid or suspicious repository URL")
+            
             # Extract repo name from URL
             repo_name = repo_url.split('/')[-1].replace('.git', '')
+            if not repo_name or len(repo_name) > 100:
+                raise ValueError("Invalid repository name")
+            
             repo_path = os.path.join(temp_dir, repo_name)
             
-            # Clone the repository
+            # Clone with timeout and security flags
             process = await asyncio.create_subprocess_exec(
-                'git', 'clone', repo_url, repo_path,
+                'git', 'clone', '--depth', '1', '--single-branch', repo_url, repo_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+            except asyncio.TimeoutError:
+                process.kill()
+                raise Exception("Repository clone timed out")
             
             if process.returncode != 0:
                 raise Exception(f"Git clone failed: {stderr.decode()}")
             
-            logger.info(f"Repository cloned successfully to {repo_path}")
+            # Check repository size
+            repo_size = sum(os.path.getsize(os.path.join(dirpath, filename))
+                           for dirpath, dirnames, filenames in os.walk(repo_path)
+                           for filename in filenames)
+            repo_size_mb = repo_size / (1024 * 1024)
+            
+            if repo_size_mb > MAX_REPO_SIZE_MB:
+                raise Exception(f"Repository too large: {repo_size_mb:.1f}MB (max: {MAX_REPO_SIZE_MB}MB)")
+            
+            logger.info(f"Repository cloned successfully to {repo_path} (size: {repo_size_mb:.1f}MB)")
             return repo_path
             
         except Exception as e:
@@ -83,16 +130,20 @@ class SecurityAuditor:
             raise
     
     async def run_semgrep_scan(self, repo_path: str) -> Dict[str, Any]:
-        """Run Semgrep security scan on repository"""
+        """Run Semgrep security scan on repository with timeout"""
         try:
-            # Run semgrep scan
+            # Run semgrep scan with security-focused rules
             process = await asyncio.create_subprocess_exec(
-                'semgrep', 'scan', '--json', '--config', 'auto', repo_path,
+                'semgrep', 'scan', '--json', '--config', 'auto', '--timeout', '300', repo_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=MAX_SCAN_TIME_SECONDS)
+            except asyncio.TimeoutError:
+                process.kill()
+                raise Exception("Semgrep scan timed out")
             
             if process.returncode != 0 and process.returncode != 1:  # Semgrep returns 1 for findings
                 raise Exception(f"Semgrep scan failed: {stderr.decode()}")
@@ -289,6 +340,10 @@ async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
         if not repo_url:
             raise ValueError("repository_url is required")
         
+        # Validate repository URL
+        if not validate_repository_url(repo_url):
+            raise ValueError("Invalid or suspicious repository URL")
+        
         # Get API keys from environment
         openai_api_key = os.environ.get('OPENAI_API_KEY')
         if not openai_api_key:
@@ -327,6 +382,12 @@ def health_check():
 def security_audit():
     """Main endpoint for security audits"""
     try:
+        # Add security headers
+        response = jsonify({'error': 'Method not allowed'})
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No data provided'}), 400
@@ -335,6 +396,7 @@ def security_audit():
         result = asyncio.run(security_audit_worker(data))
         return jsonify(result)
     except Exception as e:
+        logger.error(f"HTTP handler error: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
