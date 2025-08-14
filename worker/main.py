@@ -147,9 +147,6 @@ class SecurityAuditor:
                 'p/java',                # Java security
                 'p/go',                  # Go security
                 'p/ruby',                # Ruby security
-                'p/docker',              # Docker security
-                'p/kubernetes',          # Kubernetes security
-                'p/terraform',           # Infrastructure as Code security
             ]
             
             # Build comprehensive scan command
