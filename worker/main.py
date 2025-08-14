@@ -335,33 +335,58 @@ Also provide a master summary of all critical issues and their priority order.""
 async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
     """Main worker function for security audits"""
     try:
+        logger.info("🔍 Starting security audit worker...")
+        
         # Extract parameters
         repo_url = data.get('repository_url')
         if not repo_url:
             raise ValueError("repository_url is required")
         
+        logger.info(f"📁 Repository URL: {repo_url}")
+        
         # Validate repository URL
         if not validate_repository_url(repo_url):
             raise ValueError("Invalid or suspicious repository URL")
         
+        logger.info("✅ Repository URL validation passed")
+        
         # Get API keys from environment
         openai_api_key = os.environ.get('OPENAI_API_KEY')
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is required")
-        
         gpt_model = os.environ.get('GPT_MODEL', 'gpt-4-turbo-preview')
         
+        logger.info(f"🔑 OpenAI API Key present: {'YES' if openai_api_key else 'NO'}")
+        logger.info(f"🤖 GPT Model: {gpt_model}")
+        
+        if not openai_api_key:
+            logger.error("❌ OPENAI_API_KEY environment variable is missing!")
+            raise ValueError("OPENAI_API_KEY environment variable is required")
+        
+        if openai_api_key == 'your-openai-api-key-here':
+            logger.error("❌ OPENAI_API_KEY is still set to placeholder value!")
+            raise ValueError("OPENAI_API_KEY is set to placeholder value - please set your actual API key")
+        
+        logger.info("✅ OpenAI API key validation passed")
+        
         # Create auditor and run analysis
+        logger.info("🚀 Creating SecurityAuditor instance...")
         async with SecurityAuditor(openai_api_key, gpt_model) as auditor:
+            logger.info("✅ SecurityAuditor created successfully")
+            
+            logger.info("🔍 Starting audit report generation...")
             results = await auditor.generate_audit_report(repo_url)
+            
+            logger.info("✅ Audit report generated successfully")
             
             # Convert to dict for JSON serialization
             return asdict(results)
             
     except Exception as e:
-        logger.error(f"Worker error: {e}")
+        logger.error(f"❌ Worker error: {e}")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        logger.error(f"❌ Error details: {str(e)}")
         return {
             'error': str(e),
+            'error_type': type(e).__name__,
             'timestamp': datetime.utcnow().isoformat()
         }
 
@@ -422,22 +447,26 @@ def health_check():
 def security_audit():
     """Main endpoint for security audits"""
     try:
-        # Add security headers
-        response = jsonify({'error': 'Method not allowed'})
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['X-XSS-Protection'] = '1; mode=block'
+        logger.info("🌐 POST request received for security audit")
+        logger.info(f"📋 Request headers: {dict(request.headers)}")
         
         data = request.get_json()
         if not data:
+            logger.error("❌ No JSON data provided in request")
             return jsonify({'error': 'No data provided'}), 400
         
+        logger.info(f"📥 Request data: {data}")
+        
         # Run the audit
+        logger.info("🚀 Starting async audit worker...")
         result = asyncio.run(security_audit_worker(data))
+        logger.info(f"✅ Audit worker completed with result: {result}")
+        
         return jsonify(result)
     except Exception as e:
-        logger.error(f"HTTP handler error: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"❌ HTTP handler error: {e}")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        return jsonify({'error': str(e), 'error_type': type(e).__name__}), 500
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080, debug=False)

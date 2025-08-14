@@ -262,28 +262,52 @@ export default function SecurityAuditPage() {
     
     setIsLoading(true);
     setError(null);
+    console.log('🚀 Starting security audit for:', selectedRepo);
     
     try {
+      // Add timeout to the fetch request
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 900000); // 15 minutes timeout
+      
+      console.log('📡 Calling worker at:', process.env.NEXT_PUBLIC_SECURITY_WORKER_URL);
+      
       const response = await fetch(process.env.NEXT_PUBLIC_SECURITY_WORKER_URL!, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           repository_url: `https://github.com/berostwo/${selectedRepo}`
-        })
+        }),
+        signal: controller.signal
       });
       
+      clearTimeout(timeoutId);
+      
+      console.log('📥 Worker response status:', response.status);
+      console.log('📥 Worker response headers:', Object.fromEntries(response.headers.entries()));
+      
       if (!response.ok) {
-        throw new Error(`Audit failed: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('❌ Worker error response:', errorText);
+        throw new Error(`Audit failed: ${response.status} - ${errorText}`);
       }
       
       const auditResults = await response.json();
+      console.log('✅ Audit completed successfully:', auditResults);
       setAuditResults(auditResults);
       
-    } catch (error) {
-      console.error('Audit failed:', error);
-      setError(error instanceof Error ? error.message : 'Audit failed');
+    } catch (error: unknown) {
+      console.error('❌ Audit failed:', error);
+      
+      if (error instanceof Error && error.name === 'AbortError') {
+        setError('Audit timed out after 15 minutes. The repository might be too large or complex.');
+      } else if (error instanceof Error) {
+        setError(error.message);
+      } else {
+        setError('Audit failed with unknown error');
+      }
     } finally {
       setIsLoading(false);
+      console.log('🏁 Audit process finished');
     }
   };
 
@@ -408,15 +432,12 @@ export default function SecurityAuditPage() {
           )}
         </CardContent>
         <CardFooter>
-          <Button 
-            onClick={handleAudit} 
-            disabled={!selectedRepo || isLoading || repositories.length === 0}
-          >
+          <Button onClick={handleAudit} disabled={!selectedRepo || isLoading || repositories.length === 0}>
             {isLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Auditing...
-              </>
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Running Security Audit... (This may take 5-10 minutes)
+              </div>
             ) : (
               <>
                 Start Audit <ArrowRight className="ml-2 h-4 w-4" />
