@@ -30,10 +30,14 @@ class Vulnerability:
     line_number: int
     description: str
     remediation: str
+    occurrences: int = 0
+    locations: List[Dict[str, Any]] = None
+    rule_metadata: Dict[str, Any] = None
 
 @dataclass
 class AuditSummary:
     total_vulnerabilities: int
+    critical_severity: int
     high_severity: int
     medium_severity: int
     low_severity: int
@@ -130,11 +134,50 @@ class SecurityAuditor:
             raise
     
     async def run_semgrep_scan(self, repo_path: str) -> Dict[str, Any]:
-        """Run Semgrep security scan on repository with timeout"""
+        """Run comprehensive Semgrep security scan with enterprise-grade rules"""
         try:
-            # Run semgrep scan with security-focused rules
+            # Use comprehensive security rules for enterprise-level scanning
+            semgrep_rules = [
+                'p/security-audit',      # Security audit rules
+                'p/owasp-top-ten',       # OWASP Top 10
+                'p/secrets',             # Secrets detection
+                'p/cwe-top-25',          # Common Weakness Enumeration
+                'p/javascript',          # JavaScript security
+                'p/python',              # Python security
+                'p/php',                 # PHP security
+                'p/java',                # Java security
+                'p/go',                  # Go security
+                'p/ruby',                # Ruby security
+                'p/docker',              # Docker security
+                'p/kubernetes',          # Kubernetes security
+                'p/terraform',           # Infrastructure as Code security
+                'p/generic',             # Generic security patterns
+            ]
+            
+            # Build comprehensive scan command
+            scan_command = [
+                'semgrep', 'scan',
+                '--json',
+                '--timeout', '600',      # 10 minute timeout for comprehensive scan
+                '--max-memory', '4096',  # 4GB memory limit
+                '--max-target-size', '1000000',  # 1M lines max
+                '--verbose',             # Detailed output
+                '--metrics', 'off',      # Disable metrics for privacy
+            ]
+            
+            # Add rules
+            for rule in semgrep_rules:
+                scan_command.extend(['--config', rule])
+            
+            # Add target path
+            scan_command.append(repo_path)
+            
+            logger.info(f"🔍 Running comprehensive Semgrep scan with {len(semgrep_rules)} rule sets...")
+            logger.info(f"🔍 Scan command: {' '.join(scan_command)}")
+            
+            # Run semgrep scan with comprehensive security rules
             process = await asyncio.create_subprocess_exec(
-                'semgrep', 'scan', '--json', '--config', 'auto', '--timeout', '300', repo_path,
+                *scan_command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -143,14 +186,27 @@ class SecurityAuditor:
                 stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=MAX_SCAN_TIME_SECONDS)
             except asyncio.TimeoutError:
                 process.kill()
-                raise Exception("Semgrep scan timed out")
+                raise Exception("Semgrep scan timed out - repository may be too large or complex")
             
             if process.returncode != 0 and process.returncode != 1:  # Semgrep returns 1 for findings
-                raise Exception(f"Semgrep scan failed: {stderr.decode()}")
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                logger.error(f"Semgrep scan failed with return code {process.returncode}: {error_msg}")
+                raise Exception(f"Semgrep scan failed: {error_msg}")
             
             # Parse JSON output
             scan_results = json.loads(stdout.decode())
-            logger.info(f"Semgrep scan completed with {len(scan_results.get('results', []))} findings")
+            findings_count = len(scan_results.get('results', []))
+            files_scanned = len(scan_results.get('paths', {}).get('scanned', []))
+            
+            logger.info(f"🔍 Semgrep scan completed successfully!")
+            logger.info(f"🔍 Files scanned: {files_scanned}")
+            logger.info(f"🔍 Security findings: {findings_count}")
+            
+            # Log scan statistics
+            if 'stats' in scan_results:
+                stats = scan_results['stats']
+                logger.info(f"🔍 Scan duration: {stats.get('time', {}).get('total', 'Unknown')}s")
+                logger.info(f"🔍 Rules run: {stats.get('rules', {}).get('total', 'Unknown')}")
             
             return scan_results
             
@@ -207,32 +263,96 @@ class SecurityAuditor:
             return self._fallback_parse(semgrep_results)
     
     def _create_gpt_prompt(self, semgrep_results: Dict[str, Any]) -> str:
-        """Create prompt for GPT-4 analysis"""
+        """Create enterprise-grade prompt for GPT-4 analysis"""
         findings = semgrep_results.get('results', [])
         
         if not findings:
-            return "No security vulnerabilities found in the codebase. Please confirm this is accurate."
+            return """No security vulnerabilities found in the codebase. 
+            
+Please provide a comprehensive analysis confirming this is accurate, including:
+1. What security aspects were covered in the scan
+2. Any potential areas that might need manual review
+3. Recommendations for ongoing security practices
+4. Compliance status assessment"""
         
-        prompt = f"""Analyze these {len(findings)} security findings from Semgrep:
+        # Group findings by rule for better analysis
+        rule_groups = {}
+        for finding in findings:
+            rule_id = finding.get('check_id', 'Unknown')
+            if rule_id not in rule_groups:
+                rule_groups[rule_id] = []
+            rule_groups[rule_id].append(finding)
+        
+        prompt = f"""You are a senior security engineer conducting an enterprise-grade security audit for a production application.
 
+ANALYSIS REQUEST:
+Analyze these {len(findings)} security findings from Semgrep across {len(rule_groups)} unique vulnerability types.
+
+SCAN CONTEXT:
+- This is a production application audit
+- Findings will be used by developers to remediate security issues
+- Need enterprise-level analysis suitable for business stakeholders
+
+FINDINGS TO ANALYZE:
 """
         
-        for i, finding in enumerate(findings[:10], 1):  # Limit to first 10 findings
-            prompt += f"""Finding {i}:
-- Rule: {finding.get('check_id', 'Unknown')}
-- Severity: {finding.get('extra', {}).get('severity', 'Unknown')}
-- File: {finding.get('path', 'Unknown')}:{finding.get('start', {}).get('line', 'Unknown')}
-- Message: {finding.get('extra', {}).get('message', 'Unknown')}
-
+        # Provide grouped findings for better analysis
+        for rule_id, rule_findings in list(rule_groups.items())[:15]:  # Limit to first 15 rule types
+            prompt += f"""
+RULE: {rule_id}
+OCCURRENCES: {len(rule_findings)}
+SEVERITY: {rule_findings[0].get('extra', {}).get('severity', 'Unknown')}
+EXAMPLES:
+"""
+            # Show first 3 examples of each rule type
+            for i, finding in enumerate(rule_findings[:3]):
+                prompt += f"""  Example {i+1}: {finding.get('path', 'Unknown')}:{finding.get('start', {}).get('line', 'Unknown')}
+    Message: {finding.get('extra', {}).get('message', 'Unknown')}
 """
         
-        prompt += """For each finding, provide:
-1. A clear description of the security risk
-2. Specific remediation steps with code examples
-3. Why this vulnerability is dangerous
-4. Best practices to prevent similar issues
+        prompt += """
 
-Also provide a master summary of all critical issues and their priority order."""
+REQUIRED OUTPUT FORMAT:
+
+1. EXECUTIVE SUMMARY (Business Stakeholders):
+   - Overall risk assessment (Low/Medium/High/Critical)
+   - Compliance status (OWASP Top 10, CWE Top 25)
+   - Business impact assessment
+   - Priority remediation timeline
+
+2. TECHNICAL ANALYSIS (Developers):
+   - For each unique vulnerability type:
+     * Clear description of the security risk
+     * Why this vulnerability is dangerous
+     * Specific code examples showing the issue
+     * Step-by-step remediation with code snippets
+     * Best practices to prevent similar issues
+
+3. MASTER REMEDIATION PROMPT (Cursor/AI Assistant):
+   - A comprehensive prompt that a developer can give to Cursor/GPT to fix ALL issues
+   - Include context about the codebase and specific files
+   - Request git-compatible diffs for each fix
+   - Ask for testing recommendations
+
+4. COMPLIANCE MAPPING:
+   - Map each finding to relevant security frameworks
+   - OWASP Top 10 categories
+   - CWE identifiers
+   - Industry best practices
+
+5. RISK SCORING:
+   - CVSS-style scoring for each vulnerability type
+   - Exploitability assessment
+   - Business impact rating
+   - Remediation priority (P0/P1/P2/P3)
+
+6. REMEDIATION TIMELINE:
+   - Immediate fixes (P0 - fix within 24 hours)
+   - High priority (P1 - fix within 1 week)
+   - Medium priority (P2 - fix within 1 month)
+   - Low priority (P3 - fix within 3 months)
+
+Provide professional, actionable advice that would pass an enterprise security review."""
         
         return prompt
     
@@ -279,47 +399,98 @@ Also provide a master summary of all critical issues and their priority order.""
                 # Analyze with GPT-4
                 gpt_analysis = await self.analyze_with_gpt4(semgrep_results)
                 
-                # Process findings
+                # Process findings with enterprise-grade analysis
                 findings = semgrep_results.get('results', [])
                 vulnerabilities = []
                 
+                # Group findings by rule type and count occurrences
+                rule_groups = {}
                 for finding in findings:
+                    rule_id = finding.get('check_id', 'Unknown')
+                    if rule_id not in rule_groups:
+                        rule_groups[rule_id] = {
+                            'findings': [],
+                            'severity': finding.get('extra', {}).get('severity', 'Unknown'),
+                            'message': finding.get('extra', {}).get('message', 'Unknown'),
+                            'description': finding.get('extra', {}).get('description', 'No description available'),
+                            'rule_metadata': finding.get('extra', {}).get('metadata', {}),
+                        }
+                    rule_groups[rule_id]['findings'].append(finding)
+                
+                # Create condensed vulnerability entries
+                for rule_id, group_data in rule_groups.items():
+                    findings_list = group_data['findings']
+                    first_finding = findings_list[0]
+                    
+                    # Collect all line numbers and file paths for this rule
+                    locations = []
+                    for finding in findings_list:
+                        file_path = finding.get('path', 'Unknown')
+                        line_number = finding.get('start', {}).get('line', 0)
+                        locations.append({
+                            'file_path': file_path,
+                            'line_number': line_number,
+                            'message': finding.get('extra', {}).get('message', 'Unknown')
+                        })
+                    
+                    # Create condensed vulnerability entry
                     vuln = Vulnerability(
-                        rule_id=finding.get('check_id', 'Unknown'),
-                        message=finding.get('extra', {}).get('message', 'Unknown'),
-                        severity=finding.get('extra', {}).get('severity', 'Unknown'),
-                        file_path=finding.get('path', 'Unknown'),
-                        line_number=finding.get('start', {}).get('line', 0),
-                        description=finding.get('extra', {}).get('description', 'No description available'),
+                        rule_id=rule_id,
+                        message=group_data['message'],
+                        severity=group_data['severity'],
+                        file_path=locations[0]['file_path'],  # Primary location
+                        line_number=locations[0]['line_number'],  # Primary line
+                        description=group_data['description'],
                         remediation='See GPT analysis for detailed remediation steps'
                     )
+                    
+                    # Add occurrence data to the vulnerability
+                    vuln.occurrences = len(findings_list)
+                    vuln.locations = locations
+                    vuln.rule_metadata = group_data['rule_metadata']
+                    
                     vulnerabilities.append(vuln)
                 
-                # Calculate summary with proper severity mapping
-                high_sev = len([v for v in vulnerabilities if v.severity.lower() in ['error', 'critical', 'high']])
-                medium_sev = len([v for v in vulnerabilities if v.severity.lower() in ['warning', 'medium']])
-                low_sev = len([v for v in vulnerabilities if v.severity.lower() in ['info', 'low', 'note']])
+                # Enhanced severity mapping with proper categorization
+                def map_severity(semgrep_severity: str) -> str:
+                    """Map Semgrep severity to our categories"""
+                    severity_lower = semgrep_severity.lower()
+                    
+                    # Critical vulnerabilities
+                    if severity_lower in ['critical', 'error']:
+                        return 'critical'
+                    # High vulnerabilities  
+                    elif severity_lower in ['high', 'warning']:
+                        return 'high'
+                    # Medium vulnerabilities
+                    elif severity_lower in ['medium', 'moderate']:
+                        return 'medium'
+                    # Low vulnerabilities
+                    elif severity_lower in ['low', 'info', 'note']:
+                        return 'low'
+                    # Default to medium if unknown
+                    else:
+                        return 'medium'
                 
-                # If no clear mapping, use Semgrep's severity levels
-                if high_sev == 0 and medium_sev == 0 and low_sev == 0:
-                    # Map Semgrep severities to our categories
-                    for vuln in vulnerabilities:
-                        semgrep_severity = vuln.severity.lower()
-                        if semgrep_severity in ['error', 'critical', 'high']:
-                            high_sev += 1
-                        elif semgrep_severity in ['warning', 'medium']:
-                            medium_sev += 1
-                        else:
-                            low_sev += 1
+                # Count vulnerabilities by mapped severity
+                severity_counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+                for vuln in vulnerabilities:
+                    mapped_severity = map_severity(vuln.severity)
+                    severity_counts[mapped_severity] += 1
+                
+                # Update vulnerability severity to mapped value
+                for vuln in vulnerabilities:
+                    vuln.severity = map_severity(vuln.severity)
                 
                 end_time = datetime.utcnow()
                 duration = (end_time - start_time).total_seconds()
                 
                 summary = AuditSummary(
                     total_vulnerabilities=len(vulnerabilities),
-                    high_severity=high_sev,
-                    medium_severity=medium_sev,
-                    low_severity=low_sev,
+                    critical_severity=severity_counts['critical'],
+                    high_severity=severity_counts['high'],
+                    medium_severity=severity_counts['medium'],
+                    low_severity=severity_counts['low'],
                     files_scanned=len(semgrep_results.get('paths', {}).get('scanned', [])),
                     scan_duration=duration
                 )
@@ -372,10 +543,6 @@ async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
         if not openai_api_key:
             logger.error("❌ OPENAI_API_KEY environment variable is missing!")
             raise ValueError("OPENAI_API_KEY environment variable is required")
-        
-        if openai_api_key == 'your-openai-api-key-here':
-            logger.error("❌ OPENAI_API_KEY is still set to placeholder value!")
-            raise ValueError("OPENAI_API_KEY is set to placeholder value - please set your actual API key")
         
         logger.info("✅ OpenAI API key validation passed")
         

@@ -38,6 +38,8 @@ interface Vulnerability {
   line_number: number;
   description: string;
   remediation: string;
+  occurrences: number; // Added for enterprise-grade report
+  locations?: { file_path: string; line_number: number }[]; // Added for enterprise-grade report
 }
 
 interface AuditSummary {
@@ -47,6 +49,7 @@ interface AuditSummary {
   low_severity: number;
   files_scanned: number;
   scan_duration: number;
+  critical_severity: number; // Added for enterprise-grade report
 }
 
 interface AuditResults {
@@ -75,7 +78,8 @@ const mockAuditResultsData: Record<string, AuditResults> = {
       medium_severity: 1, 
       low_severity: 1, 
       files_scanned: 10,
-      scan_duration: 45.2
+      scan_duration: 45.2,
+      critical_severity: 0 // Added for mock data
     },
     vulnerabilities: [
       { 
@@ -85,7 +89,9 @@ const mockAuditResultsData: Record<string, AuditResults> = {
         file_path: "src/components/Comment.tsx", 
         line_number: 42, 
         description: "User-provided content is rendered without proper sanitization, allowing for potential XSS attacks.", 
-        remediation: "Use a library like `dompurify` to sanitize HTML content before rendering it with `dangerouslySetInnerHTML`." 
+        remediation: "Use a library like `dompurify` to sanitize HTML content before rendering it with `dangerouslySetInnerHTML`.",
+        occurrences: 1, // Added for mock data
+        locations: [{ file_path: "src/components/Comment.tsx", line_number: 42 }] // Added for mock data
       },
       { 
         rule_id: "VULN-001", 
@@ -94,7 +100,9 @@ const mockAuditResultsData: Record<string, AuditResults> = {
         file_path: "package.json", 
         line_number: 25, 
         description: "The version of `react-scripts` used in this project is outdated and has known security vulnerabilities.", 
-        remediation: "Update `react-scripts` to the latest version by running `npm install react-scripts@latest`." 
+        remediation: "Update `react-scripts` to the latest version by running `npm install react-scripts@latest`.",
+        occurrences: 1, // Added for mock data
+        locations: [{ file_path: "package.json", line_number: 25 }] // Added for mock data
       },
       { 
         rule_id: "VULN-003", 
@@ -103,7 +111,9 @@ const mockAuditResultsData: Record<string, AuditResults> = {
         file_path: "src/components/Footer.tsx", 
         line_number: 15, 
         description: "Links using `target='_blank'` without `rel='noopener noreferrer'` are a security risk.", 
-        remediation: "Add `rel='noopener noreferrer'` to all `<a>` tags that have `target='_blank'`." 
+        remediation: "Add `rel='noopener noreferrer'` to all `<a>` tags that have `target='_blank'`.",
+        occurrences: 1, // Added for mock data
+        locations: [{ file_path: "src/components/Footer.tsx", line_number: 15 }] // Added for mock data
       },
     ],
     repository_info: {
@@ -164,117 +174,231 @@ type AuditResultsType = AuditResults | null;
 const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) => {
     const healthScore = useMemo(() => {
         if (!results.summary.total_vulnerabilities) return 100;
-        const weightedScore = (results.summary.high_severity * 10) + (results.summary.medium_severity * 5) + (results.summary.low_severity * 2);
+        
+        // Enterprise risk scoring: Critical (10), High (7), Medium (4), Low (1)
+        const weightedScore = (
+            results.summary.critical_severity * 10 + 
+            results.summary.high_severity * 7 + 
+            results.summary.medium_severity * 4 + 
+            results.summary.low_severity * 1
+        );
         const maxScore = results.summary.total_vulnerabilities * 10;
         return Math.max(0, Math.round((1 - (weightedScore / maxScore)) * 100));
     }, [results]);
     
-  const getHealthColor = (score: number) => {
-    if (score > 85) return 'text-green-500';
-    if (score > 60) return 'text-yellow-500';
-    if (score > 40) return 'text-orange-500';
-    return 'text-red-500';
-  }
+    const getHealthColor = (score: number) => {
+        if (score >= 90) return 'text-green-500';
+        if (score >= 70) return 'text-yellow-500';
+        if (score >= 50) return 'text-orange-500';
+        return 'text-red-500';
+    };
 
-  const severityOrder = useMemo(() => ['error', 'warning', 'info'], []);
-  const sortedVulnerabilities = useMemo(() => {
-    return results.vulnerabilities.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity)) || [];
-  }, [results, severityOrder]);
+    const getSeverityColor = (severity: string) => {
+        switch (severity.toLowerCase()) {
+            case 'critical': return 'text-red-600 bg-red-50 border-red-200';
+            case 'high': return 'text-orange-600 bg-orange-50 border-orange-200';
+            case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
+            case 'low': return 'text-blue-600 bg-blue-50 border-blue-200';
+            default: return 'text-gray-600 bg-gray-50 border-gray-200';
+        }
+    };
 
-  return (
-    <Card className="bg-card/50 border-2 border-primary/20 shadow-2xl shadow-primary/10 max-w-full overflow-hidden">
-      <CardHeader className="px-6 py-6">
-        <div className="flex flex-col md:flex-row justify-between items-start mb-6 gap-4">
-          <div className="min-w-0 flex-1">
-            <CardTitle className="text-2xl break-words">Audit Report: `{results.repository_info.name}`</CardTitle>
-            <CardDescription className="break-words">{results.summary.total_vulnerabilities} vulnerabilities found. See details below.</CardDescription>
-          </div>
+    const getSeverityIcon = (severity: string) => {
+        switch (severity.toLowerCase()) {
+            case 'critical': return <ShieldAlert className="h-5 w-5 text-red-500" />;
+            case 'high': return <AlertTriangle className="h-5 w-5 text-orange-500" />;
+            case 'medium': return <Info className="h-5 w-5 text-yellow-500" />;
+            case 'low': return <CheckCircle className="h-5 w-5 text-blue-500" />;
+            default: return <Info className="h-5 w-5 text-gray-500" />;
+        }
+    };
+
+    const severityOrder = useMemo(() => ['critical', 'high', 'medium', 'low'], []);
+    const sortedVulnerabilities = useMemo(() => {
+        return results.vulnerabilities.sort((a, b) => 
+            severityOrder.indexOf(a.severity.toLowerCase()) - severityOrder.indexOf(b.severity.toLowerCase())
+        ) || [];
+    }, [results, severityOrder]);
+
+    return (
+        <div className="space-y-6 max-w-full overflow-hidden">
+            {/* Executive Summary Card */}
+            <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 border-2 border-blue-200 dark:border-blue-800">
+                <CardHeader className="text-center">
+                    <CardTitle className="text-2xl text-blue-900 dark:text-blue-100">
+                        🚀 Security Audit Executive Summary
+                    </CardTitle>
+                    <CardDescription className="text-blue-700 dark:text-blue-300">
+                        Repository: {results.repository_info.name} | Scan Date: {new Date(results.scan_timestamp).toLocaleDateString()}
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                        <div className="space-y-2">
+                            <div className="text-3xl font-bold text-blue-900 dark:text-blue-100">
+                                {results.summary.total_vulnerabilities}
+                            </div>
+                            <div className="text-sm text-blue-700 dark:text-blue-300">Total Findings</div>
+                        </div>
+                        <div className="space-y-2">
+                            <div className={`text-3xl font-bold ${getHealthColor(healthScore)}`}>
+                                {healthScore}%
+                            </div>
+                            <div className="text-sm text-blue-700 dark:text-blue-300">Security Score</div>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="text-3xl font-bold text-blue-900 dark:text-blue-100">
+                                {results.summary.files_scanned}
+                            </div>
+                            <div className="text-sm text-blue-700 dark:text-blue-300">Files Scanned</div>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="text-3xl font-bold text-blue-900 dark:text-blue-100">
+                                {results.summary.scan_duration.toFixed(1)}s
+                            </div>
+                            <div className="text-sm text-blue-700 dark:text-blue-300">Scan Duration</div>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Severity Breakdown Card */}
+            <Card className="border-2 border-primary/20">
+                <CardHeader>
+                    <CardTitle className="text-xl">📊 Security Findings by Severity</CardTitle>
+                    <CardDescription>Risk assessment and priority breakdown</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="text-center p-4 rounded-lg border-2 border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-800">
+                            <div className="text-3xl font-bold text-red-600 dark:text-red-400">
+                                {results.summary.critical_severity}
+                            </div>
+                            <div className="text-sm font-medium text-red-700 dark:text-red-300">Critical</div>
+                            <div className="text-xs text-red-600 dark:text-red-400">Fix within 24h</div>
+                        </div>
+                        <div className="text-center p-4 rounded-lg border-2 border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800">
+                            <div className="text-3xl font-bold text-orange-600 dark:text-orange-400">
+                                {results.summary.high_severity}
+                            </div>
+                            <div className="text-sm font-medium text-orange-700 dark:text-orange-300">High</div>
+                            <div className="text-xs text-orange-600 dark:text-orange-400">Fix within 1 week</div>
+                        </div>
+                        <div className="text-center p-4 rounded-lg border-2 border-yellow-200 bg-yellow-50 dark:bg-yellow-950/20 dark:border-yellow-800">
+                            <div className="text-3xl font-bold text-yellow-600 dark:text-yellow-400">
+                                {results.summary.medium_severity}
+                            </div>
+                            <div className="text-sm font-medium text-yellow-700 dark:text-yellow-300">Medium</div>
+                            <div className="text-xs text-yellow-600 dark:text-yellow-400">Fix within 1 month</div>
+                        </div>
+                        <div className="text-center p-4 rounded-lg border-2 border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800">
+                            <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
+                                {results.summary.low_severity}
+                            </div>
+                            <div className="text-sm font-medium text-blue-700 dark:text-blue-300">Low</div>
+                            <div className="text-xs text-blue-600 dark:text-blue-400">Fix within 3 months</div>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Master Remediation Prompt Card */}
+            <Card className="border-2 border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800">
+                <CardHeader>
+                    <CardTitle className="text-xl text-green-800 dark:text-green-200">
+                        🎯 Master Remediation Prompt
+                    </CardTitle>
+                    <CardDescription className="text-green-700 dark:text-green-300">
+                        Use this prompt in Cursor/GPT to fix ALL security issues at once
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <Accordion type="single" collapsible>
+                        <AccordionItem value="master-prompt">
+                            <AccordionTrigger className="text-green-800 dark:text-green-200 hover:text-green-900 dark:hover:text-green-100">
+                                <div className="flex items-center gap-2">
+                                    <Terminal className="h-5 w-5" />
+                                    Click to view Master Prompt
+                                </div>
+                            </AccordionTrigger>
+                            <AccordionContent>
+                                <div className="bg-black/90 rounded-md p-4 text-left">
+                                    <pre className="text-sm text-green-300 whitespace-pre-wrap font-mono overflow-x-auto">
+                                        {results.gpt_analysis.analysis}
+                                    </pre>
+                                </div>
+                            </AccordionContent>
+                        </AccordionItem>
+                    </Accordion>
+                </CardContent>
+            </Card>
+
+            {/* Individual Vulnerabilities Card */}
+            <Card className="border-2 border-primary/20">
+                <CardHeader>
+                    <CardTitle className="text-xl">🔍 Detailed Vulnerability Analysis</CardTitle>
+                    <CardDescription>Individual security issues with remediation guidance</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="space-y-4">
+                        {sortedVulnerabilities.map((vuln, index) => (
+                            <div key={index} className={`p-4 rounded-lg border-2 ${getSeverityColor(vuln.severity)}`}>
+                                <div className="flex items-start justify-between mb-3">
+                                    <div className="flex items-center gap-3">
+                                        {getSeverityIcon(vuln.severity)}
+                                        <div>
+                                            <h4 className="font-semibold text-lg break-words">{vuln.rule_id}</h4>
+                                            <div className="flex items-center gap-2 text-sm">
+                                                <Badge variant="outline" className="capitalize">
+                                                    {vuln.severity}
+                                                </Badge>
+                                                <Badge variant="secondary">
+                                                    {vuln.occurrences} occurrence{vuln.occurrences !== 1 ? 's' : ''}
+                                                </Badge>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div className="space-y-3">
+                                    <div>
+                                        <h5 className="font-medium mb-1">Description</h5>
+                                        <p className="text-sm break-words">{vuln.description}</p>
+                                    </div>
+                                    
+                                    <div>
+                                        <h5 className="font-medium mb-1">Security Message</h5>
+                                        <p className="text-sm break-words">{vuln.message}</p>
+                                    </div>
+                                    
+                                    <div>
+                                        <h5 className="font-medium mb-1">Locations</h5>
+                                        <div className="space-y-1">
+                                            {vuln.locations?.slice(0, 5).map((location, locIndex) => (
+                                                <div key={locIndex} className="text-sm font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                                                    {location.file_path}:{location.line_number}
+                                                </div>
+                                            ))}
+                                            {vuln.locations && vuln.locations.length > 5 && (
+                                                <div className="text-sm text-gray-500">
+                                                    +{vuln.locations.length - 5} more locations
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    <div>
+                                        <h5 className="font-medium mb-1">Remediation</h5>
+                                        <p className="text-sm break-words">{vuln.remediation}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </CardContent>
+            </Card>
         </div>
-        <div className="space-y-4 text-center">
-          <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto">
-            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
-              <p className="text-4xl font-bold">{results.summary.total_vulnerabilities}</p>
-            </div>
-            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-foreground">Codebase Health</h4>
-              <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
-            <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-red-400">High</h4>
-              <p className="text-4xl font-bold text-red-500">{results.summary.high_severity}</p>
-            </div>
-            <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-orange-400">Medium</h4>
-              <p className="text-4xl font-bold text-orange-500">{results.summary.medium_severity}</p>
-            </div>
-            <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-yellow-400">Low</h4>
-              <p className="text-4xl font-bold text-yellow-500">{results.summary.low_severity}</p>
-            </div>
-            <div className="border border-blue-500/50 bg-blue-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-blue-400">Files Scanned</h4>
-              <p className="text-4xl font-bold text-blue-500">{results.summary.files_scanned}</p>
-            </div>
-          </div>
-          <Accordion type="single" collapsible className="w-full">
-            <AccordionItem value="gpt-analysis" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-4 py-3">
-                <div className="flex items-center gap-2 text-foreground">
-                  <Terminal className="mr-2 h-4 w-4" /> View GPT-4 Analysis
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-4 pb-4">
-                <div className="bg-black/80 rounded-md p-3 text-left">
-                  <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
-                    {results.gpt_analysis.analysis}
-                  </pre>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </div>
-      </CardHeader>
-      <CardContent className="px-6 py-6">
-        <Accordion type="single" collapsible className="w-full">
-          {sortedVulnerabilities.map((vuln, index) => {
-            const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
-            return (
-              <AccordionItem value={`vuln-${index}`} key={index} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm max-w-full overflow-hidden`}>
-                <AccordionTrigger className="hover:no-underline">
-                  <div className="flex items-center gap-4 w-full min-w-0">
-                    {icon}
-                    <div className="flex-grow text-left min-w-0">
-                      <div className="font-medium break-words">{vuln.rule_id}</div>
-                      <div className="text-sm text-muted-foreground break-words">{vuln.file_path}:{vuln.line_number}</div>
-                    </div>
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent className="px-4 pb-4">
-                  <div className="space-y-3">
-                    <div>
-                      <h4 className="font-medium mb-2">Description</h4>
-                      <p className="text-sm text-muted-foreground break-words">{vuln.description}</p>
-                    </div>
-                    <div>
-                      <h4 className="font-medium mb-2">Message</h4>
-                      <p className="text-sm text-muted-foreground break-words">{vuln.message}</p>
-                    </div>
-                    <div>
-                      <h4 className="font-medium mb-2">Remediation</h4>
-                      <p className="text-sm text-muted-foreground break-words">{vuln.remediation}</p>
-                    </div>
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            );
-          })}
-        </Accordion>
-      </CardContent>
-    </Card>
-  );
+    );
 };
 
 export default function SecurityAuditPage() {
@@ -503,7 +627,9 @@ export default function SecurityAuditPage() {
       </Card>
 
       {auditResults && auditResults.summary && auditResults.summary.total_vulnerabilities > 0 && (
-        <AuditReport results={auditResults} />
+        <div className="space-y-6">
+          <AuditReport results={auditResults} />
+        </div>
       )}
 
       {auditResults && auditResults.summary && auditResults.summary.total_vulnerabilities === 0 && (
@@ -522,7 +648,7 @@ export default function SecurityAuditPage() {
 
       {/* Debug: Show raw audit results for troubleshooting */}
       {auditResults && (
-        <Card className="border-blue-500/30 mt-4">
+        <Card className="border-blue-500/30 mt-6">
           <CardHeader>
             <CardTitle className="text-blue-600">Debug: Raw Audit Results</CardTitle>
             <CardDescription>Raw data structure returned from worker (click to expand)</CardDescription>
