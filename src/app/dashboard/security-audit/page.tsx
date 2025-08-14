@@ -24,10 +24,11 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
-import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, Github, RefreshCw } from "lucide-react"
+import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, Github, RefreshCw, GitBranch, Search, Brain, FileText, XCircle, Play } from "lucide-react"
 import { DashboardPage, DashboardPageHeader } from "@/components/common/dashboard-page"
 import { useAuth } from "@/contexts/auth-context"
 import { GitHubService, GitHubRepository } from "@/lib/github-service"
+import { useToast } from "@/hooks/use-toast"
 
 // Types for audit data
 interface Vulnerability {
@@ -409,6 +410,20 @@ export default function SecurityAuditPage() {
   const [repositories, setRepositories] = useState<GitHubRepository[]>([])
   const [isLoadingRepos, setIsLoadingRepos] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [auditProgress, setAuditProgress] = useState<{
+    phase: string;
+    progress: number;
+    message: string;
+    startTime: Date | null;
+    estimatedDuration: number;
+  }>({
+    phase: 'idle',
+    progress: 0,
+    message: 'Ready to start audit',
+    startTime: null,
+    estimatedDuration: 0
+  });
+  const { toast } = useToast();
 
   // Fetch user's GitHub repositories
   useEffect(() => {
@@ -443,6 +458,18 @@ export default function SecurityAuditPage() {
     setError(null);
     console.log('🚀 Starting security audit for:', selectedRepo);
     
+    // Initialize progress tracking
+    const startTime = new Date();
+    const estimatedDuration = 10 * 60 * 1000; // 10 minutes estimate
+    
+    setAuditProgress({
+      phase: 'starting',
+      progress: 0,
+      message: 'Initializing security audit...',
+      startTime,
+      estimatedDuration
+    });
+
     try {
       // Add timeout to the fetch request
       const controller = new AbortController();
@@ -474,6 +501,19 @@ export default function SecurityAuditPage() {
       console.log('✅ Audit completed successfully:', auditResults);
       setAuditResults(auditResults);
       
+      // Complete progress
+      setAuditProgress(prev => ({
+        ...prev,
+        phase: 'completed',
+        progress: 100,
+        message: 'Audit completed successfully!'
+      }));
+
+      toast({
+        title: "Audit completed!",
+        description: `Found ${auditResults.summary?.total_vulnerabilities || 0} security issues.`,
+      });
+      
     } catch (error: unknown) {
       console.error('❌ Audit failed:', error);
       
@@ -484,9 +524,33 @@ export default function SecurityAuditPage() {
       } else {
         setError('Audit failed with unknown error');
       }
+
+      setAuditProgress(prev => ({
+        ...prev,
+        phase: 'failed',
+        progress: 0,
+        message: `Audit failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }));
+
+      toast({
+        title: "Audit failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
       console.log('🏁 Audit process finished');
+      
+      // Reset progress after a delay
+      setTimeout(() => {
+        setAuditProgress({
+          phase: 'idle',
+          progress: 0,
+          message: 'Ready to start audit',
+          startTime: null,
+          estimatedDuration: 0
+        });
+      }, 3000);
     }
   };
 
@@ -503,6 +567,32 @@ export default function SecurityAuditPage() {
       setIsLoadingRepos(false)
     }
   }
+
+  const getPhaseIcon = (phase: string) => {
+    switch (phase) {
+      case 'starting': return <Loader2 className="h-4 w-4 animate-spin" />;
+      case 'cloning': return <GitBranch className="h-4 w-4" />;
+      case 'scanning': return <Search className="h-4 w-4" />;
+      case 'analyzing': return <Brain className="h-4 w-4" />;
+      case 'generating': return <FileText className="h-4 w-4" />;
+      case 'completed': return <CheckCircle className="h-4 w-4" />;
+      case 'failed': return <XCircle className="h-4 w-4" />;
+      default: return <Play className="h-4 w-4" />;
+    }
+  };
+
+  const getPhaseColor = (phase: string) => {
+    switch (phase) {
+      case 'starting': return 'text-blue-600';
+      case 'cloning': return 'text-green-600';
+      case 'scanning': return 'text-orange-600';
+      case 'analyzing': return 'text-purple-600';
+      case 'generating': return 'text-indigo-600';
+      case 'completed': return 'text-green-600';
+      case 'failed': return 'text-red-600';
+      default: return 'text-gray-600';
+    }
+  };
 
   return (
     <DashboardPage>
@@ -664,6 +754,39 @@ export default function SecurityAuditPage() {
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Progress Tracking */}
+      {auditProgress.phase !== 'idle' && (
+        <Card className="border-2 border-primary/20 mt-6">
+          <CardHeader className="flex-row items-center gap-4">
+            <div className={`flex items-center gap-2 ${getPhaseColor(auditProgress.phase)}`}>
+              {getPhaseIcon(auditProgress.phase)}
+              <span className="font-semibold">{auditProgress.message}</span>
+            </div>
+            <div className="flex-1 text-right text-sm text-muted-foreground">
+              {auditProgress.progress}%
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="w-full bg-gray-200 rounded-full h-2 dark:bg-gray-700">
+              <div
+                className="bg-primary h-2 rounded-full"
+                style={{ width: `${auditProgress.progress}%` }}
+              ></div>
+            </div>
+            {auditProgress.startTime && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Started at: {new Date(auditProgress.startTime).toLocaleTimeString()}
+              </p>
+            )}
+            {auditProgress.estimatedDuration > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Estimated Duration: {Math.round(auditProgress.estimatedDuration / 60000)} minutes
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
