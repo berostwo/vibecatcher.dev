@@ -410,6 +410,7 @@ export default function SecurityAuditPage() {
   const [repositories, setRepositories] = useState<GitHubRepository[]>([])
   const [isLoadingRepos, setIsLoadingRepos] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [userGitHubUsername, setUserGitHubUsername] = useState<string | null>(null)
   const [auditProgress, setAuditProgress] = useState<{
     phase: string;
     progress: number;
@@ -425,9 +426,9 @@ export default function SecurityAuditPage() {
   });
   const { toast } = useToast();
 
-  // Fetch user's GitHub repositories
+  // Fetch user's GitHub username and repositories
   useEffect(() => {
-    const fetchRepositories = async () => {
+    const fetchUserData = async () => {
       if (!user || !githubToken) {
         setError("Please sign in with GitHub to access your repositories")
         return
@@ -437,26 +438,44 @@ export default function SecurityAuditPage() {
       setError(null)
       
       try {
-        const repos = await GitHubService.getUserRepositories(user.uid)
-        setRepositories(repos)
-        console.log('Fetched repositories:', repos)
+        // Get user's GitHub username from Firebase
+        const { FirebaseUserService } = await import('@/lib/firebase-user-service');
+        const firebaseUser = await FirebaseUserService.getUserByUid(user.uid);
+        
+        if (firebaseUser?.githubUsername) {
+          setUserGitHubUsername(firebaseUser.githubUsername);
+          console.log('User GitHub username:', firebaseUser.githubUsername);
+          
+          // Fetch repositories using the GitHub username
+          const repos = await GitHubService.getUserRepositories(user.uid);
+          setRepositories(repos);
+          console.log('Fetched repositories:', repos);
+        } else {
+          setError("Could not retrieve GitHub username. Please try signing in again.");
+        }
       } catch (err) {
-        console.error('Error fetching repositories:', err)
-        setError(err instanceof Error ? err.message : 'Failed to fetch repositories')
+        console.error('Error fetching user data:', err)
+        setError(err instanceof Error ? err.message : 'Failed to fetch user data')
       } finally {
         setIsLoadingRepos(false)
       }
     }
 
-    fetchRepositories()
+    fetchUserData()
   }, [user, githubToken])
 
   const handleAudit = async () => {
-    if (!selectedRepo || !user) return;
+    if (!selectedRepo || !user || !userGitHubUsername) {
+      if (!userGitHubUsername) {
+        setError("GitHub username not available. Please try refreshing the page.");
+      }
+      return;
+    }
     
     setIsLoading(true);
     setError(null);
     console.log('🚀 Starting security audit for:', selectedRepo);
+    console.log('👤 User GitHub username:', userGitHubUsername);
     
     // Initialize progress tracking
     const startTime = new Date();
@@ -480,7 +499,7 @@ export default function SecurityAuditPage() {
       console.log('🔑 GitHub token length:', githubToken?.length || 0);
       
       const requestBody = {
-        repository_url: `https://github.com/berostwo/${selectedRepo}`,
+        repository_url: `https://github.com/${userGitHubUsername}/${selectedRepo}`,
         github_token: githubToken  // Add GitHub token for private repo access
       };
       
@@ -576,7 +595,7 @@ export default function SecurityAuditPage() {
   };
 
   const handleRefreshRepos = async () => {
-    if (!user) return
+    if (!user || !githubToken || !userGitHubUsername) return
     setIsLoadingRepos(true)
     setError(null)
     try {

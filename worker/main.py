@@ -1405,7 +1405,24 @@ async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
             logger.info("🏁 === SECURITY AUDIT WORKER COMPLETED ===")
             
             # Convert to dict for JSON serialization
-            return asdict(results)
+            # Check if results is a dataclass instance before calling asdict()
+            if hasattr(results, '__dataclass_fields__'):
+                logger.info("✅ Results is a dataclass, converting with asdict()")
+                return asdict(results)
+            elif isinstance(results, dict):
+                logger.info("✅ Results is already a dict, returning as-is")
+                return results
+            else:
+                logger.warning(f"⚠️ Results is of type {type(results)}, converting to dict manually")
+                # Fallback: try to convert to dict manually
+                try:
+                    if hasattr(results, '__dict__'):
+                        return results.__dict__
+                    else:
+                        return {'raw_results': str(results)}
+                except Exception as conv_error:
+                    logger.error(f"❌ Failed to convert results to dict: {conv_error}")
+                    return {'raw_results': str(results), 'conversion_error': str(conv_error)}
             
     except Exception as e:
         end_time = datetime.utcnow()
