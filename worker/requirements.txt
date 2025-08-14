@@ -1,6 +1,6 @@
 # Core dependencies
 aiohttp==3.9.1
-asyncio==3.4.3
+flask==3.0.0
 
 # Google Cloud dependencies
 google-cloud-functions==1.8.4
