@@ -112,8 +112,64 @@ export default function Home() {
           We catch the bad vibes first.
         </p>
         {isLoading ? (
-          <div className="mt-8">
+          <div className="mt-8 space-y-4">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+            <p className="text-sm text-muted-foreground">Loading authentication...</p>
+            {/* Fallback button in case loading gets stuck */}
+            <Button 
+              size="lg" 
+              variant="outline"
+              className="bg-secondary hover:bg-secondary/80 text-secondary-foreground font-semibold shadow-lg transition-transform transform hover:scale-105"
+              onClick={async () => {
+                try {
+                  if (!process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID) {
+                    throw new Error('GitHub Client ID not configured. Please check your environment variables.');
+                  }
+                  
+                  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
+                    throw new Error('Firebase configuration not found. Please check your environment variables.');
+                  }
+                  
+                  const { GitHubOAuthService } = await import('@/lib/github-oauth');
+                  console.log('Starting GitHub OAuth (fallback)...');
+                  
+                  const accessToken = await GitHubOAuthService.initiateOAuth();
+                  console.log('OAuth successful, access token received');
+                  
+                  if (accessToken) {
+                    const userInfo = await GitHubOAuthService.getUserInfo(accessToken);
+                    console.log('GitHub user info:', userInfo);
+                    
+                    const { FirebaseUserService } = await import('@/lib/firebase-user-service');
+                    const firebaseUser = await FirebaseUserService.createUserFromGitHub(
+                      {
+                        id: userInfo.id,
+                        login: userInfo.login,
+                        name: userInfo.name || userInfo.login,
+                        email: userInfo.email,
+                        avatar_url: userInfo.avatar_url
+                      },
+                      accessToken
+                    );
+                    
+                    console.log('Firebase user created/updated:', firebaseUser);
+                    await GitHubOAuthService.storeTokenOnServer(firebaseUser.uid, accessToken);
+                    setGitHubToken(accessToken);
+                    window.location.href = '/dashboard';
+                  }
+                } catch (error) {
+                  console.error('OAuth failed:', error);
+                  if (error instanceof Error && error.message.includes('not configured')) {
+                    alert('Configuration error: ' + error.message);
+                    return;
+                  }
+                  alert('Sign in failed. Please try again.');
+                }
+              }}
+            >
+              <Github className="mr-2 h-5 w-5" />
+              Sign in with GitHub (Fallback)
+            </Button>
           </div>
         ) : user && githubToken ? (
           <div className="mt-8 space-y-4">

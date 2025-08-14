@@ -182,16 +182,16 @@ const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) =>
   }, [results, severityOrder]);
 
   return (
-    <Card className="bg-card/50 border-2 border-primary/20 shadow-2xl shadow-primary/10">
-      <CardHeader>
-        <div className="flex flex-col md:flex-row justify-between items-start mb-6">
-          <div className="mb-4 md:mb-0">
-            <CardTitle className="text-2xl">Audit Report: `{results.repository_info.name}`</CardTitle>
-            <CardDescription>{results.summary.total_vulnerabilities} vulnerabilities found. See details below.</CardDescription>
+    <Card className="bg-card/50 border-2 border-primary/20 shadow-2xl shadow-primary/10 max-w-full overflow-hidden">
+      <CardHeader className="px-6 py-6">
+        <div className="flex flex-col md:flex-row justify-between items-start mb-6 gap-4">
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-2xl break-words">Audit Report: `{results.repository_info.name}`</CardTitle>
+            <CardDescription className="break-words">{results.summary.total_vulnerabilities} vulnerabilities found. See details below.</CardDescription>
           </div>
         </div>
         <div className="space-y-4 text-center">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto">
             <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
               <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
               <p className="text-4xl font-bold">{results.summary.total_vulnerabilities}</p>
@@ -201,7 +201,7 @@ const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) =>
               <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
             <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
               <h4 className="text-sm font-medium text-red-400">High</h4>
               <p className="text-4xl font-bold text-red-500">{results.summary.high_severity}</p>
@@ -237,18 +237,18 @@ const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) =>
           </Accordion>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-6 py-6">
         <Accordion type="single" collapsible className="w-full">
           {sortedVulnerabilities.map((vuln, index) => {
             const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
             return (
-              <AccordionItem value={`vuln-${index}`} key={index} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
+              <AccordionItem value={`vuln-${index}`} key={index} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm max-w-full overflow-hidden`}>
                 <AccordionTrigger className="hover:no-underline">
-                  <div className="flex items-center gap-4 w-full">
+                  <div className="flex items-center gap-4 w-full min-w-0">
                     {icon}
-                    <div className="flex-grow text-left">
-                      <div className="font-medium">{vuln.rule_id}</div>
-                      <div className="text-sm text-muted-foreground">{vuln.file_path}:{vuln.line_number}</div>
+                    <div className="flex-grow text-left min-w-0">
+                      <div className="font-medium break-words">{vuln.rule_id}</div>
+                      <div className="text-sm text-muted-foreground break-words">{vuln.file_path}:{vuln.line_number}</div>
                     </div>
                   </div>
                 </AccordionTrigger>
@@ -256,15 +256,15 @@ const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) =>
                   <div className="space-y-3">
                     <div>
                       <h4 className="font-medium mb-2">Description</h4>
-                      <p className="text-sm text-muted-foreground">{vuln.description}</p>
+                      <p className="text-sm text-muted-foreground break-words">{vuln.description}</p>
                     </div>
                     <div>
                       <h4 className="font-medium mb-2">Message</h4>
-                      <p className="text-sm text-muted-foreground">{vuln.message}</p>
+                      <p className="text-sm text-muted-foreground break-words">{vuln.message}</p>
                     </div>
                     <div>
                       <h4 className="font-medium mb-2">Remediation</h4>
-                      <p className="text-sm text-muted-foreground">{vuln.remediation}</p>
+                      <p className="text-sm text-muted-foreground break-words">{vuln.remediation}</p>
                     </div>
                   </div>
                 </AccordionContent>
@@ -525,12 +525,19 @@ export default function SecurityAuditPage() {
         <Card className="border-blue-500/30 mt-4">
           <CardHeader>
             <CardTitle className="text-blue-600">Debug: Raw Audit Results</CardTitle>
-            <CardDescription>Raw data structure returned from worker</CardDescription>
+            <CardDescription>Raw data structure returned from worker (click to expand)</CardDescription>
           </CardHeader>
           <CardContent>
-            <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-4 rounded overflow-auto">
-              {JSON.stringify(auditResults, null, 2)}
-            </pre>
+            <Accordion type="single" collapsible>
+              <AccordionItem value="debug-data">
+                <AccordionTrigger>Click to view raw data</AccordionTrigger>
+                <AccordionContent>
+                  <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-4 rounded overflow-auto max-h-96">
+                    {JSON.stringify(auditResults, null, 2)}
+                  </pre>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
           </CardContent>
         </Card>
       )}

@@ -295,10 +295,22 @@ Also provide a master summary of all critical issues and their priority order.""
                     )
                     vulnerabilities.append(vuln)
                 
-                # Calculate summary
-                high_sev = len([v for v in vulnerabilities if v.severity.lower() == 'error'])
-                medium_sev = len([v for v in vulnerabilities if v.severity.lower() == 'warning'])
-                low_sev = len([v for v in vulnerabilities if v.severity.lower() not in ['error', 'warning']])
+                # Calculate summary with proper severity mapping
+                high_sev = len([v for v in vulnerabilities if v.severity.lower() in ['error', 'critical', 'high']])
+                medium_sev = len([v for v in vulnerabilities if v.severity.lower() in ['warning', 'medium']])
+                low_sev = len([v for v in vulnerabilities if v.severity.lower() in ['info', 'low', 'note']])
+                
+                # If no clear mapping, use Semgrep's severity levels
+                if high_sev == 0 and medium_sev == 0 and low_sev == 0:
+                    # Map Semgrep severities to our categories
+                    for vuln in vulnerabilities:
+                        semgrep_severity = vuln.severity.lower()
+                        if semgrep_severity in ['error', 'critical', 'high']:
+                            high_sev += 1
+                        elif semgrep_severity in ['warning', 'medium']:
+                            medium_sev += 1
+                        else:
+                            low_sev += 1
                 
                 end_time = datetime.utcnow()
                 duration = (end_time - start_time).total_seconds()

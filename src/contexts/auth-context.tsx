@@ -22,27 +22,65 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      
-      if (user) {
-        // Check server for GitHub token instead of local storage
-        try {
-          const token = await GitHubOAuthService.getTokenFromServer(user.uid);
-          if (token) {
-            setGitHubToken(token);
-          }
-        } catch (error) {
-          console.warn('Could not retrieve GitHub token from server:', error);
-        }
-      } else {
-        setGitHubToken(null);
-      }
-      
+    console.log('🔐 Auth context: Setting up Firebase auth listener...');
+    
+    // Check if Firebase auth is available
+    if (!auth) {
+      console.error('❌ Firebase auth is not available!');
       setIsLoading(false);
-    });
+      return;
+    }
+    
+    console.log('🔐 Firebase auth object:', auth);
+    
+    // Add timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      console.warn('🔐 Auth loading timeout - forcing isLoading to false');
+      setIsLoading(false);
+    }, 10000); // 10 second timeout
+    
+    try {
+      const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        console.log('🔐 Auth state changed:', user ? `User: ${user.email}` : 'No user');
+        clearTimeout(timeoutId); // Clear timeout on success
+        setUser(user);
+        
+        if (user) {
+          // Check server for GitHub token instead of local storage
+          try {
+            console.log('🔐 Fetching GitHub token for user:', user.uid);
+            const token = await GitHubOAuthService.getTokenFromServer(user.uid);
+            if (token) {
+              console.log('🔐 GitHub token retrieved successfully');
+              setGitHubToken(token);
+            } else {
+              console.log('🔐 No GitHub token found for user');
+            }
+          } catch (error) {
+            console.warn('Could not retrieve GitHub token from server:', error);
+          }
+        } else {
+          console.log('🔐 No user, clearing GitHub token');
+          setGitHubToken(null);
+        }
+        
+        console.log('🔐 Auth loading complete, setting isLoading to false');
+        setIsLoading(false);
+      }, (error) => {
+        console.error('🔐 Firebase auth error:', error);
+        clearTimeout(timeoutId); // Clear timeout on error
+        setIsLoading(false);
+      });
 
-    return () => unsubscribe();
+      return () => {
+        clearTimeout(timeoutId);
+        unsubscribe();
+      };
+    } catch (error) {
+      console.error('❌ Error setting up Firebase auth listener:', error);
+      clearTimeout(timeoutId);
+      setIsLoading(false);
+    }
   }, []);
 
   const signOut = async () => {
