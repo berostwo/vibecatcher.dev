@@ -505,7 +505,7 @@ class SecurityAuditor:
         if self.session:
             await self.session.close()
     
-    async def clone_repository(self, repo_url: str, temp_dir: str) -> str:
+    async def clone_repository(self, repo_url: str, temp_dir: str, github_token: str = None) -> str:
         """Clone repository to temporary directory with security checks and retry logic"""
         self.performance_monitor.start_phase('clone')
         
@@ -522,9 +522,32 @@ class SecurityAuditor:
                 
                 repo_path = os.path.join(temp_dir, repo_name)
                 
+                # Prepare clone command with authentication if token provided
+                clone_command = ['git', 'clone', '--depth', '1', '--single-branch']
+                
+                if github_token:
+                    # For private repos, use token-based authentication
+                    logger.info("Using GitHub token for private repository access")
+                    # Convert HTTPS URL to include token: https://token@github.com/user/repo.git
+                    if repo_url.startswith('https://github.com/'):
+                        # Extract the path part after github.com/
+                        path_part = repo_url.replace('https://github.com/', '')
+                        authenticated_url = f"https://{github_token}@github.com/{path_part}"
+                        clone_command.append(authenticated_url)
+                    else:
+                        clone_command.append(repo_url)
+                else:
+                    # For public repos, use original URL
+                    logger.info("Cloning public repository without authentication")
+                    clone_command.append(repo_url)
+                
+                clone_command.append(repo_path)
+                
+                logger.info(f"Clone command: {' '.join(clone_command[:3])}... {clone_command[-1]}")
+                
                 # Clone with timeout and security flags
                 process = await asyncio.create_subprocess_exec(
-                    'git', 'clone', '--depth', '1', '--single-branch', repo_url, repo_path,
+                    *clone_command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
@@ -998,7 +1021,7 @@ Focus on practical remediation steps that developers can implement immediately."
             'timestamp': datetime.utcnow().isoformat()
         }
     
-    async def generate_audit_report(self, repo_url: str) -> Dict[str, Any]:
+    async def generate_audit_report(self, repo_url: str, github_token: str = None) -> Dict[str, Any]:
         """Generate complete security audit report"""
         start_time = datetime.utcnow()
         
@@ -1006,6 +1029,7 @@ Focus on practical remediation steps that developers can implement immediately."
             logger.info("🔍 === AUDIT REPORT GENERATION STARTING ===")
             logger.info(f"📁 Repository: {repo_url}")
             logger.info(f"⏰ Start time: {start_time.isoformat()}")
+            logger.info(f"🔑 GitHub token provided: {'Yes' if github_token else 'No'}")
             
             # Create temporary directory
             logger.info("📁 Phase 1: Creating temporary directory...")
@@ -1015,7 +1039,7 @@ Focus on practical remediation steps that developers can implement immediately."
                 # Clone repository
                 logger.info("📥 Phase 2: Cloning repository...")
                 clone_start = datetime.utcnow()
-                repo_path = await self.clone_repository(repo_url, temp_dir)
+                repo_path = await self.clone_repository(repo_url, temp_dir, github_token)
                 clone_duration = (datetime.utcnow() - clone_start).total_seconds()
                 logger.info(f"✅ Repository cloned successfully in {clone_duration:.2f}s")
                 logger.info(f"📁 Repository path: {repo_path}")
@@ -1333,10 +1357,13 @@ async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
         
         # Extract parameters
         repo_url = data.get('repository_url')
+        github_token = data.get('github_token')  # New: Extract GitHub token
+        
         if not repo_url:
             raise ValueError("repository_url is required")
         
         logger.info(f"📁 Repository URL: {repo_url}")
+        logger.info(f"🔑 GitHub token provided: {'Yes' if github_token else 'No'}")
         
         # Validate repository URL
         logger.info("🔍 Phase 1: Validating repository URL...")
@@ -1365,7 +1392,7 @@ async def security_audit_worker(data: Dict[str, Any]) -> Dict[str, Any]:
             logger.info("✅ SecurityAuditor created successfully")
             
             logger.info("🔍 Phase 4: Starting audit report generation...")
-            results = await auditor.generate_audit_report(repo_url)
+            results = await auditor.generate_audit_report(repo_url, github_token)
             
             logger.info("✅ Audit report generated successfully")
             

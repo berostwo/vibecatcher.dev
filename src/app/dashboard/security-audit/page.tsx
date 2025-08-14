@@ -476,13 +476,23 @@ export default function SecurityAuditPage() {
       const timeoutId = setTimeout(() => controller.abort(), 900000); // 15 minutes timeout
       
       console.log('📡 Calling worker at:', process.env.NEXT_PUBLIC_SECURITY_WORKER_URL);
+      console.log('🔑 GitHub token available:', !!githubToken);
+      console.log('🔑 GitHub token length:', githubToken?.length || 0);
+      
+      const requestBody = {
+        repository_url: `https://github.com/berostwo/${selectedRepo}`,
+        github_token: githubToken  // Add GitHub token for private repo access
+      };
+      
+      console.log('📤 Request body:', {
+        ...requestBody,
+        github_token: githubToken ? `${githubToken.substring(0, 10)}...` : 'None'
+      });
       
       const response = await fetch(process.env.NEXT_PUBLIC_SECURITY_WORKER_URL!, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          repository_url: `https://github.com/berostwo/${selectedRepo}`
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal
       });
       
@@ -517,24 +527,35 @@ export default function SecurityAuditPage() {
     } catch (error: unknown) {
       console.error('❌ Audit failed:', error);
       
+      let errorMessage = 'Audit failed with unknown error';
+      
       if (error instanceof Error && error.name === 'AbortError') {
-        setError('Audit timed out after 15 minutes. The repository might be too large or complex.');
+        errorMessage = 'Audit timed out after 15 minutes. The repository might be too large or complex.';
       } else if (error instanceof Error) {
-        setError(error.message);
-      } else {
-        setError('Audit failed with unknown error');
+        // Check for specific error types
+        if (error.message.includes('could not read Username') || error.message.includes('No such device or address')) {
+          errorMessage = 'Private repository access failed. Please ensure you have the correct permissions and try again.';
+        } else if (error.message.includes('Git clone failed')) {
+          errorMessage = 'Repository cloning failed. This might be due to network issues or repository access permissions.';
+        } else if (error.message.includes('network')) {
+          errorMessage = 'Network connection issue. Please check your internet connection and try again.';
+        } else {
+          errorMessage = error.message;
+        }
       }
+      
+      setError(errorMessage);
 
       setAuditProgress(prev => ({
         ...prev,
         phase: 'failed',
         progress: 0,
-        message: `Audit failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        message: `Audit failed: ${errorMessage}`
       }));
 
       toast({
         title: "Audit failed",
-        description: error instanceof Error ? error.message : "Unknown error occurred",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {

@@ -82,8 +82,32 @@ export default function GitHubCallback() {
         }
       } catch (error) {
         console.error('OAuth callback error:', error);
-        setError(error instanceof Error ? error.message : 'Authentication failed');
+        
+        // Handle specific error types
+        let errorMessage = 'Authentication failed';
+        if (error instanceof Error) {
+          if (error.message.includes('network')) {
+            errorMessage = 'Network connection issue. Please check your internet connection and try again.';
+          } else if (error.message.includes('Firebase')) {
+            errorMessage = 'Firebase service issue. Please try again in a few moments.';
+          } else if (error.message.includes('OAuth')) {
+            errorMessage = 'GitHub authentication issue. Please try signing in again.';
+          } else {
+            errorMessage = error.message;
+          }
+        }
+        
+        setError(errorMessage);
         setStatus('error');
+        
+        // Log detailed error for debugging
+        console.error('Detailed error info:', {
+          error: error,
+          errorType: typeof error,
+          errorMessage: error instanceof Error ? error.message : 'Unknown error type',
+          errorStack: error instanceof Error ? error.stack : 'No stack trace',
+          timestamp: new Date().toISOString()
+        });
       }
     };
 
