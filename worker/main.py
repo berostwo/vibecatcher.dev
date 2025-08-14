@@ -141,7 +141,6 @@ class SecurityAuditor:
                 'p/security-audit',      # Security audit rules
                 'p/owasp-top-ten',       # OWASP Top 10
                 'p/secrets',             # Secrets detection
-                'p/cwe-top-25',          # Common Weakness Enumeration
                 'p/javascript',          # JavaScript security
                 'p/python',              # Python security
                 'p/php',                 # PHP security
@@ -151,7 +150,6 @@ class SecurityAuditor:
                 'p/docker',              # Docker security
                 'p/kubernetes',          # Kubernetes security
                 'p/terraform',           # Infrastructure as Code security
-                'p/generic',             # Generic security patterns
             ]
             
             # Build comprehensive scan command
