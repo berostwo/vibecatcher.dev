@@ -408,3 +408,34 @@ if __name__ == "__main__":
         asyncio.run(test())
     else:
         print("Usage: python main.py <test_data.json>")
+
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+@app.route('/', methods=['GET'])
+def health_check():
+    """Health check endpoint for Cloud Run"""
+    return jsonify({
+        'status': 'healthy',
+        'service': 'security-audit-worker',
+        'timestamp': datetime.utcnow().isoformat(),
+        'version': '1.0.0'
+    })
+
+@app.route('/', methods=['POST'])
+def security_audit():
+    """Main endpoint for security audits"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Run the audit
+        result = asyncio.run(security_audit_worker(data))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=8080, debug=False)
