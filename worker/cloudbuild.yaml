@@ -32,11 +32,6 @@ steps:
       - '--max-instances'
       - '5'
 
-# Environment variables for the build
-env:
-  - 'CLOUD_RUN_REGION=us-central1'
-  - 'CLOUD_RUN_SERVICE=security-audit-worker'
-
 # Store images in Google Cloud Storage
 images:
   - 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA'
