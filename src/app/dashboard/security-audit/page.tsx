@@ -33,24 +33,62 @@ interface SecurityFinding {
 }
 
 interface ScanResults {
-  summary: {
-    total_findings: number;
-    files_scanned: number;
-    scan_duration: number;
-    rules_executed: number;
-  };
   findings: SecurityFinding[];
-  severity_breakdown: {
-    critical: number;
-    high: number;
-    medium: number;
-    low: number;
-  };
-  raw_semgrep_output: any;
+  errors: any[];
+  paths_scanned: string[];
+  paths_skipped: string[];
+  scan_results: any;
+  processed_results?: any;
+  scan_duration: number;
+  timestamp: string;
   error?: string;
   error_type?: string;
-  scan_duration?: number;
 }
+
+// Helper function to extract severity breakdown from findings
+const getSeverityBreakdown = (findings: SecurityFinding[]) => {
+  const breakdown = { critical: 0, high: 0, medium: 0, low: 0 };
+  
+  findings.forEach(finding => {
+    const severity = finding.severity.toLowerCase();
+    if (severity === 'critical') breakdown.critical++;
+    else if (severity === 'high') breakdown.high++;
+    else if (severity === 'medium') breakdown.medium++;
+    else if (severity === 'low') breakdown.low++;
+  });
+  
+  return breakdown;
+};
+
+// Helper function to map Semgrep severity to our format
+const mapSemgrepSeverity = (semgrepSeverity: string): string => {
+  const severity = semgrepSeverity.toLowerCase();
+  if (severity === 'error') return 'critical';
+  if (severity === 'warning') return 'high';
+  if (severity === 'info') return 'medium';
+  return 'low';
+};
+
+// Helper function to process Semgrep findings into our format
+const processSemgrepFindings = (semgrepResults: any): SecurityFinding[] => {
+  if (!semgrepResults || !Array.isArray(semgrepResults)) return [];
+  
+  return semgrepResults.map((result: any) => ({
+    rule_id: result.check_id || 'unknown-rule',
+    severity: mapSemgrepSeverity(result.extra?.severity || 'info'),
+    message: result.extra?.message || 'Security issue detected',
+    description: result.extra?.description || 'No description available',
+    file_path: result.path || 'unknown-file',
+    line_number: result.start?.line || 0,
+    end_line: result.end?.line || result.start?.line || 0,
+    code_snippet: result.extra?.lines || 'No code available',
+    cwe_ids: result.extra?.metadata?.cwe || [],
+    owasp_ids: result.extra?.metadata?.owasp || [],
+    impact: result.extra?.metadata?.impact || 'Unknown',
+    likelihood: result.extra?.metadata?.likelihood || 'Unknown',
+    confidence: result.extra?.metadata?.confidence || 'Unknown'
+  }));
+};
 
 export default function SecurityAuditPage() {
   const { user, githubToken } = useAuth();
@@ -127,23 +165,26 @@ export default function SecurityAuditPage() {
         return;
       }
       
-      // Validate required fields
-      if (!results.summary || !results.findings || !results.severity_breakdown) {
-        console.warn('Response missing expected fields:', results);
-        // Still set results to show what we got
-        setScanResults(results);
-        toast({
-          title: "Scan completed",
-          description: "Results received but format may be unexpected",
-        });
-        return;
-      }
+      // Process the new worker response format
+      const processedResults: ScanResults = {
+        findings: processSemgrepFindings(results.findings || []),
+        errors: results.errors || [],
+        paths_scanned: results.paths_scanned || [],
+        paths_skipped: results.paths_skipped || [],
+        scan_results: results.scan_results || results,
+        processed_results: results.processed_results,
+        scan_duration: results.scan_duration || 0,
+        timestamp: results.timestamp || new Date().toISOString()
+      };
       
-      setScanResults(results);
+      setScanResults(processedResults);
+      
+      const totalFindings = processedResults.findings.length;
+      const filesScanned = processedResults.paths_scanned.length;
       
       toast({
         title: "Security scan completed!",
-        description: `Found ${results.summary?.total_findings || 0} security issues.`,
+        description: `Found ${totalFindings} security issues in ${filesScanned} files.`,
       });
       
     } catch (error: unknown) {
@@ -236,25 +277,25 @@ export default function SecurityAuditPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="text-center">
                   <div className="text-2xl font-bold text-red-600">
-                    {scanResults.summary?.total_findings || 0}
+                    {scanResults.findings?.length || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">Total Issues</div>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-blue-600">
-                    {scanResults.summary?.files_scanned || 0}
+                    {scanResults.paths_scanned?.length || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">Files Scanned</div>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-green-600">
-                    {scanResults.summary?.rules_executed || 0}
+                    {scanResults.scan_results?.paths?.scanned?.length || 0}
                   </div>
-                  <div className="text-sm text-muted-foreground">Rules Executed</div>
+                  <div className="text-sm text-muted-foreground">Files Processed</div>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-purple-600">
-                    {scanResults.summary?.scan_duration || 0}s
+                    {scanResults.scan_duration?.toFixed(1) || 0}s
                   </div>
                   <div className="text-sm text-muted-foreground">Scan Duration</div>
                 </div>
@@ -265,25 +306,25 @@ export default function SecurityAuditPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="text-center">
                   <div className="text-xl font-bold text-red-600">
-                    {scanResults.severity_breakdown?.critical || 0}
+                    {getSeverityBreakdown(scanResults.findings || []).critical}
                   </div>
                   <div className="text-sm text-muted-foreground">Critical</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xl font-bold text-orange-600">
-                    {scanResults.severity_breakdown?.high || 0}
+                    {getSeverityBreakdown(scanResults.findings || []).high}
                   </div>
                   <div className="text-sm text-muted-foreground">High</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xl font-bold text-yellow-600">
-                    {scanResults.severity_breakdown?.medium || 0}
+                    {getSeverityBreakdown(scanResults.findings || []).medium}
                   </div>
                   <div className="text-sm text-muted-foreground">Medium</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xl font-bold text-blue-600">
-                    {scanResults.severity_breakdown?.low || 0}
+                    {getSeverityBreakdown(scanResults.findings || []).low}
                   </div>
                   <div className="text-sm text-muted-foreground">Low</div>
                 </div>
@@ -388,7 +429,7 @@ export default function SecurityAuditPage() {
           )}
 
           {/* Raw Semgrep Output */}
-          {scanResults.raw_semgrep_output && (
+          {scanResults.scan_results && (
             <Card>
               <CardHeader>
                 <CardTitle>Raw Semgrep Output</CardTitle>
@@ -399,12 +440,88 @@ export default function SecurityAuditPage() {
               <CardContent>
                 <div className="bg-gray-50 p-4 rounded border">
                   <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
-                    {JSON.stringify(scanResults.raw_semgrep_output, null, 2)}
+                    {JSON.stringify(scanResults.scan_results, null, 2)}
                   </pre>
                 </div>
               </CardContent>
             </Card>
           )}
+
+          {/* Scan Errors */}
+          {scanResults.errors && scanResults.errors.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Scan Errors & Warnings</CardTitle>
+                <CardDescription>
+                  Issues encountered during the security scan
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {scanResults.errors.map((error, index) => (
+                    <div key={index} className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                      <div className="flex items-start gap-2">
+                        <span className="text-yellow-600">⚠️</span>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-yellow-800">
+                            {error.type || 'Error'}
+                          </p>
+                          <p className="text-sm text-yellow-700">
+                            {error.message || JSON.stringify(error)}
+                          </p>
+                          {error.path && (
+                            <p className="text-xs text-yellow-600 mt-1">
+                              File: {error.path}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Scan Statistics */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Scan Statistics</CardTitle>
+              <CardDescription>
+                Detailed information about the scan execution
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-blue-600">
+                    {scanResults.paths_scanned?.length || 0}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Files Scanned</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-orange-600">
+                    {scanResults.paths_skipped?.length || 0}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Files Skipped</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-green-600">
+                    {scanResults.scan_duration?.toFixed(1) || 0}s
+                  </div>
+                  <div className="text-sm text-muted-foreground">Total Time</div>
+                </div>
+              </div>
+              
+              {scanResults.timestamp && (
+                <div className="mt-4 pt-4 border-t">
+                  <p className="text-sm text-muted-foreground text-center">
+                    Scan completed at: {new Date(scanResults.timestamp).toLocaleString()}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Debug Info - Show if there are issues */}
           {scanResults.error && (
