@@ -221,9 +221,9 @@ export default function SecurityAuditPage() {
           <div className="flex items-center space-x-4">
             <Select value={selectedRepository} onValueChange={setSelectedRepository}>
               <SelectTrigger className="w-[400px]">
-                <SelectValue placeholder="Select a repository" />
-              </SelectTrigger>
-              <SelectContent>
+              <SelectValue placeholder="Select a repository" />
+            </SelectTrigger>
+            <SelectContent>
                 {repositories.map((repo) => (
                   <SelectItem key={repo.name} value={repo.name}>
                     <div className="flex items-center space-x-2">
@@ -234,10 +234,10 @@ export default function SecurityAuditPage() {
                         </Badge>
                       )}
                     </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
             <Button 
               onClick={handleAudit} 
               disabled={!selectedRepository || isScanning}
@@ -443,16 +443,16 @@ export default function SecurityAuditPage() {
               <Card>
                 <CardHeader>
                   <CardTitle>Master Remediation Plan</CardTitle>
-                  <CardDescription>
+                    <CardDescription>
                     Comprehensive plan to fix all security issues in order of priority
-                  </CardDescription>
+                    </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="prose prose-sm max-w-none">
                     <div className="whitespace-pre-wrap bg-muted p-4 rounded-md">
                       {scanResults.master_remediation}
                     </div>
-                  </div>
+                </div>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -464,7 +464,7 @@ export default function SecurityAuditPage() {
                   <CardDescription>
                     Details about the scanned repository
                   </CardDescription>
-                </CardHeader>
+            </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -485,7 +485,7 @@ export default function SecurityAuditPage() {
                     </div>
                   </div>
                 </CardContent>
-              </Card>
+        </Card>
             </TabsContent>
           </Tabs>
         </div>

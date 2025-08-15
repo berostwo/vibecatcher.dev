@@ -113,8 +113,8 @@ class ChatGPTSecurityScanner:
         logger.info(f"📥 Cloning repository: {repo_url}")
         
         # Validate repository URL
-        if not any(domain in repo_url for domain in self.ALLOWED_REPO_DOMAINS):
-            raise ValueError(f"Repository domain not allowed. Allowed: {self.ALLOWED_REPO_DOMAINS}")
+        if not any(domain in repo_url for domain in ALLOWED_REPO_DOMAINS):
+            raise ValueError(f"Repository domain not allowed. Allowed: {ALLOWED_REPO_DOMAINS}")
         
         # Create temporary directory
         temp_dir = tempfile.mkdtemp()
