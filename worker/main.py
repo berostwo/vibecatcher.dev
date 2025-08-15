@@ -63,8 +63,8 @@ class SecurityScanner:
                     stderr=asyncio.subprocess.PIPE
                 )
                 
-                        # Optimized timeout for verified working rules (3 seconds per rule)
-        await asyncio.wait_for(test_process.communicate(), timeout=3)
+                # Optimized timeout for verified working rules (3 seconds per rule)
+                await asyncio.wait_for(test_process.communicate(), timeout=3)
                 
                 if test_process.returncode == 0:
                     return rule, True
@@ -462,8 +462,8 @@ class SecurityScanner:
             )
             
             try:
-                        # Optimized timeout for verified working rules
-        batch_timeout = MAX_SCAN_TIME_SECONDS * 1.5 if batch_index in [2, 4] else MAX_SCAN_TIME_SECONDS
+                # Optimized timeout for verified working rules
+                batch_timeout = MAX_SCAN_TIME_SECONDS * 1.5 if batch_index in [2, 4] else MAX_SCAN_TIME_SECONDS
                 logger.info(f"🔍 Batch {batch_index + 1} timeout: {batch_timeout}s")
                 
                 stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=batch_timeout)
