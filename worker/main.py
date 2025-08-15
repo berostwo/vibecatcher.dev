@@ -112,10 +112,17 @@ class ChatGPTSecurityScanner:
         """Clone repository with authentication"""
         logger.info(f"📥 Cloning repository: {repo_url}")
         
+        # Validate repository URL
+        if not any(domain in repo_url for domain in self.ALLOWED_REPO_DOMAINS):
+            raise ValueError(f"Repository domain not allowed. Allowed: {self.ALLOWED_REPO_DOMAINS}")
+        
         # Create temporary directory
         temp_dir = tempfile.mkdtemp()
         repo_name = repo_url.split('/')[-1].replace('.git', '')
         repo_path = os.path.join(temp_dir, repo_name)
+        
+        logger.info(f"📁 Temp directory: {temp_dir}")
+        logger.info(f"📁 Repository path: {repo_path}")
         
         try:
             # Build clone command
@@ -123,8 +130,12 @@ class ChatGPTSecurityScanner:
                 # Use token for private repos
                 auth_url = repo_url.replace('https://', f'https://{github_token}@')
                 clone_cmd = ['git', 'clone', '--single-branch', '--depth', '1', auth_url, repo_path]
+                logger.info(f"🔐 Using authenticated clone for private repo")
             else:
                 clone_cmd = ['git', 'clone', '--single-branch', '--depth', '1', repo_url, repo_path]
+                logger.info(f"🌐 Using public clone")
+            
+            logger.info(f"🚀 Clone command: {' '.join(clone_cmd)}")
             
             # Execute clone
             process = await asyncio.create_subprocess_exec(
@@ -133,16 +144,32 @@ class ChatGPTSecurityScanner:
                 stderr=asyncio.subprocess.PIPE
             )
             
+            logger.info(f"⏳ Cloning in progress...")
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
             
             if process.returncode != 0:
-                raise Exception(f"Git clone failed: {stderr.decode()}")
+                error_msg = stderr.decode()
+                logger.error(f"❌ Git clone failed with return code {process.returncode}")
+                logger.error(f"❌ Error output: {error_msg}")
+                raise Exception(f"Git clone failed: {error_msg}")
+            
+            # Validate cloned repository
+            if not os.path.exists(repo_path):
+                raise Exception("Repository directory not created after clone")
+            
+            # Get repository size and file count
+            repo_size = self.get_directory_size(repo_path)
+            file_count = self.count_files(repo_path)
             
             logger.info(f"✅ Repository cloned successfully: {repo_path}")
+            logger.info(f"📊 Repository size: {repo_size}")
+            logger.info(f"📊 Total files: {file_count}")
+            
             return repo_path
             
         except Exception as e:
             # Cleanup on failure
+            logger.error(f"❌ Clone failed: {e}")
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise e
     
@@ -222,19 +249,40 @@ class ChatGPTSecurityScanner:
             
             # Parse response
             content = response.choices[0].message.content
+            logger.info(f"🔍 ChatGPT response for {file_path}: {content[:200]}...")
+            
             try:
-                result = json.loads(content)
-                findings = result.get('findings', [])
+                # Try to extract JSON from the response
+                # Look for JSON blocks in markdown or text
+                json_start = content.find('{')
+                json_end = content.rfind('}') + 1
                 
-                # Convert to SecurityFinding objects
-                security_findings = []
-                for finding in findings:
-                    security_findings.append(SecurityFinding(**finding))
-                
-                return security_findings
-                
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse ChatGPT response for {file_path}")
+                if json_start != -1 and json_end > json_start:
+                    json_content = content[json_start:json_end]
+                    result = json.loads(json_content)
+                    findings = result.get('findings', [])
+                    
+                    # Convert to SecurityFinding objects
+                    security_findings = []
+                    for finding in findings:
+                        try:
+                            security_findings.append(SecurityFinding(**finding))
+                        except Exception as e:
+                            logger.warning(f"Failed to create SecurityFinding for {file_path}: {e}")
+                            continue
+                    
+                    logger.info(f"✅ Successfully parsed {len(security_findings)} findings for {file_path}")
+                    return security_findings
+                else:
+                    logger.warning(f"No JSON found in ChatGPT response for {file_path}")
+                    return []
+                    
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse ChatGPT response for {file_path}: {e}")
+                logger.warning(f"Response content: {content}")
+                return []
+            except Exception as e:
+                logger.error(f"Unexpected error parsing response for {file_path}: {e}")
                 return []
                 
         except Exception as e:
@@ -328,6 +376,18 @@ class ChatGPTSecurityScanner:
             all_findings = []
             file_types = ['.js', '.ts', '.tsx', '.jsx', '.py', '.php', '.rb', '.go', '.java', '.cs', '.rs', '.html', '.vue', '.svelte']
             
+            # Count total files to analyze
+            total_files = 0
+            for root, dirs, files in os.walk(repo_path):
+                dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__', '.venv', 'venv']]
+                for file in files:
+                    if any(file.endswith(ext) for ext in file_types):
+                        total_files += 1
+            
+            logger.info(f"🔍 Found {total_files} files to analyze")
+            logger.info(f"🔍 Supported file types: {', '.join(file_types)}")
+            
+            analyzed_files = 0
             for root, dirs, files in os.walk(repo_path):
                 # Skip common directories
                 dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__', '.venv', 'venv']]
@@ -337,36 +397,64 @@ class ChatGPTSecurityScanner:
                         file_path = os.path.join(root, file)
                         relative_path = os.path.relpath(file_path, repo_path)
                         
+                        analyzed_files += 1
+                        logger.info(f"🔍 Analyzing file {analyzed_files}/{total_files}: {relative_path}")
+                        
                         try:
+                            # Get file size
+                            file_size = os.path.getsize(file_path)
+                            if file_size > 1024 * 1024:  # 1MB
+                                logger.warning(f"⚠️ File {relative_path} is large ({file_size/1024/1024:.1f}MB), may take longer to analyze")
+                            
                             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                                 content = f.read()
+                            
+                            logger.info(f"📄 File {relative_path}: {len(content)} characters")
                             
                             # Analyze with ChatGPT
                             findings = self.analyze_file_with_chatgpt(relative_path, content, file)
                             all_findings.extend(findings)
                             
+                            logger.info(f"✅ Analysis complete for {relative_path}: {len(findings)} findings")
+                            
                         except Exception as e:
-                            logger.warning(f"Failed to analyze {file_path}: {e}")
+                            logger.warning(f"❌ Failed to analyze {relative_path}: {e}")
                             continue
             
             # Condense findings
+            logger.info(f"🔍 Condensing {len(all_findings)} findings...")
             condensed_findings = self.condense_findings(all_findings)
+            logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
             
             # Generate master remediation
+            logger.info(f"🔍 Generating master remediation plan...")
             master_remediation = self.generate_master_remediation(condensed_findings)
+            logger.info(f"✅ Master remediation generated")
             
             # Calculate scan duration
             scan_duration = (datetime.now() - start_time).total_seconds()
+            
+            # Calculate severity breakdown
+            critical_count = len([f for f in condensed_findings if f.severity == "Critical"])
+            high_count = len([f for f in condensed_findings if f.severity == "High"])
+            medium_count = len([f for f in condensed_findings if f.severity == "Medium"])
+            low_count = len([f for f in condensed_findings if f.severity == "Low"])
+            
+            logger.info(f"📊 Severity breakdown:")
+            logger.info(f"   🔴 Critical: {critical_count}")
+            logger.info(f"   🟠 High: {high_count}")
+            logger.info(f"   🟡 Medium: {medium_count}")
+            logger.info(f"   🟢 Low: {low_count}")
             
             # Create security report
             report = SecurityReport(
                 summary={
                     'total_findings': len(all_findings),
                     'condensed_findings': len(condensed_findings),
-                    'critical_count': len([f for f in condensed_findings if f.severity == "Critical"]),
-                    'high_count': len([f for f in condensed_findings if f.severity == "Critical"]),
-                    'medium_count': len([f for f in condensed_findings if f.severity == "Medium"]),
-                    'low_count': len([f for f in condensed_findings if f.severity == "Low"]),
+                    'critical_count': critical_count,
+                    'high_count': high_count,
+                    'medium_count': medium_count,
+                    'low_count': low_count,
                     'files_scanned': repo_info['file_count'],
                     'scan_duration': scan_duration
                 },
@@ -383,6 +471,18 @@ class ChatGPTSecurityScanner:
             
             logger.info(f"✅ Security scan completed in {scan_duration:.2f}s")
             logger.info(f"📊 Found {len(all_findings)} total findings, {len(condensed_findings)} unique issues")
+            logger.info(f"📊 Files scanned: {repo_info['file_count']}")
+            logger.info(f"📊 Repository size: {repo_info['size']}")
+            
+            # Validate report structure
+            if not isinstance(report.summary, dict):
+                logger.error("❌ Report summary is not a dictionary")
+            if not isinstance(report.findings, list):
+                logger.error("❌ Report findings is not a list")
+            if not isinstance(report.condensed_findings, list):
+                logger.error("❌ Report condensed_findings is not a list")
+            
+            logger.info(f"🎯 Report validation complete")
             
             return asdict(report)
             
