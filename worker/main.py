@@ -234,7 +234,173 @@ class SecurityScanner:
                     
                     if fallback_process.returncode != 0 and fallback_process.returncode != 1:
                         fallback_error = fallback_stderr.decode() if fallback_stderr else "Unknown error"
-                        raise Exception(f"Fallback Semgrep command also failed: {fallback_error}")
+                        
+                        # Check for config errors and try progressive fallback
+                        if "config errors" in fallback_error.lower():
+                            logger.warning("⚠️ Config errors detected, trying progressive rule fallback...")
+                            
+                            # Analyze config errors for debugging
+                            logger.error("🔍 CONFIG ERROR ANALYSIS:")
+                            logger.error(f"🔍 Full error: {fallback_error}")
+                            
+                            # Extract config error details
+                            if "running" in fallback_error and "configs" in fallback_error:
+                                try:
+                                    # Parse "running X rules from Y configs (Z config errors)"
+                                    import re
+                                    error_match = re.search(r'running (\d+) rules from (\d+) configs\s*\((\d+) config errors\)', fallback_error)
+                                    if error_match:
+                                        total_rules = error_match.group(1)
+                                        total_configs = error_match.group(2)
+                                        config_errors = error_match.group(3)
+                                        logger.error(f"🔍 Rules: {total_rules}, Configs: {total_configs}, Errors: {config_errors}")
+                                except Exception as parse_error:
+                                    logger.warning(f"⚠️ Could not parse config error details: {parse_error}")
+                            
+                            # Try to identify problematic rules by testing them individually
+                            logger.info("🔍 Testing individual rules to identify problematic ones...")
+                            problematic_rules = []
+                            
+                            for rule in self.security_rules[:5]:  # Test first 5 rules
+                                try:
+                                    test_command = [
+                                        'semgrep', 'scan',
+                                        '--json',
+                                        '--timeout', '30',
+                                        '--config', rule,
+                                        '--include', '*.py',  # Just one file type for testing
+                                        repo_path
+                                    ]
+                                    
+                                    logger.info(f"🔍 Testing rule: {rule}")
+                                    test_process = await asyncio.create_subprocess_exec(
+                                        *test_command,
+                                        stdout=asyncio.subprocess.PIPE,
+                                        stderr=asyncio.subprocess.PIPE
+                                    )
+                                    
+                                    test_stdout, test_stderr = await asyncio.wait_for(
+                                        test_process.communicate(), timeout=30
+                                    )
+                                    
+                                    if test_process.returncode != 0 and test_process.returncode != 1:
+                                        test_error = test_stderr.decode() if test_stderr else "Unknown error"
+                                        if "config error" in test_error.lower():
+                                            problematic_rules.append(rule)
+                                            logger.error(f"❌ Rule {rule} has config errors: {test_error[:200]}...")
+                                        else:
+                                            logger.info(f"✅ Rule {rule} works fine")
+                                    else:
+                                        logger.info(f"✅ Rule {rule} works fine")
+                                        
+                                except Exception as test_error:
+                                    logger.warning(f"⚠️ Could not test rule {rule}: {test_error}")
+                            
+                            if problematic_rules:
+                                logger.error(f"🔍 PROBLEMATIC RULES IDENTIFIED: {', '.join(problematic_rules)}")
+                                logger.error("🔍 These rules will be excluded from scanning")
+                            
+                            # Try with most stable rules first (excluding problematic ones)
+                            stable_rules = [
+                                'p/owasp-top-ten',        # Most stable
+                                'p/secrets',              # Essential
+                                'p/javascript',           # Basic JS
+                                'p/python',               # Basic Python
+                            ]
+                            
+                            # Filter out problematic rules
+                            stable_rules = [rule for rule in stable_rules if rule not in problematic_rules]
+                            
+                            logger.info(f"🔄 Trying with {len(stable_rules)} stable rules: {', '.join(stable_rules)}")
+                            
+                            stable_command = [
+                                'semgrep', 'scan',
+                                '--json',
+                                '--timeout', '600',
+                                '--verbose',
+                                '--metrics', 'off',
+                            ]
+                            
+                            # Add file type includes
+                            for file_type in file_types:
+                                stable_command.extend(['--include', file_type])
+                            
+                            # Add only stable rules
+                            for rule in stable_rules:
+                                stable_command.extend(['--config', rule])
+                            
+                            # Add target path
+                            stable_command.append(repo_path)
+                            
+                            # Try stable rules command
+                            stable_process = await asyncio.create_subprocess_exec(
+                                *stable_command,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
+                            )
+                            
+                            try:
+                                stable_stdout, stable_stderr = await asyncio.wait_for(
+                                    stable_process.communicate(), timeout=MAX_SCAN_TIME_SECONDS
+                                )
+                                
+                                if stable_process.returncode != 0 and stable_process.returncode != 1:
+                                    stable_error = stable_stderr.decode() if stable_stderr else "Unknown error"
+                                    
+                                    # If even stable rules fail, try minimal scan
+                                    if "config errors" in stable_error.lower():
+                                        logger.warning("⚠️ Even stable rules have config errors, trying minimal scan...")
+                                        
+                                        minimal_command = [
+                                            'semgrep', 'scan',
+                                            '--json',
+                                            '--timeout', '300',
+                                            '--config', 'p/owasp-top-ten',  # Just one rule
+                                            repo_path
+                                        ]
+                                        
+                                        logger.info(f"🔄 Trying minimal scan with single rule")
+                                        
+                                        minimal_process = await asyncio.create_subprocess_exec(
+                                            *minimal_command,
+                                            stdout=asyncio.subprocess.PIPE,
+                                            stderr=asyncio.subprocess.PIPE
+                                        )
+                                        
+                                        try:
+                                            minimal_stdout, minimal_stderr = await asyncio.wait_for(
+                                                minimal_process.communicate(), timeout=300
+                                            )
+                                            
+                                            if minimal_process.returncode != 0 and minimal_process.returncode != 1:
+                                                minimal_error = minimal_stderr.decode() if minimal_stderr else "Unknown error"
+                                                raise Exception(f"Even minimal scan failed: {minimal_error}")
+                                            
+                                            # Use minimal results
+                                            stdout = minimal_stdout
+                                            stderr = minimal_stderr
+                                            logger.info("✅ Minimal scan succeeded with single rule")
+                                            
+                                        except asyncio.TimeoutError:
+                                            minimal_process.kill()
+                                            raise Exception("Minimal scan timed out")
+                                        except Exception as minimal_error:
+                                            raise Exception(f"Minimal scan failed: {minimal_error}")
+                                    else:
+                                        raise Exception(f"Stable rules scan failed: {stable_error}")
+                                else:
+                                    # Use stable results
+                                    stdout = stable_stdout
+                                    stderr = stable_stderr
+                                    logger.info("✅ Stable rules scan succeeded")
+                                    
+                            except asyncio.TimeoutError:
+                                stable_process.kill()
+                                raise Exception("Stable rules scan timed out")
+                            except Exception as stable_error:
+                                raise Exception(f"Stable rules scan failed: {stable_error}")
+                        else:
+                            raise Exception(f"Fallback Semgrep command failed: {fallback_error}")
                     
                     # Use fallback results
                     stdout = fallback_stdout
