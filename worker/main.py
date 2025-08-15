@@ -56,8 +56,8 @@ class ChatGPTSecurityScanner:
     
     def __init__(self):
         # Initialize OpenAI client
-        openai.api_key = os.environ.get('OPENAI_API_KEY')
-        if not openai.api_key:
+        self.api_key = os.environ.get('OPENAI_API_KEY')
+        if not self.api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
         # Security categories for comprehensive coverage
@@ -209,7 +209,8 @@ class ChatGPTSecurityScanner:
             """
 
             # Call ChatGPT API
-            response = openai.ChatCompletion.create(
+            client = openai.OpenAI(api_key=self.api_key)
+            response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You are an expert security engineer focused on making indie developer applications bulletproof."},
@@ -289,7 +290,8 @@ class ChatGPTSecurityScanner:
             Format the response as a clear, actionable remediation plan.
             """
 
-            response = openai.ChatCompletion.create(
+            client = openai.OpenAI(api_key=self.api_key)
+            response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You are an expert security engineer creating remediation plans."},
