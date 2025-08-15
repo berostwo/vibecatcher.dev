@@ -73,21 +73,184 @@ const mapSemgrepSeverity = (semgrepSeverity: string): string => {
 const processSemgrepFindings = (semgrepResults: any): SecurityFinding[] => {
   if (!semgrepResults || !Array.isArray(semgrepResults)) return [];
   
-  return semgrepResults.map((result: any) => ({
-    rule_id: result.check_id || 'unknown-rule',
-    severity: mapSemgrepSeverity(result.extra?.severity || 'info'),
-    message: result.extra?.message || 'Security issue detected',
-    description: result.extra?.description || 'No description available',
-    file_path: result.path || 'unknown-file',
-    line_number: result.start?.line || 0,
-    end_line: result.end?.line || result.start?.line || 0,
-    code_snippet: result.extra?.lines || 'No code available',
-    cwe_ids: result.extra?.metadata?.cwe || [],
-    owasp_ids: result.extra?.metadata?.owasp || [],
-    impact: result.extra?.metadata?.impact || 'Unknown',
-    likelihood: result.extra?.metadata?.likelihood || 'Unknown',
-    confidence: result.extra?.metadata?.confidence || 'Unknown'
-  }));
+  return semgrepResults.map((result: any) => {
+    // Safely extract location information
+    const startLine = result.start?.line || 0;
+    const endLine = result.end?.line || startLine;
+    const filePath = result.path || 'unknown-file';
+    
+    // Safely extract metadata
+    const metadata = result.extra?.metadata || {};
+    const cweIds = Array.isArray(metadata.cwe) ? metadata.cwe : [];
+    const owaspIds = Array.isArray(metadata.owasp) ? metadata.owasp : [];
+    
+    return {
+      rule_id: result.check_id || 'unknown-rule',
+      severity: mapSemgrepSeverity(result.extra?.severity || 'info'),
+      message: result.extra?.message || 'Security issue detected',
+      description: result.extra?.description || 'No description available',
+      file_path: filePath,
+      line_number: startLine,
+      end_line: endLine,
+      code_snippet: result.extra?.lines || 'No code available',
+      cwe_ids: cweIds,
+      owasp_ids: owaspIds,
+      impact: metadata.impact || 'Unknown',
+      likelihood: metadata.likelihood || 'Unknown',
+      confidence: metadata.confidence || 'Unknown'
+    };
+  });
+};
+
+// Helper function to safely render file paths and line numbers
+const renderFileLocation = (finding: SecurityFinding) => {
+  const filePath = finding.file_path || 'unknown-file';
+  const startLine = finding.line_number || 0;
+  const endLine = finding.end_line || startLine;
+  
+  if (endLine !== startLine) {
+    return `📁 ${filePath}:${startLine}-${endLine}`;
+  } else {
+    return `📁 ${filePath}:${startLine}`;
+  }
+};
+
+// Helper function to safely render arrays
+const renderArray = (items: any[], fallback: string = 'None') => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return fallback;
+  }
+  return items.join(', ');
+};
+
+const getSeverityColor = (severity: string) => {
+  switch (severity.toLowerCase()) {
+    case 'critical': return 'bg-red-600 text-white';
+    case 'high': return 'bg-orange-600 text-white';
+    case 'medium': return 'bg-yellow-600 text-white';
+    case 'low': return 'bg-blue-600 text-white';
+    default: return 'bg-gray-600 text-white';
+  }
+};
+
+// Enhanced data validation function
+const validateScanResults = (results: any): ScanResults | null => {
+  try {
+    if (!results || typeof results !== 'object') {
+      console.warn('Invalid scan results format:', results);
+      return null;
+    }
+
+    // Ensure findings is always an array
+    const findings = Array.isArray(results.findings) ? results.findings : [];
+    
+    // Ensure errors is always an array
+    const errors = Array.isArray(results.errors) ? results.errors : [];
+    
+    // Ensure paths are always arrays
+    const paths_scanned = Array.isArray(results.paths_scanned) ? results.paths_scanned : [];
+    const paths_skipped = Array.isArray(results.paths_skipped) ? results.paths_skipped : [];
+    
+    // Ensure scan_results exists
+    const scan_results = results.scan_results || results;
+    
+    // Ensure numeric values
+    const scan_duration = typeof results.scan_duration === 'number' ? results.scan_duration : 0;
+    const timestamp = results.timestamp || new Date().toISOString();
+
+    return {
+      findings,
+      errors,
+      paths_scanned,
+      paths_skipped,
+      scan_results,
+      processed_results: results.processed_results,
+      scan_duration,
+      timestamp,
+      error: results.error,
+      error_type: results.error_type
+    };
+  } catch (error) {
+    console.error('Error validating scan results:', error);
+    return null;
+  }
+};
+
+// Safe rendering component for findings
+const SafeFindingDisplay = ({ finding }: { finding: SecurityFinding }) => {
+  try {
+    return (
+      <div className="border rounded-lg p-4 space-y-3">
+        <div className="flex items-start justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Badge className={getSeverityColor(finding.severity)}>
+                {String(finding.severity || 'Unknown')}
+              </Badge>
+              <span className="font-mono text-sm text-muted-foreground">
+                {String(finding.rule_id || 'unknown-rule')}
+              </span>
+            </div>
+            <h4 className="font-medium">{String(finding.message || 'No message')}</h4>
+            <p className="text-sm text-muted-foreground">
+              {String(finding.description || 'No description')}
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-4 text-sm">
+            <span className="font-mono">
+              {renderFileLocation(finding)}
+            </span>
+            {finding.impact && finding.impact !== 'Unknown' && (
+              <span>Impact: {String(finding.impact)}</span>
+            )}
+            {finding.likelihood && finding.likelihood !== 'Unknown' && (
+              <span>Likelihood: {String(finding.likelihood)}</span>
+            )}
+          </div>
+
+          {Array.isArray(finding.cwe_ids) && finding.cwe_ids.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">CWE:</span>
+              {finding.cwe_ids.map((cwe, i) => (
+                <Badge key={i} variant="outline" className="text-xs">
+                  {String(cwe || 'Unknown')}
+                </Badge>
+              ))}
+            </div>
+          )}
+
+          {Array.isArray(finding.owasp_ids) && finding.owasp_ids.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">OWASP:</span>
+              {finding.owasp_ids.map((owasp, i) => (
+                <Badge key={i} variant="outline" className="text-xs">
+                  {String(owasp || 'Unknown')}
+                </Badge>
+              ))}
+            </div>
+          )}
+
+          {finding.code_snippet && finding.code_snippet !== 'No code available' && (
+            <div className="bg-gray-50 p-3 rounded border">
+              <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">
+                {String(finding.code_snippet)}
+              </pre>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  } catch (error) {
+    console.error('Error rendering finding:', error, finding);
+    return (
+      <div className="border rounded-lg p-4 bg-red-50">
+        <p className="text-red-800">Error rendering security finding. Check console for details.</p>
+      </div>
+    );
+  }
 };
 
 export default function SecurityAuditPage() {
@@ -177,10 +340,16 @@ export default function SecurityAuditPage() {
         timestamp: results.timestamp || new Date().toISOString()
       };
       
-      setScanResults(processedResults);
+      // Validate the processed results
+      const validatedResults = validateScanResults(processedResults);
+      if (!validatedResults) {
+        throw new Error('Failed to validate scan results format');
+      }
       
-      const totalFindings = processedResults.findings.length;
-      const filesScanned = processedResults.paths_scanned.length;
+      setScanResults(validatedResults);
+      
+      const totalFindings = validatedResults.findings.length;
+      const filesScanned = validatedResults.paths_scanned.length;
       
       toast({
         title: "Security scan completed!",
@@ -199,16 +368,6 @@ export default function SecurityAuditPage() {
       });
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity.toLowerCase()) {
-      case 'critical': return 'bg-red-600 text-white';
-      case 'high': return 'bg-orange-600 text-white';
-      case 'medium': return 'bg-yellow-600 text-white';
-      case 'low': return 'bg-blue-600 text-white';
-      default: return 'bg-gray-600 text-white';
     }
   };
 
@@ -344,69 +503,7 @@ export default function SecurityAuditPage() {
               <CardContent>
                 <div className="space-y-4">
                   {scanResults.findings.map((finding, index) => (
-                    <div key={index} className="border rounded-lg p-4 space-y-3">
-                      <div className="flex items-start justify-between">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <Badge className={getSeverityColor(finding.severity)}>
-                              {finding.severity}
-                            </Badge>
-                            <span className="font-mono text-sm text-muted-foreground">
-                              {finding.rule_id}
-                            </span>
-                          </div>
-                          <h4 className="font-medium">{finding.message}</h4>
-                          <p className="text-sm text-muted-foreground">
-                            {finding.description}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-4 text-sm">
-                          <span className="font-mono">
-                            📁 {finding.file_path}:{finding.line_number}
-                            {finding.end_line !== finding.line_number && `-${finding.end_line}`}
-                          </span>
-                          {finding.impact !== 'Unknown' && (
-                            <span>Impact: {finding.impact}</span>
-                          )}
-                          {finding.likelihood !== 'Unknown' && (
-                            <span>Likelihood: {finding.likelihood}</span>
-                          )}
-                        </div>
-
-                        {finding.cwe_ids && finding.cwe_ids.length > 0 && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">CWE:</span>
-                            {finding.cwe_ids.map((cwe, i) => (
-                              <Badge key={i} variant="outline" className="text-xs">
-                                {cwe}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-
-                        {finding.owasp_ids && finding.owasp_ids.length > 0 && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">OWASP:</span>
-                            {finding.owasp_ids.map((owasp, i) => (
-                              <Badge key={i} variant="outline" className="text-xs">
-                                {owasp}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-
-                        {finding.code_snippet && finding.code_snippet !== 'No code available' && (
-                          <div className="bg-gray-50 p-3 rounded border">
-                            <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">
-                              {finding.code_snippet}
-                            </pre>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                    <SafeFindingDisplay key={index} finding={finding} />
                   ))}
                 </div>
               </CardContent>
@@ -452,9 +549,9 @@ export default function SecurityAuditPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Scan Errors & Warnings</CardTitle>
-                <CardDescription>
+                    <CardDescription>
                   Issues encountered during the security scan
-                </CardDescription>
+                    </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
@@ -543,8 +640,8 @@ export default function SecurityAuditPage() {
                   )}
                 </div>
               </CardContent>
-            </Card>
-          )}
+        </Card>
+      )}
 
           {/* Raw Response Debug */}
           <Card>
