@@ -557,7 +557,7 @@ export default function SecurityAuditPage() {
             {scanResults.errors && scanResults.errors.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Scan Errors & Warnings</CardTitle>
+                  <CardTitle>Scan Errors and Warnings</CardTitle>
                   <CardDescription>
                     Issues encountered during the security scan
                   </CardDescription>
