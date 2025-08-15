@@ -42,7 +42,7 @@ class SecurityScanner:
             'p/docker',                   # Docker security
             'p/kubernetes',               # Kubernetes security
             'p/terraform',                # Terraform security
-            'p/security-patterns',        # Generic security patterns (working alternative)
+            'p/security',                 # Security best practices (working alternative)
             'p/cwe-top-25',              # CWE Top 25 vulnerabilities
         ]
         
