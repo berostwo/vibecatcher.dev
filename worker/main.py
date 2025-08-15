@@ -32,24 +32,16 @@ class SecurityScanner:
             'p/react',                    # React security patterns
             'p/nextjs',                   # Next.js specific security
             'p/nodejs',                   # Node.js security
-            'p/express',                  # Express.js security
-            'p/api-security',             # API security patterns
-            'p/authentication',           # Authentication vulnerabilities
-            'p/authorization',            # Authorization issues
-            'p/input-validation',         # Input validation problems
-            'p/sql-injection',            # SQL injection patterns
-            'p/xss',                      # Cross-site scripting
-            'p/csrf',                     # CSRF vulnerabilities
-            'p/ssrf',                     # Server-side request forgery
-            'p/deserialization',          # Insecure deserialization
-            'p/command-injection',        # Command injection
-            'p/path-traversal',           # Path traversal attacks
-            'p/xxe',                      # XML external entity
-            'p/weak-crypto',              # Weak cryptography
-            'p/hardcoded-secrets',        # Hardcoded secrets
-            'p/dependency-vulnerabilities', # Dependency issues
-            'p/cloud-security',           # Cloud security patterns
-            'p/container-security',       # Docker/K8s security
+            'p/python',                   # Python security
+            'p/go',                       # Go security
+            'p/java',                     # Java security
+            'p/php',                      # PHP security
+            'p/ruby',                     # Ruby security
+            'p/docker',                   # Docker security
+            'p/kubernetes',               # Kubernetes security
+            'p/terraform',                # Terraform security
+            'p/generic',                  # Generic security patterns
+            'p/cwe-top-25',              # CWE Top 25 vulnerabilities
         ]
     
     def validate_repository_url(self, url: str) -> bool:
@@ -142,6 +134,37 @@ class SecurityScanner:
             logger.warning(f"⚠️ Could not determine Semgrep version: {e}")
             semgrep_version = "Unknown"
         
+        # Validate which rules are actually available
+        logger.info("🔍 Validating available Semgrep rules...")
+        available_rules = []
+        
+        for rule in self.security_rules:
+            try:
+                # Test if rule exists by trying to list its rules
+                test_process = await asyncio.create_subprocess_exec(
+                    'semgrep', '--config', rule, '--help',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                # Quick timeout for rule validation
+                await asyncio.wait_for(test_process.communicate(), timeout=5)
+                
+                if test_process.returncode == 0:
+                    available_rules.append(rule)
+                    logger.info(f"✅ Rule {rule} is available")
+                else:
+                    logger.warning(f"⚠️ Rule {rule} may not be available")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Could not validate rule {rule}: {e}")
+        
+        if not available_rules:
+            logger.warning("⚠️ No rules validated, using fallback rules")
+            available_rules = ['p/owasp-top-ten', 'p/secrets']
+        
+        logger.info(f"🔍 Using {len(available_rules)} validated rules: {', '.join(available_rules)}")
+        
         # Build scan command
         scan_command = [
             'semgrep', 'scan',
@@ -167,14 +190,14 @@ class SecurityScanner:
         for file_type in file_types:
             scan_command.extend(['--include', file_type])
         
-        # Add security rules
-        for rule in self.security_rules:
+        # Add only validated security rules
+        for rule in available_rules:
             scan_command.extend(['--config', rule])
         
         # Add target path
         scan_command.append(repo_path)
         
-        logger.info(f"🔍 Running scan with {len(self.security_rules)} security rule sets")
+        logger.info(f"🔍 Running scan with {len(available_rules)} security rule sets")
         logger.info(f"🔍 File types included: {len(file_types)}")
         logger.info(f"🔍 Target repository: {repo_path}")
         
@@ -306,6 +329,7 @@ class SecurityScanner:
                                 'p/secrets',              # Essential
                                 'p/javascript',           # Basic JS
                                 'p/python',               # Basic Python
+                                'p/generic',              # Generic patterns
                             ]
                             
                             # Filter out problematic rules
