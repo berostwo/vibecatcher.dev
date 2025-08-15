@@ -85,7 +85,7 @@ const processSemgrepFindings = (semgrepResults: any): SecurityFinding[] => {
     const cweIds = Array.isArray(metadata.cwe) ? metadata.cwe : [];
     const owaspIds = Array.isArray(metadata.owasp) ? metadata.owasp : [];
     
-    return {
+      return {
       rule_id: result.check_id || 'unknown-rule',
       severity: mapSemgrepSeverity(result.extra?.severity || 'info'),
       message: result.extra?.message || 'Security issue detected',
@@ -180,7 +180,7 @@ const validateScanResults = (results: any): ScanResults | null => {
 // Safe rendering component for findings
 const SafeFindingDisplay = ({ finding }: { finding: SecurityFinding }) => {
   try {
-    return (
+  return (
       <div className="border rounded-lg p-4 space-y-3">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
@@ -246,12 +246,12 @@ const SafeFindingDisplay = ({ finding }: { finding: SecurityFinding }) => {
     );
   } catch (error) {
     console.error('Error rendering finding:', error, finding);
-    return (
+            return (
       <div className="border rounded-lg p-4 bg-red-50">
         <p className="text-red-800">Error rendering security finding. Check console for details.</p>
-      </div>
-    );
-  }
+                  </div>
+            );
+}
 };
 
 export default function SecurityAuditPage() {
@@ -548,7 +548,7 @@ export default function SecurityAuditPage() {
                     </pre>
                   </div>
                 </CardContent>
-              </Card>
+      </Card>
             )}
           </ErrorBoundary>
 
@@ -602,9 +602,9 @@ export default function SecurityAuditPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Scan Statistics</CardTitle>
-                <CardDescription>
+                    <CardDescription>
                   Detailed information about the scan execution
-                </CardDescription>
+                    </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -672,7 +672,7 @@ export default function SecurityAuditPage() {
                 <CardDescription>
                   Complete response from worker for debugging
                 </CardDescription>
-              </CardHeader>
+            </CardHeader>
               <CardContent>
                 <div className="bg-gray-50 p-4 rounded border">
                   <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
@@ -680,7 +680,7 @@ export default function SecurityAuditPage() {
                   </pre>
                 </div>
               </CardContent>
-            </Card>
+        </Card>
           </ErrorBoundary>
         </div>
       )}
