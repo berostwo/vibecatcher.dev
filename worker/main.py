@@ -80,7 +80,7 @@ class SecurityScanner:
                 return rule, False
         
         # Validate rules in smaller batches to avoid overwhelming the system
-        batch_size = 4  # Reduced batch size for better reliability
+        batch_size = 6  # Increased batch size for better performance with larger rule sets
         available_rules = []
         
         logger.info(f"🔍 Processing {len(rules)} rules in batches of {batch_size}")
@@ -277,8 +277,8 @@ class SecurityScanner:
             command.extend(['--include', file_type])
         
         # Batch rules to reduce command complexity
-        # Split rules into groups of 4-5 to avoid argument limits
-        rule_batches = self._batch_rules(available_rules, batch_size=4)
+        # Split rules into groups of 4-6 to avoid argument limits
+        rule_batches = self._batch_rules(available_rules, batch_size=6)
         
         logger.info(f"🔧 Batching {len(available_rules)} rules into {len(rule_batches)} groups")
         
@@ -324,7 +324,6 @@ class SecurityScanner:
         
         # Validate available rules
         logger.info("🔍 Validating available Semgrep rules...")
-        available_rules = await self._get_available_rules()
         
         # Define comprehensive security rules for indie developers, vibe coders, and small SaaS
         # Focus on real-world security issues that actually matter for web applications
@@ -378,7 +377,7 @@ class SecurityScanner:
             
             # === VULNERABILITY CLASSIFICATIONS ===
             'p/cwe-top-25',             # Common Weakness Enumeration
-            'p/security',                # General security best practices
+            'p/security-audit',          # General security audit patterns (working alternative)
             
             # === VIBE CODER SPECIFIC RULES ===
             'p/express',                 # Express.js security (very common for indie devs)
@@ -439,6 +438,10 @@ class SecurityScanner:
             'p/feature-policy',          # Feature policy
             'p/permissions-policy',      # Permissions policy
         ]
+        
+        # Now validate the comprehensive security rules
+        logger.info(f"🔍 Validating {len(security_rules)} comprehensive security rules...")
+        available_rules = await self._validate_rules_parallel(security_rules)
         
         logger.info(f"🔍 Using {len(available_rules)} validated rules: {', '.join(available_rules)}")
         
