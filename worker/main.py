@@ -345,6 +345,7 @@ class SecurityScanner:
         
         for batch_index, rule_batch in enumerate(rule_batches):
             logger.info(f"🔍 Running batch {batch_index + 1}/{len(rule_batches)} with rules: {', '.join(rule_batch)}")
+            logger.info(f"🔍 Batch {batch_index + 1} contains {len(rule_batch)} rules")
             
             # Build command for this batch
             batch_command = ['semgrep', 'scan', '--json', '--timeout', '600']
@@ -361,6 +362,8 @@ class SecurityScanner:
             batch_command.append(repo_path)
             
             logger.info(f"🔍 Batch {batch_index + 1} command: {len(batch_command)} arguments")
+            logger.info(f"🔍 Batch {batch_index + 1} first 10 args: {' '.join(batch_command[:10])}")
+            logger.info(f"🔍 Batch {batch_index + 1} last 5 args: {' '.join(batch_command[-5:])}")
             
             # Execute batch scan
             process = await asyncio.create_subprocess_exec(
@@ -370,23 +373,43 @@ class SecurityScanner:
             )
             
             try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=MAX_SCAN_TIME_SECONDS)
+                # Increase timeout for problematic batches (3 and 5)
+                batch_timeout = MAX_SCAN_TIME_SECONDS * 2 if batch_index in [2, 4] else MAX_SCAN_TIME_SECONDS
+                logger.info(f"🔍 Batch {batch_index + 1} timeout: {batch_timeout}s")
+                
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=batch_timeout)
                 
                 # Always capture stderr for debugging
                 stderr_output = stderr.decode() if stderr else ""
+                stdout_output = stdout.decode() if stdout else ""
+                
                 if stderr_output:
-                    logger.info(f"🔍 Batch {batch_index + 1} stderr: {stderr_output[:200]}...")
+                    logger.info(f"🔍 Batch {batch_index + 1} stderr: {stderr_output}")
                 
                 if process.returncode != 0 and process.returncode != 1:  # Semgrep returns 1 for findings
                     error_msg = stderr_output or "Unknown error"
                     logger.error(f"❌ Batch {batch_index + 1} failed (exit {process.returncode}): {error_msg}")
+                    
+                    # Enhanced debugging for exit code 7
+                    if process.returncode == 7:
+                        logger.error(f"🔍 Exit code 7 details for batch {batch_index + 1}:")
+                        logger.error(f"   Command: {' '.join(batch_command[:10])}...")  # First 10 args
+                        logger.error(f"   Stdout: {stdout_output[:500]}...")  # First 500 chars
+                        logger.error(f"   Stderr: {stderr_output[:500]}...")  # First 500 chars
+                        logger.error(f"   Rules in batch: {rule_batch}")
+                        
+                        # Try running individual rules for exit code 7
+                        logger.info(f"🔄 Attempting individual rule execution for batch {batch_index + 1}")
+                        individual_findings = await self._run_individual_rules(rule_batch, repo_path, file_types)
+                        all_findings.extend(individual_findings)
+                        logger.info(f"✅ Individual rules completed for batch {batch_index + 1}: {len(individual_findings)} findings")
                     
                     # Continue with next batch instead of failing completely
                     continue
                 
                 # Parse batch results
                 try:
-                    batch_results = json.loads(stdout.decode())
+                    batch_results = json.loads(stdout_output)
                     
                     # Accumulate findings
                     batch_findings = batch_results.get('results', [])
@@ -407,6 +430,7 @@ class SecurityScanner:
                     
                 except json.JSONDecodeError as e:
                     logger.error(f"❌ Failed to parse batch {batch_index + 1} results: {e}")
+                    logger.error(f"   Raw stdout: {stdout_output[:500]}...")
                     continue
                     
             except asyncio.TimeoutError:
@@ -934,6 +958,50 @@ class SecurityScanner:
         
         logger.info(f"✅ Repository ready: {file_count} files, {repo_size_mb:.1f}MB")
         return True
+
+    async def _run_individual_rules(self, rules: List[str], repo_path: str, file_types: List[str]) -> List[Dict[str, Any]]:
+        """Run individual rules when batch execution fails"""
+        individual_findings = []
+        
+        for rule in rules:
+            try:
+                logger.info(f"🔍 Running individual rule: {rule}")
+                
+                # Build command for single rule
+                command = ['semgrep', 'scan', '--json', '--timeout', '300', '--config', rule]
+                
+                # Add file types
+                for file_type in file_types:
+                    command.extend(['--include', file_type])
+                
+                # Add target path
+                command.append(repo_path)
+                
+                # Execute single rule scan
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+                
+                if process.returncode in [0, 1]:  # Success or findings
+                    try:
+                        results = json.loads(stdout.decode())
+                        rule_findings = results.get('results', [])
+                        individual_findings.extend(rule_findings)
+                        logger.info(f"✅ Individual rule {rule} completed: {len(rule_findings)} findings")
+                    except json.JSONDecodeError:
+                        logger.warning(f"⚠️ Failed to parse results for individual rule {rule}")
+                else:
+                    logger.warning(f"⚠️ Individual rule {rule} failed with exit code {process.returncode}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error running individual rule {rule}: {e}")
+                continue
+        
+        return individual_findings
 
 # Create Flask app
 app = Flask(__name__)
