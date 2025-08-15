@@ -1,360 +1,150 @@
-# 🔒 Security Audit Worker
+# Enterprise Semgrep Security Scanner
 
-A high-performance Google Cloud Run worker that performs deep static code analysis using **Semgrep** and **GPT-4** for comprehensive security auditing and remediation guidance.
+A clean, focused, enterprise-grade security scanner built specifically for indie developers and micro-SaaS entrepreneurs.
 
 ## 🚀 Features
 
-- **⚡ Time-Optimized**: Parallel processing with async/await for maximum efficiency
-- **🔍 Deep Static Analysis**: Semgrep-powered security rule scanning
-- **🤖 AI-Powered Insights**: GPT-4 analysis for security assessment and remediation
-- **📊 Comprehensive Reports**: Detailed findings with severity classification
-- **🔄 Scalable**: Cloud Run auto-scaling for high-demand scenarios
-- **🔐 Secure**: Non-root container execution and secure token handling
+- **30+ Enterprise Security Rules**: Comprehensive coverage of OWASP Top 10, modern web vulnerabilities, and business logic issues
+- **Multi-Language Support**: TypeScript, JavaScript, Python, Go, Java, PHP, Ruby, and more
+- **Framework-Specific Rules**: React, Next.js, Express.js, Django, Flask, Firebase security patterns
+- **Clean Output**: Raw Semgrep results with organized severity breakdown
+- **No Bloat**: Focused on what works - just Semgrep analysis
+
+## 🛡️ Security Coverage
+
+### Core Vulnerabilities
+- SQL Injection, XSS, CSRF, SSRF
+- Authentication & Authorization flaws
+- Input validation bypasses
+- Path traversal, command injection
+- Insecure deserialization, XXE attacks
+
+### Modern Web Security
+- React/Next.js specific patterns
+- API security vulnerabilities
+- Cloud security misconfigurations
+- Container security issues
+- Dependency vulnerabilities
+
+### Business Logic
+- Rate limiting bypasses
+- Access control weaknesses
+- Data exposure patterns
+- Logging sensitive information
+- Weak cryptography usage
 
 ## 🏗️ Architecture
 
-```
-Repository Clone → Semgrep Scan → GPT-4 Analysis → Report Generation
-      ↓              ↓              ↓              ↓
-   Git Clone    Security Rules   AI Assessment   JSON Report
-   (5-30s)      (30-300s)       (10-60s)        (Instant)
-```
+- **Flask Web Server**: Lightweight HTTP API
+- **Async Processing**: Non-blocking repository operations
+- **Git Integration**: Secure repository cloning with token support
+- **Semgrep Engine**: Industry-standard static analysis
+- **Clean Output**: Structured results with raw data
 
-## 📋 Prerequisites
+## 📦 Deployment
 
-- Google Cloud Platform account with billing enabled
-- OpenAI API key with GPT-4 access
-- Git repository access (public or private with proper authentication)
-- Docker installed (for local testing)
-
-## 🛠️ Local Development Setup
-
-### 1. Clone and Setup
-
+### Google Cloud Run
 ```bash
-git clone <your-repo>
-cd worker
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+# Build and deploy
+gcloud builds submit --config cloudbuild.yaml
+
+# Or manual deployment
+docker build -t enterprise-semgrep-scanner .
+docker push gcr.io/PROJECT_ID/enterprise-semgrep-scanner
+gcloud run deploy enterprise-semgrep-scanner --image gcr.io/PROJECT_ID/enterprise-semgrep-scanner
 ```
 
-### 2. Environment Variables
+### Environment Variables
+- `PORT`: Server port (default: 8080)
+- No external API keys required
 
-Create `.env` file:
+## 🔌 API Usage
 
+### Security Scan
 ```bash
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_BASE_URL=https://api.openai.com/v1
-GPT_MODEL=gpt-4-turbo-preview
-```
+POST /
+Content-Type: application/json
 
-### 3. Install Semgrep
-
-```bash
-# macOS
-brew install semgrep
-
-# Ubuntu/Debian
-curl -L https://github.com/returntocorp/semgrep/releases/latest/download/semgrep-v1.60.0-ubuntu-20.04.tgz | tar -xz
-sudo mv semgrep-v1.60.0-ubuntu-20.04/semgrep /usr/local/bin/
-
-# Windows
-# Download from https://github.com/returntocorp/semgrep/releases
-```
-
-### 4. Test Locally
-
-```bash
-# Create test data
-echo '{"repository_url": "https://github.com/username/repo", "repository_name": "test-repo"}' > test_data.json
-
-# Run worker
-python main.py test_data.json
-```
-
-## 🚀 Google Cloud Run Deployment
-
-### 1. Enable Required APIs
-
-```bash
-gcloud services enable \
-  cloudbuild.googleapis.com \
-  run.googleapis.com \
-  containerregistry.googleapis.com
-```
-
-### 2. Set Project ID
-
-```bash
-export PROJECT_ID=$(gcloud config get-value project)
-echo $PROJECT_ID
-```
-
-### 3. Build and Deploy
-
-```bash
-# Build and deploy using Cloud Build
-gcloud builds submit --config cloudbuild.yaml \
-  --substitutions=_OPENAI_API_KEY="your-actual-api-key" \
-  --substitutions=_GPT_MODEL="gpt-4-turbo-preview"
-```
-
-### 4. Manual Deployment (Alternative)
-
-```bash
-# Build image
-docker build -t gcr.io/$PROJECT_ID/security-audit-worker .
-
-# Push to Container Registry
-docker push gcr.io/$PROJECT_ID/security-audit-worker
-
-# Deploy to Cloud Run
-gcloud run deploy security-audit-worker \
-  --image gcr.io/$PROJECT_ID/security-audit-worker \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --memory 4Gi \
-  --cpu 2 \
-  --timeout 900 \
-  --set-env-vars OPENAI_API_KEY="your-api-key"
-```
-
-## 📡 API Usage
-
-### Endpoint
-
-```
-POST https://security-audit-worker-xxxxx-uc.a.run.app/security_audit
-```
-
-### Request Format
-
-```json
 {
-  "repository_url": "https://github.com/username/repository",
-  "repository_name": "my-app",
-  "branch": "main"
+  "repository_url": "https://github.com/user/repo",
+  "github_token": "ghp_..." // Optional for private repos
 }
 ```
 
 ### Response Format
-
 ```json
 {
-  "success": true,
-  "audit_report": {
-    "repository_name": "my-app",
-    "scan_timestamp": "2024-01-15T10:30:00Z",
-    "semgrep_results": {
-      "findings": [...],
-      "scan_time": 45.2,
-      "total_files_scanned": 150
-    },
-    "gpt_analysis": {
-      "security_assessment": "Multiple critical vulnerabilities detected...",
-      "risk_level": "High",
-      "remediation_prompts": [...],
-      "master_prompt": "Comprehensive security fix...",
-      "analysis_time": 12.8
-    },
-    "total_issues": 8,
-    "critical_issues": 2,
-    "high_issues": 3,
-    "medium_issues": 2,
-    "low_issues": 1
+  "summary": {
+    "total_findings": 15,
+    "files_scanned": 98,
+    "scan_duration": 45.2,
+    "rules_executed": 30
   },
-  "execution_time": 58.0
+  "findings": [...],
+  "severity_breakdown": {
+    "critical": 2,
+    "high": 5,
+    "medium": 6,
+    "low": 2
+  },
+  "raw_semgrep_output": {...}
 }
 ```
 
-## ⚡ Performance Optimization
+## 🎯 Use Cases
 
-### Time Targets
+- **Indie Developers**: Security audit before launching SaaS
+- **Micro-SaaS**: Regular security checks for production code
+- **Startups**: Pre-funding security assessment
+- **Agencies**: Client security audits
+- **Open Source**: Security analysis of contributions
 
-- **Repository Clone**: 5-30 seconds (depending on size)
-- **Semgrep Scan**: 30-300 seconds (depending on codebase size)
-- **GPT-4 Analysis**: 10-60 seconds (depending on findings)
-- **Total Execution**: 45 seconds - 6.5 minutes
+## 🔧 Customization
 
-### Optimization Features
-
-- **Async Processing**: Parallel execution of independent operations
-- **Smart Timeouts**: Per-file and overall scan timeouts
-- **Memory Limits**: 4GB memory allocation for large codebases
-- **Concurrency Control**: Up to 10 concurrent requests per instance
-- **Auto-scaling**: 0-5 instances based on demand
-
-## 🔧 Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | Required | Your OpenAI API key |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI API endpoint |
-| `GPT_MODEL` | `gpt-4-turbo-preview` | GPT model to use |
-
-### Semgrep Configuration
-
-The worker uses Semgrep's `auto` configuration which includes:
-- Security rules for common vulnerabilities
-- Best practices for multiple languages
-- Customizable rule sets
-
-### Resource Limits
-
-- **Memory**: 4GB per instance
-- **CPU**: 2 vCPUs per instance
-- **Timeout**: 15 minutes maximum
-- **Concurrency**: 10 requests per instance
-- **Max Instances**: 5 auto-scaling
-
-## 📊 Monitoring and Logging
-
-### Cloud Logging
-
-All operations are logged with structured logging:
-- Repository cloning status
-- Semgrep scan progress
-- GPT-4 analysis results
-- Error handling and debugging
-
-### Health Checks
-
-```bash
-# Check worker health
-curl https://security-audit-worker-xxxxx-uc.a.run.app/health
+### Adding Rules
+Edit `security_rules` in `SecurityScanner` class:
+```python
+self.security_rules = [
+    'p/owasp-top-ten',
+    'p/secrets',
+    # Add custom rules here
+    'custom-rules.yaml'
+]
 ```
 
-### Metrics
-
-- Execution time per audit
-- Success/failure rates
-- Resource utilization
-- API response times
-
-## 🧪 Testing
-
-### Unit Tests
-
-```bash
-pytest tests/ -v
+### Custom Rule Files
+Create YAML files with custom Semgrep patterns:
+```yaml
+rules:
+  - id: custom-sql-injection
+    pattern: $QUERY = "SELECT * FROM users WHERE id = " + $USER_INPUT
+    message: "Potential SQL injection detected"
+    severity: ERROR
 ```
 
-### Integration Tests
+## 📊 Performance
 
-```bash
-# Test with real repository
-python -m pytest tests/test_integration.py -v
-```
+- **Repository Size**: Up to 500MB
+- **Scan Time**: Up to 10 minutes
+- **Memory**: 4GB allocated
+- **CPU**: 2 cores allocated
+- **Concurrency**: 10 concurrent requests
 
-### Load Testing
+## 🚨 Limitations
 
-```bash
-# Test concurrent requests
-python tests/load_test.py --concurrent 10 --duration 60
-```
+- **No GPT Integration**: Pure Semgrep analysis only
+- **No Remediation**: Findings only, no fix suggestions
+- **No Historical Data**: Each scan is independent
+- **No Custom Templates**: Standard Semgrep output format
 
-## 🔒 Security Considerations
+## 🔮 Future Enhancements
 
-- **Non-root Execution**: Container runs as non-privileged user
-- **Token Security**: API keys stored as environment variables
-- **Network Isolation**: Minimal network access required
-- **Resource Limits**: Prevents resource exhaustion attacks
-- **Input Validation**: All inputs are validated and sanitized
+- Separate GPT analysis worker
+- Custom report templates
+- Historical trend analysis
+- Remediation suggestions
+- Integration with CI/CD pipelines
 
-## 🚨 Troubleshooting
+## 📝 License
 
-### Common Issues
-
-1. **Semgrep Installation Failed**
-   ```bash
-   # Check Semgrep installation
-   semgrep --version
-   ```
-
-2. **OpenAI API Errors**
-   ```bash
-   # Verify API key
-   curl -H "Authorization: Bearer $OPENAI_API_KEY" \
-        https://api.openai.com/v1/models
-   ```
-
-3. **Repository Clone Failures**
-   - Check repository URL format
-   - Verify access permissions
-   - Check network connectivity
-
-4. **Memory Issues**
-   - Increase Cloud Run memory allocation
-   - Optimize Semgrep scan parameters
-   - Reduce concurrent requests
-
-### Debug Mode
-
-Enable debug logging:
-
-```bash
-export LOG_LEVEL=DEBUG
-```
-
-## 📈 Scaling and Performance
-
-### Auto-scaling
-
-- **Min Instances**: 0 (cold start)
-- **Max Instances**: 5
-- **Concurrency**: 10 requests per instance
-- **Scaling**: Based on request queue length
-
-### Performance Tuning
-
-```bash
-# Increase memory for large repositories
-gcloud run services update security-audit-worker \
-  --memory 8Gi
-
-# Increase CPU for faster processing
-gcloud run services update security-audit-worker \
-  --cpu 4
-```
-
-## 🔄 Updates and Maintenance
-
-### Updating Dependencies
-
-```bash
-# Update Python packages
-pip install -r requirements.txt --upgrade
-
-# Update Semgrep
-curl -L https://github.com/returntocorp/semgrep/releases/latest/download/semgrep-v1.60.0-ubuntu-20.04.tgz | tar -xz
-```
-
-### Rolling Updates
-
-```bash
-# Deploy new version
-gcloud builds submit --config cloudbuild.yaml
-
-# Monitor deployment
-gcloud run services describe security-audit-worker
-```
-
-## 📞 Support
-
-For issues and questions:
-- Check Cloud Run logs
-- Review Semgrep documentation
-- Verify OpenAI API status
-- Check network connectivity
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
----
-
-**Built with ❤️ for secure code analysis**
+MIT License - Use freely for personal and commercial projects.

@@ -1,995 +1,377 @@
-"use client"
+'use client';
 
-import { useState, useMemo, useEffect } from "react"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
-import { Badge } from "@/components/ui/badge"
-import { ArrowRight, Loader2, CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, Github, RefreshCw, GitBranch, Search, Brain, FileText, XCircle, Play, Activity } from "lucide-react"
-import { DashboardPage, DashboardPageHeader } from "@/components/common/dashboard-page"
-import { useAuth } from "@/contexts/auth-context"
-import { GitHubService, GitHubRepository } from "@/lib/github-service"
-import { useToast } from "@/hooks/use-toast"
+import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/auth-context';
+import { GitHubService } from '@/lib/github-service';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { useToast } from '@/hooks/use-toast';
 
-// Types for audit data
-interface Vulnerability {
+interface Repository {
+  name: string;
+  private: boolean;
+  description: string | null;
+}
+
+interface SecurityFinding {
   rule_id: string;
-  message: string;
   severity: string;
+  message: string;
+  description: string;
   file_path: string;
   line_number: number;
-  description: string;
-  remediation: string;
-  occurrences: number; // Added for enterprise-grade report
-  locations?: { file_path: string; line_number: number }[]; // Added for enterprise-grade report
+  end_line: number;
+  code_snippet: string;
+  cwe_ids: string[];
+  owasp_ids: string[];
+  impact: string;
+  likelihood: string;
+  confidence: string;
 }
 
-interface AuditSummary {
-  total_vulnerabilities: number;
-  high_severity: number;
-  medium_severity: number;
-  low_severity: number;
-  files_scanned: number;
-  scan_duration: number;
-  critical_severity: number; // Added for enterprise-grade report
-}
-
-interface AuditResults {
-  summary: AuditSummary;
-  vulnerabilities: Vulnerability[];
-  repository_info: {
-    url: string;
-    name: string;
-    scan_timestamp: string;
+interface ScanResults {
+  summary: {
+    total_findings: number;
+    files_scanned: number;
+    scan_duration: number;
+    rules_executed: number;
   };
-  scan_timestamp: string;
-  gpt_analysis: {
-    analysis: string;
-    model_used: string;
-    tokens_used: number;
-    timestamp: string;
+  findings: SecurityFinding[];
+  severity_breakdown: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
   };
+  raw_semgrep_output: any;
 }
-
-// Mock audit results data (keeping this for now as placeholder)
-const mockAuditResultsData: Record<string, AuditResults> = {
-  "default": {
-    summary: { 
-      total_vulnerabilities: 3, 
-      high_severity: 1, 
-      medium_severity: 1, 
-      low_severity: 1, 
-      files_scanned: 10,
-      scan_duration: 45.2,
-      critical_severity: 0 // Added for mock data
-    },
-    vulnerabilities: [
-      { 
-        rule_id: "VULN-002", 
-        message: "Cross-Site Scripting (XSS)", 
-        severity: "error", 
-        file_path: "src/components/Comment.tsx", 
-        line_number: 42, 
-        description: "User-provided content is rendered without proper sanitization, allowing for potential XSS attacks.", 
-        remediation: "Use a library like `dompurify` to sanitize HTML content before rendering it with `dangerouslySetInnerHTML`.",
-        occurrences: 1, // Added for mock data
-        locations: [{ file_path: "src/components/Comment.tsx", line_number: 42 }] // Added for mock data
-      },
-      { 
-        rule_id: "VULN-001", 
-        message: "Outdated Dependency: `react-scripts`", 
-        severity: "warning", 
-        file_path: "package.json", 
-        line_number: 25, 
-        description: "The version of `react-scripts` used in this project is outdated and has known security vulnerabilities.", 
-        remediation: "Update `react-scripts` to the latest version by running `npm install react-scripts@latest`.",
-        occurrences: 1, // Added for mock data
-        locations: [{ file_path: "package.json", line_number: 25 }] // Added for mock data
-      },
-      { 
-        rule_id: "VULN-003", 
-        message: "Insecure `target='_blank'` usage", 
-        severity: "info", 
-        file_path: "src/components/Footer.tsx", 
-        line_number: 15, 
-        description: "Links using `target='_blank'` without `rel='noopener noreferrer'` are a security risk.", 
-        remediation: "Add `rel='noopener noreferrer'` to all `<a>` tags that have `target='_blank'`.",
-        occurrences: 1, // Added for mock data
-        locations: [{ file_path: "src/components/Footer.tsx", line_number: 15 }] // Added for mock data
-      },
-    ],
-    repository_info: {
-      url: "https://github.com/berostwo/default",
-      name: "default",
-      scan_timestamp: "2025-08-14T10:00:00Z"
-    },
-    scan_timestamp: "2025-08-14T10:00:45Z",
-    gpt_analysis: {
-      analysis: "Mock GPT-4 analysis for testing purposes.",
-      model_used: "gpt-4-turbo-preview",
-      tokens_used: 150,
-      timestamp: "2025-08-14T10:00:45Z"
-    }
-  }
-}
-
-const getSeverityStyles = (severity: string) => {
-  switch (severity.toLowerCase()) {
-    case 'error':
-      return {
-        icon: <ShieldAlert className="h-5 w-5 text-red-500" />,
-        badgeVariant: 'destructive' as const,
-        borderColor: 'border-red-500/50',
-        bgColor: 'bg-red-500/10',
-        textColor: 'text-red-500',
-      };
-    case 'warning':
-      return {
-        icon: <AlertTriangle className="h-5 w-5 text-orange-500" />,
-        badgeVariant: 'destructive' as const,
-        borderColor: 'border-orange-500/50',
-        bgColor: 'bg-orange-500/10',
-        textColor: 'text-orange-500',
-      };
-    case 'info':
-      return {
-        icon: <Info className="h-5 w-5 text-yellow-500" />,
-        badgeVariant: 'secondary' as const,
-        borderColor: 'border-yellow-500/50',
-        bgColor: 'bg-yellow-500/10',
-        textColor: 'text-yellow-500',
-      };
-    default:
-      return {
-        icon: <CheckCircle className="h-5 w-5 text-green-500" />,
-        badgeVariant: 'outline' as const,
-        borderColor: 'border-gray-500/50',
-        bgColor: 'bg-gray-500/10',
-        textColor: 'text-gray-500',
-      };
-  }
-};
-
-
-type AuditResultsType = AuditResults | null;
-
-const AuditReport = ({ results }: { results: NonNullable<AuditResultsType> }) => {
-    const healthScore = useMemo(() => {
-        if (!results.summary.total_vulnerabilities) return 100;
-        
-        // Enterprise risk scoring: Critical (10), High (7), Medium (4), Low (1)
-        const weightedScore = (
-            results.summary.critical_severity * 10 + 
-            results.summary.high_severity * 7 + 
-            results.summary.medium_severity * 4 + 
-            results.summary.low_severity * 1
-        );
-        const maxScore = results.summary.total_vulnerabilities * 10;
-        return Math.max(0, Math.round((1 - (weightedScore / maxScore)) * 100));
-    }, [results]);
-    
-    const getHealthColor = (score: number) => {
-        if (score >= 90) return 'text-green-500';
-        if (score >= 70) return 'text-yellow-500';
-        if (score >= 50) return 'text-orange-500';
-        return 'text-red-500';
-    };
-
-    const getSeverityColor = (severity: string) => {
-        switch (severity.toLowerCase()) {
-            case 'critical': return 'text-red-600 bg-red-50 border-red-200';
-            case 'high': return 'text-orange-600 bg-orange-50 border-orange-200';
-            case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
-            case 'low': return 'text-blue-600 bg-blue-50 border-blue-200';
-            default: return 'text-gray-600 bg-gray-50 border-gray-200';
-        }
-    };
-
-    const getSeverityIcon = (severity: string) => {
-        switch (severity.toLowerCase()) {
-            case 'critical': return <ShieldAlert className="h-5 w-5 text-red-500" />;
-            case 'high': return <AlertTriangle className="h-5 w-5 text-orange-500" />;
-            case 'medium': return <Info className="h-5 w-5 text-yellow-500" />;
-            case 'low': return <CheckCircle className="h-5 w-5 text-blue-500" />;
-            default: return <Info className="h-5 w-5 text-gray-500" />;
-        }
-    };
-
-    const severityOrder = useMemo(() => ['critical', 'high', 'medium', 'low'], []);
-    const sortedVulnerabilities = useMemo(() => {
-        return results.vulnerabilities.sort((a, b) => 
-            severityOrder.indexOf(a.severity.toLowerCase()) - severityOrder.indexOf(b.severity.toLowerCase())
-        ) || [];
-    }, [results, severityOrder]);
-
-    return (
-        <div className="space-y-6 max-w-full overflow-hidden">
-            {/* Executive Summary Card */}
-            <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 border-2 border-blue-200 dark:border-blue-800">
-                <CardHeader className="text-center">
-                    <CardTitle className="text-2xl text-blue-900 dark:text-blue-100">
-                        🚀 Security Audit Executive Summary
-                    </CardTitle>
-                    <CardDescription className="text-blue-700 dark:text-blue-300">
-                        Repository: {results.repository_info.name} | Scan Date: {new Date(results.scan_timestamp).toLocaleDateString()}
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                        <div className="space-y-2">
-                            <div className="text-3xl font-bold text-blue-900 dark:text-blue-100">
-                                {results.summary.total_vulnerabilities}
-                            </div>
-                            <div className="text-sm text-blue-700 dark:text-blue-300">Total Findings</div>
-                        </div>
-                        <div className="space-y-2">
-                            <div className={`text-3xl font-bold ${getHealthColor(healthScore)}`}>
-                                {healthScore}%
-                            </div>
-                            <div className="text-sm text-blue-700 dark:text-blue-300">Security Score</div>
-                        </div>
-                        <div className="space-y-2">
-                            <div className="text-3xl font-bold text-blue-900 dark:text-blue-100">
-                                {results.summary.files_scanned}
-                            </div>
-                            <div className="text-sm text-blue-700 dark:text-blue-300">Files Scanned</div>
-                        </div>
-                        <div className="space-y-2">
-                            <div className="text-3xl font-bold text-blue-900 dark:text-blue-100">
-                                {results.summary.scan_duration.toFixed(1)}s
-                            </div>
-                            <div className="text-sm text-blue-700 dark:text-blue-300">Scan Duration</div>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Severity Breakdown Card */}
-            <Card className="border-2 border-primary/20">
-                <CardHeader>
-                    <CardTitle className="text-xl">📊 Security Findings by Severity</CardTitle>
-                    <CardDescription>Risk assessment and priority breakdown</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="text-center p-4 rounded-lg border-2 border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-800">
-                            <div className="text-3xl font-bold text-red-600 dark:text-red-400">
-                                {results.summary.critical_severity}
-                            </div>
-                            <div className="text-sm font-medium text-red-700 dark:text-red-300">Critical</div>
-                            <div className="text-xs text-red-600 dark:text-red-400">Fix within 24h</div>
-                        </div>
-                        <div className="text-center p-4 rounded-lg border-2 border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800">
-                            <div className="text-3xl font-bold text-orange-600 dark:text-orange-400">
-                                {results.summary.high_severity}
-                            </div>
-                            <div className="text-sm font-medium text-orange-700 dark:text-orange-300">High</div>
-                            <div className="text-xs text-orange-600 dark:text-orange-400">Fix within 1 week</div>
-                        </div>
-                        <div className="text-center p-4 rounded-lg border-2 border-yellow-200 bg-yellow-50 dark:bg-yellow-950/20 dark:border-yellow-800">
-                            <div className="text-3xl font-bold text-yellow-600 dark:text-yellow-400">
-                                {results.summary.medium_severity}
-                            </div>
-                            <div className="text-sm font-medium text-yellow-700 dark:text-yellow-300">Medium</div>
-                            <div className="text-xs text-yellow-600 dark:text-yellow-400">Fix within 1 month</div>
-                        </div>
-                        <div className="text-center p-4 rounded-lg border-2 border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800">
-                            <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
-                                {results.summary.low_severity}
-                            </div>
-                            <div className="text-sm font-medium text-blue-700 dark:text-blue-300">Low</div>
-                            <div className="text-xs text-blue-600 dark:text-blue-400">Fix within 3 months</div>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Master Remediation Prompt Card */}
-            <Card className="border-2 border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800">
-                <CardHeader>
-                    <CardTitle className="text-xl text-green-800 dark:text-green-200">
-                        🎯 Master Remediation Prompt
-                    </CardTitle>
-                    <CardDescription className="text-green-700 dark:text-green-300">
-                        Use this prompt in Cursor/GPT to fix ALL security issues at once
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <Accordion type="single" collapsible>
-                        <AccordionItem value="master-prompt">
-                            <AccordionTrigger className="text-green-800 dark:text-green-200 hover:text-green-900 dark:hover:text-green-100">
-                                <div className="flex items-center gap-2">
-                                    <Terminal className="h-5 w-5" />
-                                    Click to view Master Prompt
-                                </div>
-                            </AccordionTrigger>
-                            <AccordionContent>
-                                <div className="bg-black/90 rounded-md p-4 text-left">
-                                    <pre className="text-sm text-green-300 whitespace-pre-wrap font-mono overflow-x-auto">
-                                        {results.gpt_analysis.analysis}
-                                    </pre>
-                                </div>
-                            </AccordionContent>
-                        </AccordionItem>
-                    </Accordion>
-                </CardContent>
-            </Card>
-
-            {/* Individual Vulnerabilities Card */}
-            <Card className="border-2 border-primary/20">
-                <CardHeader>
-                    <CardTitle className="text-xl">🔍 Detailed Vulnerability Analysis</CardTitle>
-                    <CardDescription>Individual security issues with remediation guidance</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="space-y-4">
-                        {sortedVulnerabilities.map((vuln, index) => (
-                            <div key={index} className={`p-4 rounded-lg border-2 ${getSeverityColor(vuln.severity)}`}>
-                                <div className="flex items-start justify-between mb-3">
-                                    <div className="flex items-center gap-3">
-                                        {getSeverityIcon(vuln.severity)}
-                                        <div>
-                                            <h4 className="font-semibold text-lg break-words">{vuln.rule_id}</h4>
-                                            <div className="flex items-center gap-2 text-sm">
-                                                <Badge variant="outline" className="capitalize">
-                                                    {vuln.severity}
-                                                </Badge>
-                                                <Badge variant="secondary">
-                                                    {vuln.occurrences} occurrence{vuln.occurrences !== 1 ? 's' : ''}
-                                                </Badge>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div className="space-y-3">
-                                    <div>
-                                        <h5 className="font-medium mb-1">Description</h5>
-                                        <p className="text-sm break-words">{vuln.description}</p>
-                                    </div>
-                                    
-                                    <div>
-                                        <h5 className="font-medium mb-1">Security Message</h5>
-                                        <p className="text-sm break-words">{vuln.message}</p>
-                                    </div>
-                                    
-                                    <div>
-                                        <h5 className="font-medium mb-1">Locations</h5>
-                                        <div className="space-y-1">
-                                            {vuln.locations?.slice(0, 5).map((location, locIndex) => (
-                                                <div key={locIndex} className="text-sm font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-                                                    {location.file_path}:{location.line_number}
-                                                </div>
-                                            ))}
-                                            {vuln.locations && vuln.locations.length > 5 && (
-                                                <div className="text-sm text-gray-500">
-                                                    +{vuln.locations.length - 5} more locations
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    
-                                    <div>
-                                        <h5 className="font-medium mb-1">Remediation</h5>
-                                        <p className="text-sm break-words">{vuln.remediation}</p>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </CardContent>
-            </Card>
-        </div>
-    );
-};
 
 export default function SecurityAuditPage() {
-  const { user, githubToken } = useAuth()
-  const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [auditResults, setAuditResults] = useState<AuditResultsType>(null)
-  const [repositories, setRepositories] = useState<GitHubRepository[]>([])
-  const [isLoadingRepos, setIsLoadingRepos] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [userGitHubUsername, setUserGitHubUsername] = useState<string | null>(null)
-  const [auditProgress, setAuditProgress] = useState<{
-    phase: string;
-    progress: number;
-    message: string;
-    startTime: Date | null;
-    estimatedDuration: number;
-    details: {
-      filesScanned?: number;
-      vulnerabilitiesFound?: number;
-      currentRule?: string;
-      cloneStatus?: string;
-      semgrepStatus?: string;
-      gptStatus?: string;
-    };
-  }>({
-    phase: 'idle',
-    progress: 0,
-    message: 'Ready to start audit',
-    startTime: null,
-    estimatedDuration: 0,
-    details: {}
-  });
+  const { user, githubToken } = useAuth();
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [scanResults, setScanResults] = useState<ScanResults | null>(null);
   const { toast } = useToast();
 
-  // Fetch user's GitHub username and repositories
+  // Fetch user's repositories
   useEffect(() => {
-    const fetchUserData = async () => {
+    const fetchRepositories = async () => {
       if (!user || !githubToken) {
-        setError("Please sign in with GitHub to access your repositories")
-        return
+        setError("Please sign in with GitHub to access your repositories");
+        return;
       }
-
-      setIsLoadingRepos(true)
-      setError(null)
+      
+      setIsLoadingRepos(true);
+      setError(null);
       
       try {
-        // Get user's GitHub username from Firebase
-        const { FirebaseUserService } = await import('@/lib/firebase-user-service');
-        const firebaseUser = await FirebaseUserService.getUserByUid(user.uid);
-        
-        if (firebaseUser?.githubUsername) {
-          setUserGitHubUsername(firebaseUser.githubUsername);
-          console.log('User GitHub username:', firebaseUser.githubUsername);
-          
-          // Fetch repositories using the GitHub username
-          const repos = await GitHubService.getUserRepositories(user.uid);
-          setRepositories(repos);
-          console.log('Fetched repositories:', repos);
-        } else {
-          setError("Could not retrieve GitHub username. Please try signing in again.");
-        }
+        const repos = await GitHubService.getUserRepositories(user.uid);
+        setRepositories(repos);
       } catch (err) {
-        console.error('Error fetching user data:', err)
-        setError(err instanceof Error ? err.message : 'Failed to fetch user data')
+        console.error('Error fetching repositories:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch repositories');
       } finally {
-        setIsLoadingRepos(false)
+        setIsLoadingRepos(false);
       }
-    }
+    };
 
-    fetchUserData()
-  }, [user, githubToken])
+    fetchRepositories();
+  }, [user, githubToken]);
 
   const handleAudit = async () => {
-    if (!selectedRepo || !user || !userGitHubUsername) {
-      if (!userGitHubUsername) {
-        setError("GitHub username not available. Please try refreshing the page.");
-      }
-      return;
-    }
+    if (!selectedRepo || !user) return;
     
     setIsLoading(true);
     setError(null);
-    console.log('🚀 Starting security audit for:', selectedRepo);
-    console.log('👤 User GitHub username:', userGitHubUsername);
+    setScanResults(null);
     
-    // Initialize progress tracking
-    const startTime = new Date();
-    const estimatedDuration = 10 * 60 * 1000; // 10 minutes estimate
-    
-    setAuditProgress({
-      phase: 'starting',
-      progress: 0,
-      message: 'Initializing security audit...',
-      startTime,
-      estimatedDuration,
-      details: {
-        cloneStatus: 'Preparing...',
-        semgrepStatus: 'Waiting...',
-        gptStatus: 'Waiting...'
-      }
-    });
-
     try {
-      // Add timeout to the fetch request
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 900000); // 15 minutes timeout
-      
-      console.log('📡 Calling worker at:', process.env.NEXT_PUBLIC_SECURITY_WORKER_URL);
-      console.log('🔑 GitHub token available:', !!githubToken);
-      console.log('🔑 GitHub token length:', githubToken?.length || 0);
-      
-      const requestBody = {
-        repository_url: `https://github.com/${userGitHubUsername}/${selectedRepo}`,
-        github_token: githubToken  // Add GitHub token for private repo access
-      };
-      
-      console.log('📤 Request body:', {
-        ...requestBody,
-        github_token: githubToken ? `${githubToken.substring(0, 10)}...` : 'None'
-      });
-
-      // Update progress to cloning phase
-      setAuditProgress(prev => ({
-        ...prev,
-        phase: 'cloning',
-        progress: 10,
-        message: 'Cloning repository...',
-        details: {
-          ...prev.details,
-          cloneStatus: 'Cloning repository from GitHub...'
-        }
-      }));
-
       const response = await fetch(process.env.NEXT_PUBLIC_SECURITY_WORKER_URL!, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal
+        body: JSON.stringify({
+          repository_url: `https://github.com/${user.displayName}/${selectedRepo}`,
+          github_token: githubToken
+        })
       });
-      
-      clearTimeout(timeoutId);
-      
-      console.log('📥 Worker response status:', response.status);
-      console.log('📥 Worker response headers:', Object.fromEntries(response.headers.entries()));
-      
+
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ Worker error response:', errorText);
         throw new Error(`Audit failed: ${response.status} - ${errorText}`);
       }
-      
-      // Update progress to scanning phase
-      setAuditProgress(prev => ({
-        ...prev,
-        phase: 'scanning',
-        progress: 50,
-        message: 'Running security scan...',
-        details: {
-          ...prev.details,
-          cloneStatus: 'Repository cloned successfully',
-          semgrepStatus: 'Running Semgrep security scan...'
-        }
-      }));
-      
-      const auditResults = await response.json();
-      console.log('✅ Audit completed successfully:', auditResults);
-      
-      // Update progress to analysis phase
-      setAuditProgress(prev => ({
-        ...prev,
-        phase: 'analyzing',
-        progress: 80,
-        message: 'Analyzing findings...',
-        details: {
-          ...prev.details,
-          semgrepStatus: 'Security scan completed',
-          gptStatus: 'Analyzing findings with GPT-4...'
-        }
-      }));
-      
-      // Update progress with final results
-      const finalProgress = {
-        phase: 'completed',
-        progress: 100,
-        message: 'Audit completed successfully!',
-        details: {
-          filesScanned: auditResults.summary?.files_scanned || 0,
-          vulnerabilitiesFound: auditResults.summary?.total_vulnerabilities || 0,
-          cloneStatus: 'Repository cloned successfully',
-          semgrepStatus: `Scanned ${auditResults.summary?.files_scanned || 0} files`,
-          gptStatus: 'Analysis completed'
-        }
-      };
-      
-      setAuditProgress(prev => ({
-        ...prev,
-        ...finalProgress
-      }));
-      
-      setAuditResults(auditResults);
+
+      const results = await response.json();
+      setScanResults(results);
       
       toast({
-        title: "Audit completed!",
-        description: `Found ${auditResults.summary?.total_vulnerabilities || 0} security issues.`,
+        title: "Security scan completed!",
+        description: `Found ${results.summary?.total_findings || 0} security issues.`,
       });
       
     } catch (error: unknown) {
-      console.error('❌ Audit failed:', error);
+      console.error('Audit failed:', error);
+      setError(error instanceof Error ? error.message : 'Audit failed with unknown error');
       
-      let errorMessage = 'Audit failed with unknown error';
-      
-      if (error instanceof Error && error.name === 'AbortError') {
-        errorMessage = 'Audit timed out after 15 minutes. The repository might be too large or complex.';
-      } else if (error instanceof Error) {
-        // Check for specific error types
-        if (error.message.includes('could not read Username') || error.message.includes('No such device or address')) {
-          errorMessage = 'Private repository access failed. Please ensure you have the correct permissions and try again.';
-        } else if (error.message.includes('Git clone failed')) {
-          errorMessage = 'Repository cloning failed. This might be due to network issues or repository access permissions.';
-        } else if (error.message.includes('network')) {
-          errorMessage = 'Network connection issue. Please check your internet connection and try again.';
-        } else {
-          errorMessage = error.message;
-        }
-      }
-      
-      setError(errorMessage);
-
-      setAuditProgress(prev => ({
-        ...prev,
-        phase: 'failed',
-        progress: 0,
-        message: `Audit failed: ${errorMessage}`
-      }));
-
       toast({
         title: "Audit failed",
-        description: errorMessage,
+        description: error instanceof Error ? error.message : 'Unknown error',
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
-      console.log('🏁 Audit process finished');
-      
-      // Reset progress after a delay
-      setTimeout(() => {
-        setAuditProgress({
-          phase: 'idle',
-          progress: 0,
-          message: 'Ready to start audit',
-          startTime: null,
-          estimatedDuration: 0,
-          details: {}
-        });
-      }, 3000);
     }
   };
 
-  const handleRefreshRepos = async () => {
-    if (!user || !githubToken || !userGitHubUsername) return
-    setIsLoadingRepos(true)
-    setError(null)
-    try {
-      const repos = await GitHubService.getUserRepositories(user.uid)
-      setRepositories(repos)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to refresh repositories')
-    } finally {
-      setIsLoadingRepos(false)
-    }
-  }
-
-  const getPhaseIcon = (phase: string) => {
-    switch (phase) {
-      case 'starting': return <Loader2 className="h-4 w-4 animate-spin" />;
-      case 'cloning': return <GitBranch className="h-4 w-4" />;
-      case 'scanning': return <Search className="h-4 w-4" />;
-      case 'analyzing': return <Brain className="h-4 w-4" />;
-      case 'generating': return <FileText className="h-4 w-4" />;
-      case 'completed': return <CheckCircle className="h-4 w-4" />;
-      case 'failed': return <XCircle className="h-4 w-4" />;
-      default: return <Play className="h-4 w-4" />;
-    }
-  };
-
-  const getPhaseColor = (phase: string) => {
-    switch (phase) {
-      case 'starting': return 'text-blue-600';
-      case 'cloning': return 'text-green-600';
-      case 'scanning': return 'text-orange-600';
-      case 'analyzing': return 'text-purple-600';
-      case 'generating': return 'text-indigo-600';
-      case 'completed': return 'text-green-600';
-      case 'failed': return 'text-red-600';
-      default: return 'text-gray-600';
-    }
-  };
-
-  const getPhaseDescription = (phase: string) => {
-    switch (phase) {
-      case 'starting': return 'Initializing security audit...';
-      case 'cloning': return 'Cloning repository from GitHub...';
-      case 'scanning': return 'Running Semgrep security scan...';
-      case 'analyzing': return 'Analyzing findings with GPT-4...';
-      case 'generating': return 'Generating final report...';
-      case 'completed': return 'Audit completed successfully!';
-      case 'failed': return 'Audit failed - check error details';
-      default: return 'Ready to start audit';
+  const getSeverityColor = (severity: string) => {
+    switch (severity.toLowerCase()) {
+      case 'critical': return 'bg-red-600 text-white';
+      case 'high': return 'bg-orange-600 text-white';
+      case 'medium': return 'bg-yellow-600 text-white';
+      case 'low': return 'bg-blue-600 text-white';
+      default: return 'bg-gray-600 text-white';
     }
   };
 
   return (
-    <DashboardPage>
-      <DashboardPageHeader title="Security Audit" description="Select a GitHub repository to start your security audit." />
-      
-      {/* Repository Selection Card */}
-      <Card className="border-2 border-primary/20">
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Security Audit</h1>
+        <p className="text-muted-foreground">
+          Comprehensive security analysis of your repository using enterprise-grade Semgrep rules.
+        </p>
+      </div>
+
+      {/* Repository Selection */}
+      <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Github className="h-5 w-5" />
-                Select Repository
-                {repositories.length > 0 && (
-                  <Badge variant="outline" className="ml-2">
-                    {repositories.length} repo{repositories.length !== 1 ? 's' : ''}
-                  </Badge>
-                )}
-              </CardTitle>
-              <CardDescription>
-                Choose a repository from your GitHub account to begin the audit process.
-              </CardDescription>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRefreshRepos}
-              disabled={isLoadingRepos}
-              className="flex items-center gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${isLoadingRepos ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-          </div>
+          <CardTitle>Select Repository</CardTitle>
+          <CardDescription>
+            Choose a repository to scan for security vulnerabilities
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-md">
-              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-            </div>
-          )}
-          
-          {isLoadingRepos ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Loading your repositories...</span>
-            </div>
-          ) : repositories.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Github className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg font-medium mb-2">No repositories found</p>
-              <p className="text-sm">
-                {!user || !githubToken 
-                  ? "Please sign in with GitHub to access your repositories"
-                  : "You don't have any repositories yet, or they're all private"
-                }
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <Select onValueChange={setSelectedRepo} disabled={isLoading}>
-                <SelectTrigger className="w-full md:w-[300px]">
-                  <SelectValue placeholder="Select a repository" />
-                </SelectTrigger>
-                <SelectContent>
-                  {repositories.map((repo) => (
-                    <SelectItem key={repo.id} value={repo.name}>
-                      <div className="flex items-center gap-2">
-                        <span>{repo.name}</span>
-                        {repo.private && (
-                          <Badge variant="secondary" className="text-xs">Private</Badge>
-                        )}
-                        {repo.language && (
-                          <Badge variant="outline" className="text-xs">{repo.language}</Badge>
-                        )}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              
-              {selectedRepo && (
-                <div className="mt-4 p-4 bg-muted/50 rounded-lg border">
-                  <h4 className="font-medium mb-2">Selected Repository</h4>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Name:</span>
-                      <p className="font-mono">{selectedRepo}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Language:</span>
-                      <p>{repositories.find(r => r.name === selectedRepo)?.language || 'Unknown'}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Visibility:</span>
-                      <p>{repositories.find(r => r.name === selectedRepo)?.private ? 'Private' : 'Public'}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Last Updated:</span>
-                      <p>{repositories.find(r => r.name === selectedRepo)?.updated_at ? new Date(repositories.find(r => r.name === selectedRepo)!.updated_at).toLocaleDateString() : 'Unknown'}</p>
-                    </div>
+        <CardContent className="space-y-4">
+          <Select onValueChange={setSelectedRepo} value={selectedRepo || undefined}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select a repository" />
+            </SelectTrigger>
+            <SelectContent>
+              {repositories.map((repo) => (
+                <SelectItem key={repo.name} value={repo.name}>
+                  <div className="flex items-center gap-2">
+                    <span>{repo.name}</span>
+                    {repo.private && <Badge variant="secondary">Private</Badge>}
                   </div>
-                </div>
-              )}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button 
+            onClick={handleAudit} 
+            disabled={!selectedRepo || isLoading || isLoadingRepos}
+            className="w-full"
+          >
+            {isLoading ? 'Scanning...' : 'Run Security Scan'}
+          </Button>
+
+          {error && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-red-800">{error}</p>
             </div>
           )}
         </CardContent>
-        <CardFooter>
-          <Button onClick={handleAudit} disabled={!selectedRepo || isLoading || repositories.length === 0}>
-            {isLoading ? (
-              <div className="flex items-center gap-2">
-                <RefreshCw className="h-4 w-4 animate-spin" />
-                Running Security Audit... (This may take 5-10 minutes)
-              </div>
-            ) : (
-              <>
-                Start Audit <ArrowRight className="ml-2 h-4 w-4" />
-              </>
-            )}
-          </Button>
-        </CardFooter>
       </Card>
 
-      {auditResults && auditResults.summary && auditResults.summary.total_vulnerabilities > 0 && (
+      {/* Scan Results */}
+      {scanResults && (
         <div className="space-y-6">
-          <AuditReport results={auditResults} />
+          {/* Summary */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Scan Summary</CardTitle>
+              <CardDescription>
+                Overview of security findings and scan statistics
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-red-600">
+                    {scanResults.summary.total_findings}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Total Issues</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600">
+                    {scanResults.summary.files_scanned}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Files Scanned</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600">
+                    {scanResults.summary.rules_executed}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Rules Executed</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-600">
+                    {scanResults.summary.scan_duration}s
+                  </div>
+                  <div className="text-sm text-muted-foreground">Scan Duration</div>
+                </div>
+              </div>
+
+              <Separator className="my-4" />
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center">
+                  <div className="text-xl font-bold text-red-600">
+                    {scanResults.severity_breakdown.critical}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Critical</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xl font-bold text-orange-600">
+                    {scanResults.severity_breakdown.high}
+                  </div>
+                  <div className="text-sm text-muted-foreground">High</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xl font-bold text-yellow-600">
+                    {scanResults.severity_breakdown.medium}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Medium</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xl font-bold text-blue-600">
+                    {scanResults.severity_breakdown.low}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Low</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Security Findings */}
+          {scanResults.findings.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Security Findings</CardTitle>
+                <CardDescription>
+                  Detailed list of security vulnerabilities found in your codebase
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {scanResults.findings.map((finding, index) => (
+                    <div key={index} className="border rounded-lg p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Badge className={getSeverityColor(finding.severity)}>
+                              {finding.severity}
+                            </Badge>
+                            <span className="font-mono text-sm text-muted-foreground">
+                              {finding.rule_id}
+                            </span>
+                          </div>
+                          <h4 className="font-medium">{finding.message}</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {finding.description}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-4 text-sm">
+                          <span className="font-mono">
+                            📁 {finding.file_path}:{finding.line_number}
+                            {finding.end_line !== finding.line_number && `-${finding.end_line}`}
+                          </span>
+                          {finding.impact !== 'Unknown' && (
+                            <span>Impact: {finding.impact}</span>
+                          )}
+                          {finding.likelihood !== 'Unknown' && (
+                            <span>Likelihood: {finding.likelihood}</span>
+                          )}
+                        </div>
+
+                        {finding.cwe_ids.length > 0 && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">CWE:</span>
+                            {finding.cwe_ids.map((cwe, i) => (
+                              <Badge key={i} variant="outline" className="text-xs">
+                                {cwe}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+
+                        {finding.owasp_ids.length > 0 && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">OWASP:</span>
+                            {finding.owasp_ids.map((owasp, i) => (
+                              <Badge key={i} variant="outline" className="text-xs">
+                                {owasp}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+
+                        {finding.code_snippet && finding.code_snippet !== 'No code available' && (
+                          <div className="bg-gray-50 p-3 rounded border">
+                            <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">
+                              {finding.code_snippet}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>No Security Issues Found</CardTitle>
+                <CardDescription>
+                  Great news! No security vulnerabilities were detected in your codebase.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground">
+                  This could mean your code is secure, or you may want to review the scan configuration 
+                  to ensure all relevant security rules were applied.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Raw Semgrep Output */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Raw Semgrep Output</CardTitle>
+              <CardDescription>
+                Complete raw output from Semgrep for debugging and analysis
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="bg-gray-50 p-4 rounded border">
+                <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
+                  {JSON.stringify(scanResults.raw_semgrep_output, null, 2)}
+                </pre>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
-
-      {auditResults && auditResults.summary && auditResults.summary.total_vulnerabilities === 0 && (
-         <Card className="border-green-500/30">
-            <CardHeader className="flex-row items-center gap-4">
-                <CheckCircle className="w-8 h-8 text-green-500" />
-                <div>
-                    <CardTitle>No Issues Found!</CardTitle>
-                    <CardDescription>
-                        Excellent! Your repository `{auditResults.repository_info?.name || 'Unknown'}` passed the security audit.
-                    </CardDescription>
-                </div>
-            </CardHeader>
-        </Card>
-      )}
-
-      {/* Debug: Show raw audit results for troubleshooting */}
-      {auditResults && (
-        <Card className="border-blue-500/30 mt-6">
-          <CardHeader>
-            <CardTitle className="text-blue-600">Debug: Raw Audit Results</CardTitle>
-            <CardDescription>Raw data structure returned from worker (click to expand)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Accordion type="single" collapsible>
-              <AccordionItem value="debug-data">
-                <AccordionTrigger>Click to view raw data</AccordionTrigger>
-                <AccordionContent>
-                  <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-4 rounded overflow-auto max-h-96">
-                    {JSON.stringify(auditResults, null, 2)}
-                  </pre>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Progress Tracking Card */}
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            Progress Tracking
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {/* Current Phase */}
-            <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-full ${getPhaseColor(auditProgress.phase)} bg-opacity-10`}>
-                {getPhaseIcon(auditProgress.phase)}
-              </div>
-              <div>
-                <p className="font-medium">{getPhaseDescription(auditProgress.phase)}</p>
-                <p className="text-sm text-gray-600">{auditProgress.message}</p>
-              </div>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${auditProgress.progress}%` }}
-              />
-            </div>
-
-            {/* Phase Details */}
-            {auditProgress.details && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <p className="font-medium text-gray-700">Clone Status</p>
-                  <p className="text-gray-600">{auditProgress.details.cloneStatus || 'Waiting...'}</p>
-                </div>
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <p className="font-medium text-gray-700">Semgrep Status</p>
-                  <p className="text-gray-600">{auditProgress.details.semgrepStatus || 'Waiting...'}</p>
-                </div>
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <p className="font-medium text-gray-700">GPT Analysis</p>
-                  <p className="text-gray-600">{auditProgress.details.gptStatus || 'Waiting...'}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Results Summary */}
-            {auditProgress.phase === 'completed' && auditProgress.details && (
-              <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                <h4 className="font-medium text-green-800 mb-2">Audit Results Summary</h4>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-green-700">Files Scanned:</p>
-                    <p className="font-medium">{auditProgress.details.filesScanned || 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-green-700">Vulnerabilities Found:</p>
-                    <p className="font-medium">{auditProgress.details.vulnerabilitiesFound || 0}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Timing Information */}
-            {auditProgress.startTime && (
-              <div className="text-sm text-gray-600">
-                <p>Started: {auditProgress.startTime.toLocaleTimeString()}</p>
-                {auditProgress.phase === 'completed' && (
-                  <p>Duration: {Math.round((Date.now() - auditProgress.startTime.getTime()) / 1000)}s</p>
-                )}
-              </div>
-            )}
-
-            {/* Debug Information */}
-            {auditProgress.phase !== 'idle' && (
-              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                <h4 className="font-medium text-blue-800 mb-2">Debug Information</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-blue-700">Current Phase:</span>
-                    <span className="font-mono">{auditProgress.phase}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-blue-700">Progress:</span>
-                    <span className="font-mono">{auditProgress.progress}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-blue-700">Message:</span>
-                    <span className="font-mono">{auditProgress.message}</span>
-                  </div>
-                  {auditProgress.details && (
-                    <>
-                      <div className="flex justify-between">
-                        <span className="text-blue-700">Clone Status:</span>
-                        <span className="font-mono">{auditProgress.details.cloneStatus || 'N/A'}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-blue-700">Semgrep Status:</span>
-                        <span className="font-mono">{auditProgress.details.semgrepStatus || 'N/A'}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-blue-700">GPT Status:</span>
-                        <span className="font-mono">{auditProgress.details.gptStatus || 'N/A'}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-    </DashboardPage>
-  )
+    </div>
+  );
 }

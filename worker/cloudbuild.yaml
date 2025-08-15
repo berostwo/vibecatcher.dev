@@ -1,11 +1,11 @@
 steps:
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA', './worker']
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/enterprise-semgrep-scanner:$COMMIT_SHA', './worker']
   
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/enterprise-semgrep-scanner:$COMMIT_SHA']
   
   # Deploy container image to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -13,9 +13,9 @@ steps:
     args:
       - 'run'
       - 'deploy'
-      - 'security-audit-worker'
+      - 'enterprise-semgrep-scanner'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/enterprise-semgrep-scanner:$COMMIT_SHA'
       - '--region'
       - 'us-central1'
       - '--platform'
@@ -34,9 +34,8 @@ steps:
 
 # Store images in Google Cloud Storage
 images:
-  - 'gcr.io/$PROJECT_ID/security-audit-worker:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/enterprise-semgrep-scanner:$COMMIT_SHA'
 
-# Build options and logging configuration
+# Build options
 options:
   logging: CLOUD_LOGGING_ONLY
-  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
