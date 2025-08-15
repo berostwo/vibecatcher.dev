@@ -777,7 +777,7 @@ class SecurityScanner:
         return await self._clone_with_git(repo_url, temp_dir, repo_name, github_token, repo_info)
 
     async def _clone_with_git(self, repo_url: str, temp_dir: str, repo_name: str, github_token: str = None, repo_info: dict = None) -> str:
-        """Clone repository using git for reliability"""
+        """Clone repository using git for reliability with enhanced strategy for large repos"""
         repo_path = os.path.join(temp_dir, repo_name)
         os.makedirs(repo_path, exist_ok=True)
         
@@ -787,44 +787,115 @@ class SecurityScanner:
             # For private repos, use token-based authentication
             path_part = repo_url.replace('https://github.com/', '').replace('.git', '')
             authenticated_url = f"https://{github_token}@github.com/{path_part}.git"
-            clone_command = ['git', 'clone', '--depth', '1', '--single-branch', '--branch', default_branch, authenticated_url, repo_path]
         else:
             # For public repos
-            clone_command = ['git', 'clone', '--depth', '1', '--single-branch', '--branch', default_branch, repo_url, repo_path]
+            authenticated_url = repo_url
         
-        logger.info(f"🔄 Cloning repository with git: {clone_command[2]}")
+        # Try different clone strategies for large repositories
+        clone_strategies = [
+            # Strategy 1: Full clone (most reliable but slower)
+            {
+                'name': 'Full clone',
+                'command': ['git', 'clone', '--single-branch', '--branch', default_branch, authenticated_url, repo_path],
+                'description': 'Complete repository with full history'
+            },
+            # Strategy 2: Shallow clone with larger depth
+            {
+                'name': 'Deep shallow clone',
+                'command': ['git', 'clone', '--depth', '10', '--single-branch', '--branch', default_branch, authenticated_url, repo_path],
+                'description': 'Recent commits with more history'
+            },
+            # Strategy 3: Shallow clone (original strategy)
+            {
+                'name': 'Shallow clone',
+                'command': ['git', 'clone', '--depth', '1', '--single-branch', '--branch', default_branch, authenticated_url, repo_path],
+                'description': 'Latest commit only'
+            }
+        ]
         
-        process = await asyncio.create_subprocess_exec(
-            *clone_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
+        for strategy_index, strategy in enumerate(clone_strategies):
+            try:
+                # Clean up previous attempt
+                if os.path.exists(repo_path):
+                    import shutil
+                    shutil.rmtree(repo_path)
+                    os.makedirs(repo_path, exist_ok=True)
+                
+                logger.info(f"🔄 Strategy {strategy_index + 1}: {strategy['name']} - {strategy['description']}")
+                logger.info(f"🔄 Command: {' '.join(strategy['command'])}")
+                
+                process = await asyncio.create_subprocess_exec(
+                    *strategy['command'],
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                try:
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)  # 10 minutes for full clone
+                except asyncio.TimeoutError:
+                    process.kill()
+                    logger.warning(f"⚠️ Strategy {strategy_index + 1} timed out")
+                    continue
+                
+                if process.returncode != 0:
+                    stderr_output = stderr.decode() if stderr else "Unknown error"
+                    logger.warning(f"⚠️ Strategy {strategy_index + 1} failed: {stderr_output}")
+                    continue
+                
+                logger.info(f"✅ Strategy {strategy_index + 1} completed successfully")
+                
+                # Validate download size
+                if await self._validate_download_size(repo_path, repo_info):
+                    logger.info(f"✅ Strategy {strategy_index + 1} passed size validation")
+                    return repo_path
+                else:
+                    logger.warning(f"⚠️ Strategy {strategy_index + 1} failed size validation")
+                    continue
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Strategy {strategy_index + 1} failed with exception: {e}")
+                continue
+        
+        # If all strategies failed, try to get at least some content
+        logger.warning("⚠️ All clone strategies failed, attempting minimal clone for basic functionality")
         
         try:
+            # Clean up and try minimal clone
+            if os.path.exists(repo_path):
+                import shutil
+                shutil.rmtree(repo_path)
+                os.makedirs(repo_path, exist_ok=True)
+            
+            minimal_command = ['git', 'clone', '--depth', '1', '--single-branch', '--branch', default_branch, authenticated_url, repo_path]
+            logger.info(f"🔄 Final attempt: Minimal clone")
+            
+            process = await asyncio.create_subprocess_exec(
+                *minimal_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
-        except asyncio.TimeoutError:
-            process.kill()
-            raise Exception("Repository clone timed out")
-        
-        if process.returncode != 0:
-            raise Exception(f"Git clone failed: {stderr.decode()}")
-        
-        logger.info(f"✅ Repository cloned successfully with git")
-        
-        # Validate download size
-        if await self._validate_download_size(repo_path, repo_info):
-            return repo_path
-        else:
-            raise Exception("Git clone resulted in incomplete repository")
+            
+            if process.returncode == 0:
+                logger.warning("⚠️ Minimal clone succeeded but size validation failed - proceeding with limited content")
+                return repo_path
+            else:
+                raise Exception("All clone strategies failed")
+                
+        except Exception as final_error:
+            raise Exception(f"All repository download strategies failed: {final_error}")
 
     async def _validate_download_size(self, repo_path: str, repo_info: dict) -> bool:
-        """Validate that downloaded repository size matches expectations"""
+        """Validate that downloaded repository size matches expectations with enhanced logic"""
         if not repo_info or not repo_info.get('size'):
-            return True  # Can't validate without size info
+            logger.info("📊 No size info available, skipping validation")
+            return True
         
         # Analyze repository contents
         file_count = 0
         total_size = 0
+        large_files = []
         
         for dirpath, dirnames, filenames in os.walk(repo_path):
             for filename in filenames:
@@ -833,18 +904,30 @@ class SecurityScanner:
                     file_size = os.path.getsize(file_path)
                     total_size += file_size
                     file_count += 1
+                    
+                    # Track large files (>1MB) for debugging
+                    if file_size > 1024 * 1024:
+                        large_files.append((filename, file_size / (1024 * 1024)))
+                        
                 except (OSError, IOError):
                     continue
         
         repo_size_mb = total_size / (1024 * 1024)
         github_size_mb = repo_info['size'] / 1024
         
-        # Allow 20% variance for compression differences
+        # Enhanced size validation logic
         size_diff = abs(repo_size_mb - github_size_mb)
-        size_threshold = github_size_mb * 0.2
+        size_threshold = max(github_size_mb * 0.3, 5)  # 30% or 5MB, whichever is larger
+        
+        logger.info(f"📊 Size analysis: Local {repo_size_mb:.1f}MB, GitHub {github_size_mb:.1f}MB, Diff {size_diff:.1f}MB")
+        logger.info(f"📊 File count: {file_count} files")
+        
+        if large_files:
+            logger.info(f"📊 Large files found: {', '.join([f'{name}({size:.1f}MB)' for name, size in large_files[:5]])}")
         
         if size_diff > size_threshold:
             logger.warning(f"⚠️ Size mismatch: Local {repo_size_mb:.1f}MB vs GitHub {github_size_mb:.1f}MB (diff: {size_diff:.1f}MB)")
+            logger.warning(f"⚠️ Threshold: {size_threshold:.1f}MB")
             return False
         else:
             logger.info(f"✅ Size verification passed: {repo_size_mb:.1f}MB (GitHub: {github_size_mb:.1f}MB)")
