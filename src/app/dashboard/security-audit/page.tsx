@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
+import { ErrorBoundary } from '@/components/error-boundary';
 
 interface Repository {
   name: string;
@@ -424,241 +425,263 @@ export default function SecurityAuditPage() {
       {/* Scan Results */}
       {scanResults && (
         <div className="space-y-6">
-          {/* Summary */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Scan Summary</CardTitle>
-              <CardDescription>
-                Overview of security findings and scan statistics
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-red-600">
-                    {scanResults.findings?.length || 0}
+          {/* Error Boundary Wrapper */}
+          <ErrorBoundary>
+            {/* Summary */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Scan Summary</CardTitle>
+                <CardDescription>
+                  Overview of security findings and scan statistics
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">
+                      {Array.isArray(scanResults.findings) ? scanResults.findings.length : 0}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Total Issues</div>
                   </div>
-                  <div className="text-sm text-muted-foreground">Total Issues</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {scanResults.paths_scanned?.length || 0}
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-600">
+                      {Array.isArray(scanResults.paths_scanned) ? scanResults.paths_scanned.length : 0}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Files Scanned</div>
                   </div>
-                  <div className="text-sm text-muted-foreground">Files Scanned</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-green-600">
-                    {scanResults.scan_results?.paths?.scanned?.length || 0}
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">
+                      {scanResults.scan_results?.paths?.scanned && Array.isArray(scanResults.scan_results.paths.scanned) ? scanResults.scan_results.paths.scanned.length : 0}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Files Processed</div>
                   </div>
-                  <div className="text-sm text-muted-foreground">Files Processed</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-purple-600">
-                    {scanResults.scan_duration?.toFixed(1) || 0}s
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-purple-600">
+                      {typeof scanResults.scan_duration === 'number' ? scanResults.scan_duration.toFixed(1) : '0'}s
+                    </div>
+                    <div className="text-sm text-muted-foreground">Scan Duration</div>
                   </div>
-                  <div className="text-sm text-muted-foreground">Scan Duration</div>
                 </div>
-              </div>
 
-              <Separator className="my-4" />
+                <Separator className="my-4" />
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="text-center">
-                  <div className="text-xl font-bold text-red-600">
-                    {getSeverityBreakdown(scanResults.findings || []).critical}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-red-600">
+                      {getSeverityBreakdown(Array.isArray(scanResults.findings) ? scanResults.findings : []).critical}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Critical</div>
                   </div>
-                  <div className="text-sm text-muted-foreground">Critical</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-orange-600">
-                    {getSeverityBreakdown(scanResults.findings || []).high}
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-orange-600">
+                      {getSeverityBreakdown(Array.isArray(scanResults.findings) ? scanResults.findings : []).high}
+                    </div>
+                    <div className="text-sm text-muted-foreground">High</div>
                   </div>
-                  <div className="text-sm text-muted-foreground">High</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-yellow-600">
-                    {getSeverityBreakdown(scanResults.findings || []).medium}
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-yellow-600">
+                      {getSeverityBreakdown(Array.isArray(scanResults.findings) ? scanResults.findings : []).medium}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Medium</div>
                   </div>
-                  <div className="text-sm text-muted-foreground">Medium</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-blue-600">
-                    {getSeverityBreakdown(scanResults.findings || []).low}
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-blue-600">
+                      {getSeverityBreakdown(Array.isArray(scanResults.findings) ? scanResults.findings : []).low}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Low</div>
                   </div>
-                  <div className="text-sm text-muted-foreground">Low</div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </ErrorBoundary>
 
           {/* Security Findings */}
-          {scanResults.findings && scanResults.findings.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Security Findings</CardTitle>
-                <CardDescription>
-                  Detailed list of security vulnerabilities found in your codebase
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {scanResults.findings.map((finding, index) => (
-                    <SafeFindingDisplay key={index} finding={finding} />
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle>No Security Issues Found</CardTitle>
-                <CardDescription>
-                  Great news! No security vulnerabilities were detected in your codebase.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground">
-                  This could mean your code is secure, or you may want to review the scan configuration 
-                  to ensure all relevant security rules were applied.
-                </p>
-              </CardContent>
-            </Card>
-          )}
+          <ErrorBoundary>
+            {Array.isArray(scanResults.findings) && scanResults.findings.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Security Findings</CardTitle>
+                  <CardDescription>
+                    Detailed list of security vulnerabilities found in your codebase
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {scanResults.findings.map((finding, index) => (
+                      <SafeFindingDisplay key={index} finding={finding} />
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle>No Security Issues Found</CardTitle>
+                  <CardDescription>
+                    Great news! No security vulnerabilities were detected in your codebase.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-muted-foreground">
+                    This could mean your code is secure, or you may want to review the scan configuration 
+                    to ensure all relevant security rules were applied.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </ErrorBoundary>
 
           {/* Raw Semgrep Output */}
-          {scanResults.scan_results && (
+          <ErrorBoundary>
+            {scanResults.scan_results && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Raw Semgrep Output</CardTitle>
+                  <CardDescription>
+                    Complete raw output from Semgrep for debugging and analysis
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="bg-gray-50 p-4 rounded border">
+                    <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
+                      {JSON.stringify(scanResults.scan_results, null, 2)}
+                    </pre>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </ErrorBoundary>
+
+          {/* Scan Errors */}
+          <ErrorBoundary>
+            {scanResults.errors && scanResults.errors.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Scan Errors & Warnings</CardTitle>
+                  <CardDescription>
+                    Issues encountered during the security scan
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {scanResults.errors.map((error, index) => {
+                      // Safely extract error information
+                      const errorType = typeof error.type === 'string' ? error.type : 'Error';
+                      const errorMessage = typeof error.message === 'string' ? error.message : JSON.stringify(error);
+                      const errorPath = typeof error.path === 'string' ? error.path : null;
+                      
+                      return (
+                        <div key={index} className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                          <div className="flex items-start gap-2">
+                            <span className="text-yellow-600">⚠️</span>
+                            <div className="flex-1">
+                              <p className="text-sm font-medium text-yellow-800">
+                                {errorType}
+                              </p>
+                              <p className="text-sm text-yellow-700">
+                                {errorMessage}
+                              </p>
+                              {errorPath && (
+                                <p className="text-xs text-yellow-600 mt-1">
+                                  File: {errorPath}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </ErrorBoundary>
+
+          {/* Scan Statistics */}
+          <ErrorBoundary>
             <Card>
               <CardHeader>
-                <CardTitle>Raw Semgrep Output</CardTitle>
+                <CardTitle>Scan Statistics</CardTitle>
                 <CardDescription>
-                  Complete raw output from Semgrep for debugging and analysis
+                  Detailed information about the scan execution
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div className="text-center">
+                    <div className="text-lg font-semibold text-blue-600">
+                      {Array.isArray(scanResults.paths_scanned) ? scanResults.paths_scanned.length : 0}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Files Scanned</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-semibold text-orange-600">
+                      {Array.isArray(scanResults.paths_skipped) ? scanResults.paths_skipped.length : 0}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Files Skipped</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-lg font-semibold text-green-600">
+                      {typeof scanResults.scan_duration === 'number' ? scanResults.scan_duration.toFixed(1) : '0'}s
+                    </div>
+                    <div className="text-sm text-muted-foreground">Total Time</div>
+                  </div>
+                </div>
+                
+                {typeof scanResults.timestamp === 'string' && scanResults.timestamp && (
+                  <div className="mt-4 pt-4 border-t">
+                    <p className="text-sm text-muted-foreground text-center">
+                      Scan completed at: {new Date(scanResults.timestamp).toLocaleString()}
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </ErrorBoundary>
+
+          {/* Debug Info - Show if there are issues */}
+          <ErrorBoundary>
+            {scanResults.error && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Scan Error</CardTitle>
+                  <CardDescription>
+                    There was an error during the security scan
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-800 font-medium">Error: {String(scanResults.error)}</p>
+                    {scanResults.error_type && (
+                      <p className="text-red-700 text-sm mt-1">Type: {String(scanResults.error_type)}</p>
+                    )}
+                    {typeof scanResults.scan_duration === 'number' && (
+                      <p className="text-red-700 text-sm mt-1">Failed after: {scanResults.scan_duration}s</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </ErrorBoundary>
+
+          {/* Raw Response Debug */}
+          <ErrorBoundary>
+            <Card>
+              <CardHeader>
+                <CardTitle>Raw Response Debug</CardTitle>
+                <CardDescription>
+                  Complete response from worker for debugging
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="bg-gray-50 p-4 rounded border">
                   <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
-                    {JSON.stringify(scanResults.scan_results, null, 2)}
+                    {JSON.stringify(scanResults, null, 2)}
                   </pre>
                 </div>
               </CardContent>
             </Card>
-          )}
-
-          {/* Scan Errors */}
-          {scanResults.errors && scanResults.errors.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Scan Errors & Warnings</CardTitle>
-                    <CardDescription>
-                  Issues encountered during the security scan
-                    </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {scanResults.errors.map((error, index) => (
-                    <div key={index} className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                      <div className="flex items-start gap-2">
-                        <span className="text-yellow-600">⚠️</span>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-yellow-800">
-                            {error.type || 'Error'}
-                          </p>
-                          <p className="text-sm text-yellow-700">
-                            {error.message || JSON.stringify(error)}
-                          </p>
-                          {error.path && (
-                            <p className="text-xs text-yellow-600 mt-1">
-                              File: {error.path}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Scan Statistics */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Scan Statistics</CardTitle>
-              <CardDescription>
-                Detailed information about the scan execution
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <div className="text-center">
-                  <div className="text-lg font-semibold text-blue-600">
-                    {scanResults.paths_scanned?.length || 0}
-                  </div>
-                  <div className="text-sm text-muted-foreground">Files Scanned</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-semibold text-orange-600">
-                    {scanResults.paths_skipped?.length || 0}
-                  </div>
-                  <div className="text-sm text-muted-foreground">Files Skipped</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-lg font-semibold text-green-600">
-                    {scanResults.scan_duration?.toFixed(1) || 0}s
-                  </div>
-                  <div className="text-sm text-muted-foreground">Total Time</div>
-                </div>
-              </div>
-              
-              {scanResults.timestamp && (
-                <div className="mt-4 pt-4 border-t">
-                  <p className="text-sm text-muted-foreground text-center">
-                    Scan completed at: {new Date(scanResults.timestamp).toLocaleString()}
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Debug Info - Show if there are issues */}
-          {scanResults.error && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Scan Error</CardTitle>
-                <CardDescription>
-                  There was an error during the security scan
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-red-800 font-medium">Error: {scanResults.error}</p>
-                  {scanResults.error_type && (
-                    <p className="text-red-700 text-sm mt-1">Type: {scanResults.error_type}</p>
-                  )}
-                  {scanResults.scan_duration && (
-                    <p className="text-red-700 text-sm mt-1">Failed after: {scanResults.scan_duration}s</p>
-                  )}
-                </div>
-              </CardContent>
-        </Card>
-      )}
-
-          {/* Raw Response Debug */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Raw Response Debug</CardTitle>
-              <CardDescription>
-                Complete response from worker for debugging
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="bg-gray-50 p-4 rounded border">
-                <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
-                  {JSON.stringify(scanResults, null, 2)}
-                </pre>
-              </div>
-            </CardContent>
-          </Card>
+          </ErrorBoundary>
         </div>
       )}
     </div>
