@@ -1,11 +1,11 @@
 steps:
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/enterprise-semgrep-scanner:$COMMIT_SHA', './worker']
+    args: ['build', '-f', 'Dockerfile-chatgpt', '-t', 'gcr.io/$PROJECT_ID/chatgpt-security-scanner', '.']
   
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/enterprise-semgrep-scanner:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/chatgpt-security-scanner']
   
   # Deploy container image to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -13,29 +13,26 @@ steps:
     args:
       - 'run'
       - 'deploy'
-      - 'enterprise-semgrep-scanner'
+      - 'chatgpt-security-scanner'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/enterprise-semgrep-scanner:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/chatgpt-security-scanner'
       - '--region'
       - 'us-central1'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
       - '--memory'
-      - '4Gi'
+      - '2Gi'
       - '--cpu'
       - '2'
       - '--timeout'
       - '900'
-      - '--concurrency'
-      - '10'
       - '--max-instances'
-      - '5'
+      - '10'
 
-# Store images in Google Cloud Storage
 images:
-  - 'gcr.io/$PROJECT_ID/enterprise-semgrep-scanner:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/chatgpt-security-scanner'
 
-# Build options
 options:
   logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
