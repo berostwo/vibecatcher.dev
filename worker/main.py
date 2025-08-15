@@ -1095,6 +1095,10 @@ class SecurityScanner:
 # Create Flask app
 app = Flask(__name__)
 
+# Add startup logging
+logger.info("🔧 Initializing Enterprise Semgrep Scanner...")
+logger.info("🔧 Flask app created successfully")
+
 # Add CORS headers
 @app.after_request
 def add_cors_headers(response):
@@ -1126,6 +1130,7 @@ def handle_options():
 @app.route('/', methods=['GET'])
 def health_check():
     """Health check endpoint"""
+    logger.info("🏥 Health check requested")
     return jsonify({
         'status': 'healthy',
         'service': 'enterprise-semgrep-scanner',
@@ -1158,4 +1163,8 @@ def security_scan():
         return jsonify({'error': str(e), 'error_type': type(e).__name__}), 500
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    # Read port from environment variable (Cloud Run requirement)
+    port = int(os.environ.get('PORT', 8080))
+    logger.info(f"🚀 Starting Enterprise Semgrep Scanner on port {port}")
+    logger.info(f"🔍 Environment: PORT={port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
