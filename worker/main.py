@@ -22,8 +22,8 @@ class SecurityScanner:
     """Enterprise-grade security scanner using Semgrep"""
     
     def __init__(self):
-        # Enterprise security rule sets for indie developers and micro-SaaS
-        self.security_rules = [
+        # Pre-validated rule sets for immediate use
+        self.verified_rules = [
             'p/owasp-top-ten',           # OWASP Top 10 vulnerabilities
             'p/secrets',                  # Hardcoded secrets and credentials
             'p/security-audit',           # Security audit patterns
@@ -43,6 +43,84 @@ class SecurityScanner:
             'p/generic',                  # Generic security patterns
             'p/cwe-top-25',              # CWE Top 25 vulnerabilities
         ]
+        
+        # Rule validation cache
+        self._rule_cache = {}
+        self._cache_validated = False
+    
+    async def _validate_rules_parallel(self, rules: List[str]) -> List[str]:
+        """Validate multiple rules in parallel for faster processing"""
+        logger.info(f"🔍 Validating {len(rules)} rules in parallel...")
+        
+        async def validate_single_rule(rule: str) -> tuple[str, bool]:
+            try:
+                # Quick validation - just check if rule can be loaded
+                test_process = await asyncio.create_subprocess_exec(
+                    'semgrep', '--config', rule, '--help',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                # Very quick timeout for validation
+                await asyncio.wait_for(test_process.communicate(), timeout=2)
+                
+                if test_process.returncode == 0:
+                    return rule, True
+                else:
+                    return rule, False
+                    
+            except Exception:
+                return rule, False
+        
+        # Validate all rules in parallel
+        validation_tasks = [validate_single_rule(rule) for rule in rules]
+        validation_results = await asyncio.gather(*validation_tasks, return_exceptions=True)
+        
+        # Process results
+        available_rules = []
+        for result in validation_results:
+            if isinstance(result, tuple) and result[1]:  # rule, is_valid
+                available_rules.append(result[0])
+                logger.info(f"✅ Rule {result[0]} validated")
+            elif isinstance(result, Exception):
+                logger.warning(f"⚠️ Rule validation error: {result}")
+        
+        return available_rules
+    
+    async def _get_available_rules(self) -> List[str]:
+        """Get available rules with caching for performance"""
+        if self._cache_validated:
+            logger.info(f"🔍 Using cached rule validation ({len(self._rule_cache)} rules)")
+            return list(self._rule_cache.keys())
+        
+        logger.info("🔍 Performing rule validation (this will be cached for future scans)...")
+        
+        # Try parallel validation first
+        try:
+            available_rules = await self._validate_rules_parallel(self.verified_rules)
+            
+            if len(available_rules) >= 5:  # If we get at least 5 working rules
+                # Cache the results
+                self._rule_cache = {rule: True for rule in available_rules}
+                self._cache_validated = True
+                
+                logger.info(f"✅ Rule validation completed: {len(available_rules)} rules available")
+                return available_rules
+            else:
+                logger.warning(f"⚠️ Only {len(available_rules)} rules validated, using fallback")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Parallel validation failed: {e}")
+        
+        # Fallback to known working rules without validation
+        fallback_rules = ['p/owasp-top-ten', 'p/secrets', 'p/javascript', 'p/python']
+        logger.info(f"🔄 Using fallback rules: {', '.join(fallback_rules)}")
+        
+        # Cache fallback rules
+        self._rule_cache = {rule: True for rule in fallback_rules}
+        self._cache_validated = True
+        
+        return fallback_rules
     
     def validate_repository_url(self, url: str) -> bool:
         """Validate repository URL for security and format"""
@@ -62,8 +140,8 @@ class SecurityScanner:
             return False
     
     async def clone_repository(self, repo_url: str, temp_dir: str, github_token: str = None) -> str:
-        """Clone repository to temporary directory"""
-        logger.info(f"📥 Cloning repository: {repo_url}")
+        """Download repository using git archive for faster, lighter processing"""
+        logger.info(f"📥 Downloading repository: {repo_url}")
         
         # Extract repo name from URL
         repo_name = repo_url.split('/')[-1].replace('.git', '')
@@ -71,38 +149,126 @@ class SecurityScanner:
             raise ValueError("Invalid repository name")
         
         repo_path = os.path.join(temp_dir, repo_name)
+        os.makedirs(repo_path, exist_ok=True)
         
-        # Prepare clone command
-        clone_command = ['git', 'clone', '--depth', '1', '--single-branch']
-        
-        if github_token:
+        # Use git archive for faster, lighter download
+        if github_token and repo_url.startswith('https://github.com/'):
             # For private repos, use token-based authentication
-            if repo_url.startswith('https://github.com/'):
-                path_part = repo_url.replace('https://github.com/', '')
-                authenticated_url = f"https://{github_token}@github.com/{path_part}"
-                clone_command.append(authenticated_url)
-            else:
-                clone_command.append(repo_url)
+            logger.info("Using GitHub token for private repository access")
+            path_part = repo_url.replace('https://github.com/', '')
+            authenticated_url = f"https://{github_token}@github.com/{path_part}"
+            
+            # Try git archive first (faster)
+            try:
+                archive_command = [
+                    'git', 'archive', '--remote', authenticated_url,
+                    '--format', 'tar', 'HEAD'
+                ]
+                
+                logger.info(f"🔄 Attempting git archive download...")
+                process = await asyncio.create_subprocess_exec(
+                    *archive_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                try:
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    raise Exception("Repository download timed out")
+                
+                if process.returncode == 0:
+                    # Extract tar archive
+                    import tarfile
+                    import io
+                    
+                    tar_data = io.BytesIO(stdout)
+                    with tarfile.open(fileobj=tar_data, mode='r:*') as tar:
+                        tar.extractall(repo_path)
+                    
+                    logger.info(f"✅ Repository downloaded via git archive successfully")
+                else:
+                    logger.warning(f"⚠️ Git archive failed, falling back to clone: {stderr.decode()}")
+                    raise Exception("Git archive failed")
+                    
+            except Exception as archive_error:
+                logger.warning(f"⚠️ Git archive failed: {archive_error}, falling back to clone")
+                # Fall back to git clone
+                clone_command = ['git', 'clone', '--depth', '1', '--single-branch', authenticated_url, repo_path]
+                
+                process = await asyncio.create_subprocess_exec(
+                    *clone_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                try:
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    raise Exception("Repository clone timed out")
+                
+                if process.returncode != 0:
+                    raise Exception(f"Git clone failed: {stderr.decode()}")
+                
+                logger.info(f"✅ Repository cloned successfully (fallback method)")
         else:
-            clone_command.append(repo_url)
-        
-        clone_command.append(repo_path)
-        
-        # Clone repository
-        process = await asyncio.create_subprocess_exec(
-            *clone_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
-        except asyncio.TimeoutError:
-            process.kill()
-            raise Exception("Repository clone timed out")
-        
-        if process.returncode != 0:
-            raise Exception(f"Git clone failed: {stderr.decode()}")
+            # For public repos, try git archive first
+            try:
+                archive_command = [
+                    'git', 'archive', '--remote', repo_url,
+                    '--format', 'tar', 'HEAD'
+                ]
+                
+                logger.info(f"🔄 Attempting git archive download...")
+                process = await asyncio.create_subprocess_exec(
+                    *archive_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                try:
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    raise Exception("Repository download timed out")
+                
+                if process.returncode == 0:
+                    # Extract tar archive
+                    import tarfile
+                    import io
+                    
+                    tar_data = io.BytesIO(stdout)
+                    with tarfile.open(fileobj=tar_data, mode='r:*') as tar:
+                        tar.extractall(repo_path)
+                    
+                    logger.info(f"✅ Repository downloaded via git archive successfully")
+                else:
+                    logger.warning(f"⚠️ Git archive failed, falling back to clone: {stderr.decode()}")
+                    raise Exception("Git archive failed")
+                    
+            except Exception as archive_error:
+                logger.warning(f"⚠️ Git archive failed: {archive_error}, falling back to clone")
+                # Fall back to git clone
+                clone_command = ['git', 'clone', '--depth', '1', '--single-branch', repo_url, repo_path]
+                
+                process = await asyncio.create_subprocess_exec(
+                    *clone_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                try:
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    raise Exception("Repository clone timed out")
+                
+                if process.returncode != 0:
+                    raise Exception(f"Git clone failed: {stderr.decode()}")
+                
+                logger.info(f"✅ Repository cloned successfully (fallback method)")
         
         # Check repository size
         repo_size = sum(os.path.getsize(os.path.join(dirpath, filename))
@@ -113,7 +279,7 @@ class SecurityScanner:
         if repo_size_mb > MAX_REPO_SIZE_MB:
             raise Exception(f"Repository too large: {repo_size_mb:.1f}MB (max: {MAX_REPO_SIZE_MB}MB)")
         
-        logger.info(f"✅ Repository cloned successfully: {repo_size_mb:.1f}MB")
+        logger.info(f"✅ Repository ready: {repo_size_mb:.1f}MB")
         return repo_path
     
     async def run_semgrep_scan(self, repo_path: str) -> Dict[str, Any]:
@@ -136,32 +302,7 @@ class SecurityScanner:
         
         # Validate which rules are actually available
         logger.info("🔍 Validating available Semgrep rules...")
-        available_rules = []
-        
-        for rule in self.security_rules:
-            try:
-                # Test if rule exists by trying to list its rules
-                test_process = await asyncio.create_subprocess_exec(
-                    'semgrep', '--config', rule, '--help',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                
-                # Quick timeout for rule validation
-                await asyncio.wait_for(test_process.communicate(), timeout=5)
-                
-                if test_process.returncode == 0:
-                    available_rules.append(rule)
-                    logger.info(f"✅ Rule {rule} is available")
-                else:
-                    logger.warning(f"⚠️ Rule {rule} may not be available")
-                    
-            except Exception as e:
-                logger.warning(f"⚠️ Could not validate rule {rule}: {e}")
-        
-        if not available_rules:
-            logger.warning("⚠️ No rules validated, using fallback rules")
-            available_rules = ['p/owasp-top-ten', 'p/secrets']
+        available_rules = await self._get_available_rules()
         
         logger.info(f"🔍 Using {len(available_rules)} validated rules: {', '.join(available_rules)}")
         
@@ -235,7 +376,7 @@ class SecurityScanner:
                     fallback_command.extend(['--include', file_type])
                 
                 # Add security rules
-                for rule in self.security_rules:
+                for rule in available_rules:  # Use validated rules
                     fallback_command.extend(['--config', rule])
                 
                 # Add target path
@@ -261,67 +402,6 @@ class SecurityScanner:
                         # Check for config errors and try progressive fallback
                         if "config errors" in fallback_error.lower():
                             logger.warning("⚠️ Config errors detected, trying progressive rule fallback...")
-                            
-                            # Analyze config errors for debugging
-                            logger.error("🔍 CONFIG ERROR ANALYSIS:")
-                            logger.error(f"🔍 Full error: {fallback_error}")
-                            
-                            # Extract config error details
-                            if "running" in fallback_error and "configs" in fallback_error:
-                                try:
-                                    # Parse "running X rules from Y configs (Z config errors)"
-                                    import re
-                                    error_match = re.search(r'running (\d+) rules from (\d+) configs\s*\((\d+) config errors\)', fallback_error)
-                                    if error_match:
-                                        total_rules = error_match.group(1)
-                                        total_configs = error_match.group(2)
-                                        config_errors = error_match.group(3)
-                                        logger.error(f"🔍 Rules: {total_rules}, Configs: {total_configs}, Errors: {config_errors}")
-                                except Exception as parse_error:
-                                    logger.warning(f"⚠️ Could not parse config error details: {parse_error}")
-                            
-                            # Try to identify problematic rules by testing them individually
-                            logger.info("🔍 Testing individual rules to identify problematic ones...")
-                            problematic_rules = []
-                            
-                            for rule in self.security_rules[:5]:  # Test first 5 rules
-                                try:
-                                    test_command = [
-                                        'semgrep', 'scan',
-                                        '--json',
-                                        '--timeout', '30',
-                                        '--config', rule,
-                                        '--include', '*.py',  # Just one file type for testing
-                                        repo_path
-                                    ]
-                                    
-                                    logger.info(f"🔍 Testing rule: {rule}")
-                                    test_process = await asyncio.create_subprocess_exec(
-                                        *test_command,
-                                        stdout=asyncio.subprocess.PIPE,
-                                        stderr=asyncio.subprocess.PIPE
-                                    )
-                                    
-                                    test_stdout, test_stderr = await asyncio.wait_for(
-                                        test_process.communicate(), timeout=30
-                                    )
-                                    
-                                    if test_process.returncode != 0 and test_process.returncode != 1:
-                                        test_error = test_stderr.decode() if test_stderr else "Unknown error"
-                                        if "config error" in test_error.lower():
-                                            problematic_rules.append(rule)
-                                            logger.error(f"❌ Rule {rule} has config errors: {test_error[:200]}...")
-                                        else:
-                                            logger.info(f"✅ Rule {rule} works fine")
-                                    else:
-                                        logger.info(f"✅ Rule {rule} works fine")
-                                        
-                                except Exception as test_error:
-                                    logger.warning(f"⚠️ Could not test rule {rule}: {test_error}")
-                            
-                            if problematic_rules:
-                                logger.error(f"🔍 PROBLEMATIC RULES IDENTIFIED: {', '.join(problematic_rules)}")
-                                logger.error("🔍 These rules will be excluded from scanning")
                             
                             # Try with most stable rules first (excluding problematic ones)
                             stable_rules = [
