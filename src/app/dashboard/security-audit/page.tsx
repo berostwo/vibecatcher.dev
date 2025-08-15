@@ -47,6 +47,9 @@ interface ScanResults {
     low: number;
   };
   raw_semgrep_output: any;
+  error?: string;
+  error_type?: string;
+  scan_duration?: number;
 }
 
 export default function SecurityAuditPage() {
@@ -107,6 +110,35 @@ export default function SecurityAuditPage() {
       }
 
       const results = await response.json();
+      
+      // Validate response structure
+      if (!results || typeof results !== 'object') {
+        throw new Error('Invalid response format from worker');
+      }
+      
+      // Check if it's an error response
+      if (results.error) {
+        setScanResults(results); // Show error in results
+        toast({
+          title: "Scan completed with errors",
+          description: results.error,
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      // Validate required fields
+      if (!results.summary || !results.findings || !results.severity_breakdown) {
+        console.warn('Response missing expected fields:', results);
+        // Still set results to show what we got
+        setScanResults(results);
+        toast({
+          title: "Scan completed",
+          description: "Results received but format may be unexpected",
+        });
+        return;
+      }
+      
       setScanResults(results);
       
       toast({
@@ -116,11 +148,12 @@ export default function SecurityAuditPage() {
       
     } catch (error: unknown) {
       console.error('Audit failed:', error);
-      setError(error instanceof Error ? error.message : 'Audit failed with unknown error');
+      const errorMessage = error instanceof Error ? error.message : 'Audit failed with unknown error';
+      setError(errorMessage);
       
       toast({
         title: "Audit failed",
-        description: error instanceof Error ? error.message : 'Unknown error',
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -203,25 +236,25 @@ export default function SecurityAuditPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="text-center">
                   <div className="text-2xl font-bold text-red-600">
-                    {scanResults.summary.total_findings}
+                    {scanResults.summary?.total_findings || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">Total Issues</div>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-blue-600">
-                    {scanResults.summary.files_scanned}
+                    {scanResults.summary?.files_scanned || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">Files Scanned</div>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-green-600">
-                    {scanResults.summary.rules_executed}
+                    {scanResults.summary?.rules_executed || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">Rules Executed</div>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-purple-600">
-                    {scanResults.summary.scan_duration}s
+                    {scanResults.summary?.scan_duration || 0}s
                   </div>
                   <div className="text-sm text-muted-foreground">Scan Duration</div>
                 </div>
@@ -232,25 +265,25 @@ export default function SecurityAuditPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="text-center">
                   <div className="text-xl font-bold text-red-600">
-                    {scanResults.severity_breakdown.critical}
+                    {scanResults.severity_breakdown?.critical || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">Critical</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xl font-bold text-orange-600">
-                    {scanResults.severity_breakdown.high}
+                    {scanResults.severity_breakdown?.high || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">High</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xl font-bold text-yellow-600">
-                    {scanResults.severity_breakdown.medium}
+                    {scanResults.severity_breakdown?.medium || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">Medium</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xl font-bold text-blue-600">
-                    {scanResults.severity_breakdown.low}
+                    {scanResults.severity_breakdown?.low || 0}
                   </div>
                   <div className="text-sm text-muted-foreground">Low</div>
                 </div>
@@ -259,7 +292,7 @@ export default function SecurityAuditPage() {
           </Card>
 
           {/* Security Findings */}
-          {scanResults.findings.length > 0 ? (
+          {scanResults.findings && scanResults.findings.length > 0 ? (
             <Card>
               <CardHeader>
                 <CardTitle>Security Findings</CardTitle>
@@ -302,7 +335,7 @@ export default function SecurityAuditPage() {
                           )}
                         </div>
 
-                        {finding.cwe_ids.length > 0 && (
+                        {finding.cwe_ids && finding.cwe_ids.length > 0 && (
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium">CWE:</span>
                             {finding.cwe_ids.map((cwe, i) => (
@@ -313,7 +346,7 @@ export default function SecurityAuditPage() {
                           </div>
                         )}
 
-                        {finding.owasp_ids.length > 0 && (
+                        {finding.owasp_ids && finding.owasp_ids.length > 0 && (
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium">OWASP:</span>
                             {finding.owasp_ids.map((owasp, i) => (
@@ -355,17 +388,59 @@ export default function SecurityAuditPage() {
           )}
 
           {/* Raw Semgrep Output */}
+          {scanResults.raw_semgrep_output && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Raw Semgrep Output</CardTitle>
+                <CardDescription>
+                  Complete raw output from Semgrep for debugging and analysis
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-gray-50 p-4 rounded border">
+                  <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
+                    {JSON.stringify(scanResults.raw_semgrep_output, null, 2)}
+                  </pre>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Debug Info - Show if there are issues */}
+          {scanResults.error && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Scan Error</CardTitle>
+                <CardDescription>
+                  There was an error during the security scan
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-red-800 font-medium">Error: {scanResults.error}</p>
+                  {scanResults.error_type && (
+                    <p className="text-red-700 text-sm mt-1">Type: {scanResults.error_type}</p>
+                  )}
+                  {scanResults.scan_duration && (
+                    <p className="text-red-700 text-sm mt-1">Failed after: {scanResults.scan_duration}s</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Raw Response Debug */}
           <Card>
             <CardHeader>
-              <CardTitle>Raw Semgrep Output</CardTitle>
+              <CardTitle>Raw Response Debug</CardTitle>
               <CardDescription>
-                Complete raw output from Semgrep for debugging and analysis
+                Complete response from worker for debugging
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="bg-gray-50 p-4 rounded border">
                 <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-auto max-h-96">
-                  {JSON.stringify(scanResults.raw_semgrep_output, null, 2)}
+                  {JSON.stringify(scanResults, null, 2)}
                 </pre>
               </div>
             </CardContent>

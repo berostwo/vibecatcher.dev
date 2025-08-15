@@ -128,6 +128,20 @@ class SecurityScanner:
         """Run comprehensive Semgrep security scan"""
         logger.info(f"🔍 Starting Semgrep security scan...")
         
+        # Check Semgrep version for compatibility
+        try:
+            version_process = await asyncio.create_subprocess_exec(
+                'semgrep', '--version',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            version_stdout, _ = await asyncio.wait_for(version_process.communicate(), timeout=10)
+            semgrep_version = version_stdout.decode().strip()
+            logger.info(f"🔍 Semgrep version: {semgrep_version}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not determine Semgrep version: {e}")
+            semgrep_version = "Unknown"
+        
         # Build scan command
         scan_command = [
             'semgrep', 'scan',
@@ -136,15 +150,18 @@ class SecurityScanner:
             '--max-memory', '4096',
             '--verbose',
             '--metrics', 'off',
-            '--no-git-ignore',
-            '--no-ignore',
+            '--git-ignore',  # Use gitignore but scan all files
+            '--include-unknown-extensions',  # Scan files without known extensions
+            '--include-ignored',  # Include files that would normally be ignored
         ]
         
-        # Add file type includes
+        # Add file type includes for comprehensive coverage
         file_types = [
             '*.py', '*.js', '*.ts', '*.tsx', '*.jsx', '*.go', '*.java',
             '*.php', '*.rb', '*.yml', '*.yaml', '*.json', '*.xml',
-            '*.sh', 'Dockerfile', '*.dockerfile', '*.md', '*.txt'
+            '*.sh', 'Dockerfile', '*.dockerfile', '*.md', '*.txt',
+            '*.vue', '*.svelte', '*.rs', '*.cpp', '*.c', '*.h',
+            '*.swift', '*.kt', '*.scala', '*.clj', '*.hs', '*.ml'
         ]
         
         for file_type in file_types:
@@ -158,6 +175,8 @@ class SecurityScanner:
         scan_command.append(repo_path)
         
         logger.info(f"🔍 Running scan with {len(self.security_rules)} security rule sets")
+        logger.info(f"🔍 File types included: {len(file_types)}")
+        logger.info(f"🔍 Target repository: {repo_path}")
         
         # Execute Semgrep scan
         process = await asyncio.create_subprocess_exec(
@@ -174,7 +193,61 @@ class SecurityScanner:
         
         if process.returncode != 0 and process.returncode != 1:  # Semgrep returns 1 for findings
             error_msg = stderr.decode() if stderr else "Unknown error"
-            raise Exception(f"Semgrep scan failed: {error_msg}")
+            
+            # Check for common Semgrep version compatibility issues
+            if "unknown option" in error_msg.lower():
+                logger.warning("⚠️ Semgrep version compatibility issue detected, trying fallback command...")
+                
+                # Fallback to simpler command without potentially unsupported flags
+                fallback_command = [
+                    'semgrep', 'scan',
+                    '--json',
+                    '--timeout', '600',
+                    '--verbose',
+                    '--metrics', 'off',
+                ]
+                
+                # Add file type includes
+                for file_type in file_types:
+                    fallback_command.extend(['--include', file_type])
+                
+                # Add security rules
+                for rule in self.security_rules:
+                    fallback_command.extend(['--config', rule])
+                
+                # Add target path
+                fallback_command.append(repo_path)
+                
+                logger.info(f"🔄 Trying fallback command with {len(fallback_command)} arguments")
+                
+                # Try fallback command
+                fallback_process = await asyncio.create_subprocess_exec(
+                    *fallback_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                try:
+                    fallback_stdout, fallback_stderr = await asyncio.wait_for(
+                        fallback_process.communicate(), timeout=MAX_SCAN_TIME_SECONDS
+                    )
+                    
+                    if fallback_process.returncode != 0 and fallback_process.returncode != 1:
+                        fallback_error = fallback_stderr.decode() if fallback_stderr else "Unknown error"
+                        raise Exception(f"Fallback Semgrep command also failed: {fallback_error}")
+                    
+                    # Use fallback results
+                    stdout = fallback_stdout
+                    stderr = fallback_stderr
+                    logger.info("✅ Fallback Semgrep command succeeded")
+                    
+                except asyncio.TimeoutError:
+                    fallback_process.kill()
+                    raise Exception("Fallback Semgrep scan also timed out")
+                except Exception as fallback_error:
+                    raise Exception(f"Fallback command failed: {fallback_error}")
+            else:
+                raise Exception(f"Semgrep scan failed: {error_msg}")
         
         # Parse results
         scan_results = json.loads(stdout.decode())
