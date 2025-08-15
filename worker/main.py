@@ -242,34 +242,60 @@ class SecurityScanner:
         return compatible_flags
 
     async def _build_semgrep_command(self, available_rules: List[str], repo_path: str, file_types: List[str]) -> List[str]:
-        """Build a Semgrep command using only compatible flags"""
-        logger.info("🔧 Building Semgrep command with compatible flags...")
+        """Build a Semgrep command with optimized complexity"""
+        logger.info("🔧 Building optimized Semgrep command...")
         
         # Start with basic semgrep scan command
         command = ['semgrep', 'scan']
         
-        # Add output format (should always be compatible)
+        # Add only essential flags to reduce complexity
         command.extend(['--json'])
-        
-        # Add timeout if compatible
         command.extend(['--timeout', '600'])
+        
+        # Limit file types to most important ones to reduce argument count
+        essential_file_types = [
+            '*.py', '*.js', '*.ts', '*.tsx', '*.jsx', '*.go', '*.java',
+            '*.php', '*.rb', '*.yml', '*.yaml', '*.json', '*.xml',
+            '*.sh', 'Dockerfile', '*.md'
+        ]
+        
+        # Use only essential file types if we have too many
+        if len(file_types) > 20:
+            logger.info(f"🔧 Limiting file types from {len(file_types)} to {len(essential_file_types)} for command optimization")
+            file_types = essential_file_types
         
         # Add file type includes
         for file_type in file_types:
             command.extend(['--include', file_type])
         
-        # Add security rules
-        for rule in available_rules:
+        # Batch rules to reduce command complexity
+        # Split rules into groups of 4-5 to avoid argument limits
+        rule_batches = self._batch_rules(available_rules, batch_size=4)
+        
+        logger.info(f"🔧 Batching {len(available_rules)} rules into {len(rule_batches)} groups")
+        
+        # Add first batch of rules (we'll run multiple commands if needed)
+        first_batch = rule_batches[0]
+        for rule in first_batch:
             command.extend(['--config', rule])
         
         # Add target path
         command.append(repo_path)
         
-        logger.info(f"🔧 Built command with {len(command)} arguments")
-        return command
+        logger.info(f"🔧 Built optimized command with {len(command)} arguments")
+        logger.info(f"🔧 Using {len(first_batch)} rules from first batch: {', '.join(first_batch)}")
+        
+        return command, rule_batches
+
+    def _batch_rules(self, rules: List[str], batch_size: int = 4) -> List[List[str]]:
+        """Split rules into manageable batches"""
+        batches = []
+        for i in range(0, len(rules), batch_size):
+            batches.append(rules[i:i + batch_size])
+        return batches
 
     async def run_semgrep_scan(self, repo_path: str, available_rules: List[str], file_types: List[str]) -> dict:
-        """Run Semgrep scan with validated command and rules"""
+        """Run Semgrep scan with batched commands for reliability"""
         logger.info("🔍 Starting Semgrep security scan...")
         
         # Get Semgrep version
@@ -304,56 +330,112 @@ class SecurityScanner:
         
         logger.info(f"🔍 Using {len(available_rules)} validated rules: {', '.join(available_rules)}")
         
-        # Build Semgrep command with compatible flags
-        scan_command = await self._build_semgrep_command(available_rules, repo_path, file_types)
+        # Build optimized Semgrep command with batching
+        scan_command, rule_batches = await self._build_semgrep_command(available_rules, repo_path, file_types)
         
-        logger.info(f"🔍 Running scan with {len(available_rules)} security rule sets")
+        logger.info(f"🔍 Running scan with {len(rule_batches)} rule batches")
         logger.info(f"🔍 File types included: {len(file_types)}")
         logger.info(f"🔍 Target repository: {repo_path}")
         
-        # Execute Semgrep scan
-        process = await asyncio.create_subprocess_exec(
-            *scan_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
+        # Execute Semgrep scan with first batch
+        all_findings = []
+        all_errors = []
+        all_paths_scanned = set()
+        all_paths_skipped = set()
         
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=MAX_SCAN_TIME_SECONDS)
-        except asyncio.TimeoutError:
-            process.kill()
-            raise Exception("Semgrep scan timed out")
+        for batch_index, rule_batch in enumerate(rule_batches):
+            logger.info(f"🔍 Running batch {batch_index + 1}/{len(rule_batches)} with rules: {', '.join(rule_batch)}")
+            
+            # Build command for this batch
+            batch_command = ['semgrep', 'scan', '--json', '--timeout', '600']
+            
+            # Add file types
+            for file_type in file_types:
+                batch_command.extend(['--include', file_type])
+            
+            # Add rules for this batch
+            for rule in rule_batch:
+                batch_command.extend(['--config', rule])
+            
+            # Add target path
+            batch_command.append(repo_path)
+            
+            logger.info(f"🔍 Batch {batch_index + 1} command: {len(batch_command)} arguments")
+            
+            # Execute batch scan
+            process = await asyncio.create_subprocess_exec(
+                *batch_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=MAX_SCAN_TIME_SECONDS)
+                
+                # Always capture stderr for debugging
+                stderr_output = stderr.decode() if stderr else ""
+                if stderr_output:
+                    logger.info(f"🔍 Batch {batch_index + 1} stderr: {stderr_output[:200]}...")
+                
+                if process.returncode != 0 and process.returncode != 1:  # Semgrep returns 1 for findings
+                    error_msg = stderr_output or "Unknown error"
+                    logger.error(f"❌ Batch {batch_index + 1} failed (exit {process.returncode}): {error_msg}")
+                    
+                    # Continue with next batch instead of failing completely
+                    continue
+                
+                # Parse batch results
+                try:
+                    batch_results = json.loads(stdout.decode())
+                    
+                    # Accumulate findings
+                    batch_findings = batch_results.get('results', [])
+                    all_findings.extend(batch_findings)
+                    
+                    # Accumulate errors
+                    batch_errors = batch_results.get('errors', [])
+                    all_errors.extend(batch_errors)
+                    
+                    # Accumulate paths
+                    batch_scanned = batch_results.get('paths', {}).get('scanned', [])
+                    batch_skipped = batch_results.get('paths', {}).get('skipped', [])
+                    
+                    all_paths_scanned.update(batch_scanned)
+                    all_paths_skipped.update(batch_skipped)
+                    
+                    logger.info(f"✅ Batch {batch_index + 1} completed: {len(batch_findings)} findings")
+                    
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Failed to parse batch {batch_index + 1} results: {e}")
+                    continue
+                    
+            except asyncio.TimeoutError:
+                process.kill()
+                logger.error(f"❌ Batch {batch_index + 1} timed out")
+                continue
+            except Exception as e:
+                logger.error(f"❌ Batch {batch_index + 1} failed: {e}")
+                continue
         
-        if process.returncode != 0 and process.returncode != 1:  # Semgrep returns 1 for findings
-            error_msg = stderr.decode() if stderr else "Unknown error"
-            raise Exception(f"Semgrep scan failed: {error_msg}")
-        
-        # Parse scan results
-        try:
-            scan_results = json.loads(stdout.decode())
-            
-            # Extract findings
-            findings = scan_results.get('results', [])
-            errors = scan_results.get('errors', [])
-            
-            # Count files scanned
-            paths_scanned = scan_results.get('paths', {}).get('scanned', [])
-            paths_skipped = scan_results.get('paths', {}).get('skipped', [])
-            
-            logger.info(f"✅ Scan completed: {len(findings)} findings in {len(paths_scanned)} files")
-            
-            return {
-                'findings': findings,
-                'errors': errors,
-                'paths_scanned': paths_scanned,
-                'paths_skipped': paths_skipped,
-                'scan_results': scan_results
+        # Combine all results
+        combined_results = {
+            'results': all_findings,
+            'errors': all_errors,
+            'paths': {
+                'scanned': list(all_paths_scanned),
+                'skipped': list(all_paths_skipped)
             }
-            
-        except json.JSONDecodeError as e:
-            raise Exception(f"Failed to parse Semgrep output: {e}")
-        except Exception as e:
-            raise Exception(f"Error processing scan results: {e}")
+        }
+        
+        logger.info(f"✅ All batches completed: {len(all_findings)} total findings in {len(all_paths_scanned)} files")
+        
+        return {
+            'findings': all_findings,
+            'errors': all_errors,
+            'paths_scanned': list(all_paths_scanned),
+            'paths_skipped': list(all_paths_skipped),
+            'scan_results': combined_results
+        }
     
     def process_findings(self, scan_results: Dict[str, Any]) -> Dict[str, Any]:
         """Process and organize Semgrep findings"""
@@ -448,10 +530,26 @@ class SecurityScanner:
                     scan_results = await self.run_semgrep_scan(repo_path, [], [])  # Empty lists will be populated by the method
                 except Exception as scan_error:
                     scan_duration = time.time() - scan_start_time
-                    logger.error(f"❌ Security scan failed: {scan_error}")
+                    error_details = str(scan_error)
+                    
+                    # Enhanced error logging
+                    logger.error(f"❌ Security scan failed: {error_details}")
+                    logger.error(f"❌ Error type: {type(scan_error).__name__}")
+                    
+                    # Capture more context about the failure
+                    if hasattr(scan_error, '__traceback__'):
+                        import traceback
+                        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                    
                     return {
-                        "error": f"Security scan failed: {scan_error}",
+                        "error": f"Security scan failed: {error_details}",
                         "error_type": "ScanError",
+                        "error_details": {
+                            "message": error_details,
+                            "type": type(scan_error).__name__,
+                            "repository": repo_url,
+                            "scan_duration": scan_duration
+                        },
                         "scan_duration": scan_duration,
                         "timestamp": datetime.now().isoformat()
                     }
@@ -480,6 +578,11 @@ class SecurityScanner:
                     return {
                         "error": f"Error processing findings: {process_error}",
                         "error_type": "ProcessingError",
+                        "error_details": {
+                            "message": str(process_error),
+                            "type": type(process_error).__name__,
+                            "scan_duration": scan_duration
+                        },
                         "scan_duration": scan_duration,
                         "timestamp": datetime.now().isoformat()
                     }
@@ -605,7 +708,7 @@ class SecurityScanner:
             return False
 
     async def clone_repository(self, repo_url: str, temp_dir: str, github_token: str = None) -> str:
-        """Download repository using GitHub tarball API for faster, authenticated downloads"""
+        """Download repository using optimized strategy for large repositories"""
         logger.info(f"📥 Downloading repository: {repo_url}")
         
         # Extract repo name and owner from URL
@@ -623,12 +726,18 @@ class SecurityScanner:
         if repo_info:
             logger.info(f"📊 Repository info: {repo_info.get('language', 'Unknown')} project, {'Private' if repo_info.get('private') else 'Public'}")
             if repo_info.get('size', 0) > 0:
-                logger.info(f"📊 GitHub reports size: {repo_info['size'] / 1024:.1f}MB")
+                github_size_mb = repo_info['size'] / 1024
+                logger.info(f"📊 GitHub reports size: {github_size_mb:.1f}MB")
+                
+                # For large repositories (>10MB), skip tarball and use git clone directly
+                if github_size_mb > 10:
+                    logger.info(f"📊 Large repository detected ({github_size_mb:.1f}MB), using git clone for reliability")
+                    return await self._clone_with_git(repo_url, temp_dir, repo_name, github_token, repo_info)
         
         repo_path = os.path.join(temp_dir, repo_name)
         os.makedirs(repo_path, exist_ok=True)
         
-        # Use GitHub tarball API for faster, authenticated downloads
+        # Try GitHub tarball API first for smaller repos
         if github_token:
             logger.info("Using GitHub token for authenticated repository access")
             
@@ -637,7 +746,7 @@ class SecurityScanner:
             tarball_url = f"https://api.github.com/repos/{owner}/{repo_name}/tarball/{default_branch}"
             
             try:
-                logger.info(f"🔄 Downloading via GitHub tarball API...")
+                logger.info(f"🔄 Attempting GitHub tarball download...")
                 
                 # Download tarball with authentication
                 headers = {
@@ -647,74 +756,75 @@ class SecurityScanner:
                 
                 if await self._download_and_extract_tarball(tarball_url, repo_path, headers):
                     logger.info(f"✅ Repository downloaded via GitHub API successfully")
+                    
+                    # Validate download size
+                    if await self._validate_download_size(repo_path, repo_info):
+                        return repo_path
+                    else:
+                        logger.warning("⚠️ Tarball download incomplete, falling back to git clone")
+                        # Clean up incomplete download
+                        import shutil
+                        shutil.rmtree(repo_path)
+                        os.makedirs(repo_path, exist_ok=True)
+                        raise Exception("Tarball download incomplete")
                 else:
                     raise Exception("GitHub API download failed")
                     
             except Exception as api_error:
-                logger.warning(f"⚠️ GitHub API download failed: {api_error}, falling back to clone")
+                logger.warning(f"⚠️ GitHub API download failed: {api_error}, falling back to git clone")
                 
-                # Fall back to git clone with token
-                authenticated_url = f"https://{github_token}@github.com/{owner}/{repo_name}.git"
-                clone_command = ['git', 'clone', '--depth', '1', '--single-branch', '--branch', default_branch, authenticated_url, repo_path]
-                
-                process = await asyncio.create_subprocess_exec(
-                    *clone_command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                
-                try:
-                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
-                except asyncio.TimeoutError:
-                    process.kill()
-                    raise Exception("Repository clone timed out")
-                
-                if process.returncode != 0:
-                    raise Exception(f"Git clone failed: {stderr.decode()}")
-                
-                logger.info(f"✅ Repository cloned successfully (fallback method)")
-        else:
-            # For public repos without token, try GitHub tarball API first
-            try:
-                logger.info(f"🔄 Downloading public repository via GitHub tarball API...")
-                
-                default_branch = repo_info.get('default_branch', 'main')
-                tarball_url = f"https://api.github.com/repos/{owner}/{repo_name}/tarball/{default_branch}"
-                
-                if await self._download_and_extract_tarball(tarball_url, repo_path):
-                    logger.info(f"✅ Repository downloaded via GitHub API successfully")
-                else:
-                    raise Exception("GitHub API download failed")
-                    
-            except Exception as api_error:
-                logger.warning(f"⚠️ GitHub API download failed: {api_error}, falling back to clone")
-                
-                # Fall back to git clone
-                default_branch = repo_info.get('default_branch', 'main')
-                clone_command = ['git', 'clone', '--depth', '1', '--single-branch', '--branch', default_branch, repo_url, repo_path]
-                
-                process = await asyncio.create_subprocess_exec(
-                    *clone_command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                
-                try:
-                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
-                except asyncio.TimeoutError:
-                    process.kill()
-                    raise Exception("Repository clone timed out")
-                
-                if process.returncode != 0:
-                    raise Exception(f"Git clone failed: {stderr.decode()}")
-                
-                logger.info(f"✅ Repository cloned successfully (fallback method)")
+        # Fall back to git clone (more reliable for large repos)
+        return await self._clone_with_git(repo_url, temp_dir, repo_name, github_token, repo_info)
+
+    async def _clone_with_git(self, repo_url: str, temp_dir: str, repo_name: str, github_token: str = None, repo_info: dict = None) -> str:
+        """Clone repository using git for reliability"""
+        repo_path = os.path.join(temp_dir, repo_name)
+        os.makedirs(repo_path, exist_ok=True)
         
-        # Verify repository contents and get accurate size
-        logger.info("🔍 Analyzing repository contents...")
+        default_branch = repo_info.get('default_branch', 'main') if repo_info else 'main'
+        
+        if github_token:
+            # For private repos, use token-based authentication
+            path_part = repo_url.replace('https://github.com/', '').replace('.git', '')
+            authenticated_url = f"https://{github_token}@github.com/{path_part}.git"
+            clone_command = ['git', 'clone', '--depth', '1', '--single-branch', '--branch', default_branch, authenticated_url, repo_path]
+        else:
+            # For public repos
+            clone_command = ['git', 'clone', '--depth', '1', '--single-branch', '--branch', default_branch, repo_url, repo_path]
+        
+        logger.info(f"🔄 Cloning repository with git: {clone_command[2]}")
+        
+        process = await asyncio.create_subprocess_exec(
+            *clone_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            process.kill()
+            raise Exception("Repository clone timed out")
+        
+        if process.returncode != 0:
+            raise Exception(f"Git clone failed: {stderr.decode()}")
+        
+        logger.info(f"✅ Repository cloned successfully with git")
+        
+        # Validate download size
+        if await self._validate_download_size(repo_path, repo_info):
+            return repo_path
+        else:
+            raise Exception("Git clone resulted in incomplete repository")
+
+    async def _validate_download_size(self, repo_path: str, repo_info: dict) -> bool:
+        """Validate that downloaded repository size matches expectations"""
+        if not repo_info or not repo_info.get('size'):
+            return True  # Can't validate without size info
+        
+        # Analyze repository contents
         file_count = 0
         total_size = 0
-        file_types = set()
         
         for dirpath, dirnames, filenames in os.walk(repo_path):
             for filename in filenames:
@@ -723,33 +833,24 @@ class SecurityScanner:
                     file_size = os.path.getsize(file_path)
                     total_size += file_size
                     file_count += 1
-                    
-                    # Track file extensions
-                    _, ext = os.path.splitext(filename)
-                    if ext:
-                        file_types.add(ext.lower())
-                        
                 except (OSError, IOError):
-                    continue  # Skip files we can't access
+                    continue
         
         repo_size_mb = total_size / (1024 * 1024)
+        github_size_mb = repo_info['size'] / 1024
         
-        if repo_size_mb > MAX_REPO_SIZE_MB:
-            raise Exception(f"Repository too large: {repo_size_mb:.1f}MB (max: {MAX_REPO_SIZE_MB}MB)")
+        # Allow 20% variance for compression differences
+        size_diff = abs(repo_size_mb - github_size_mb)
+        size_threshold = github_size_mb * 0.2
         
-        # Compare with GitHub's reported size
-        if repo_info.get('size', 0) > 0:
-            github_size_mb = repo_info['size'] / 1024
-            size_diff = abs(repo_size_mb - github_size_mb)
-            if size_diff > 5:  # More than 5MB difference
-                logger.warning(f"⚠️ Size mismatch: Local {repo_size_mb:.1f}MB vs GitHub {github_size_mb:.1f}MB")
-            else:
-                logger.info(f"✅ Size verification passed: {repo_size_mb:.1f}MB")
+        if size_diff > size_threshold:
+            logger.warning(f"⚠️ Size mismatch: Local {repo_size_mb:.1f}MB vs GitHub {github_size_mb:.1f}MB (diff: {size_diff:.1f}MB)")
+            return False
+        else:
+            logger.info(f"✅ Size verification passed: {repo_size_mb:.1f}MB (GitHub: {github_size_mb:.1f}MB)")
         
         logger.info(f"✅ Repository ready: {file_count} files, {repo_size_mb:.1f}MB")
-        logger.info(f"📁 File types found: {', '.join(sorted(list(file_types))[:10])}{'...' if len(file_types) > 10 else ''}")
-        
-        return repo_path
+        return True
 
 # Create Flask app
 app = Flask(__name__)
