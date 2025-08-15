@@ -35,14 +35,14 @@ class SecurityScanner:
             'p/nextjs',                   # Next.js specific security
             'p/nodejs',                   # Node.js security
             'p/python',                   # Python security
-            'p/go',                       # Go security
+            'p/golang',                   # Go security (working alternative)
             'p/java',                     # Java security
             'p/php',                      # PHP security
             'p/ruby',                     # Ruby security
             'p/docker',                   # Docker security
             'p/kubernetes',               # Kubernetes security
             'p/terraform',                # Terraform security
-            'p/generic',                  # Generic security patterns
+            'p/security-patterns',        # Generic security patterns (working alternative)
             'p/cwe-top-25',              # CWE Top 25 vulnerabilities
         ]
         
