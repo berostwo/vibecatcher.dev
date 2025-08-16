@@ -85,12 +85,28 @@ class ChatGPTSecurityScanner:
         self.pattern_database = {}  # Database of known security patterns
         self.file_risk_scores = {}  # Risk scores for files based on previous scans
         
-        # PROGRESS TRACKING: Dynamic progress calculation and tracking
+        # PROGRESS TRACKING: Real progress states with exact percentages
         self.progress_callback = None
         self.current_step = "Initializing"
-        self.step_progress = 0.0
-        self.total_steps = 0
-        self.completed_steps = 0
+        self.current_step_index = 0
+        
+        # Define exact progress states with percentages
+        self.progress_states = [
+            {"name": "Initializing scan", "start_percent": 0, "end_percent": 5},
+            {"name": "Cloning repository", "start_percent": 5, "end_percent": 15},
+            {"name": "Repository cloned", "start_percent": 15, "end_percent": 20},
+            {"name": "Analyzing repository structure", "start_percent": 20, "end_percent": 30},
+            {"name": "Repository structure analyzed", "start_percent": 30, "end_percent": 35},
+            {"name": "Preparing analysis batches", "start_percent": 35, "end_percent": 40},
+            {"name": "Starting security analysis", "start_percent": 40, "end_percent": 45},
+            {"name": "Analyzing batch", "start_percent": 45, "end_percent": 70},  # Dynamic based on batches
+            {"name": "Condensing security findings", "start_percent": 70, "end_percent": 80},
+            {"name": "Findings condensed", "start_percent": 80, "end_percent": 85},
+            {"name": "Generating remediation prompts", "start_percent": 85, "end_percent": 90},
+            {"name": "Remediation prompts generated", "start_percent": 90, "end_percent": 95},
+            {"name": "Creating master remediation plan", "start_percent": 95, "end_percent": 98},
+            {"name": "Master plan complete", "start_percent": 98, "end_percent": 100}
+        ]
         
         # Security categories for comprehensive coverage
         
@@ -147,26 +163,52 @@ class ChatGPTSecurityScanner:
         self.progress_callback = callback
     
     def update_progress(self, step: str, progress: float, step_complete: bool = False):
-        """Update progress and notify frontend"""
+        """Update progress and notify frontend with exact percentages"""
         self.current_step = step
-        self.step_progress = progress
         
-        if step_complete:
-            self.completed_steps += 1
+        # Find the current progress state
+        current_state = None
+        for i, state in enumerate(self.progress_states):
+            if state["name"] in step or step in state["name"]:
+                current_state = state
+                self.current_step_index = i
+                break
+        
+        if current_state:
+            if step_complete:
+                # Step is complete, jump to end percentage
+                progress_percent = current_state["end_percent"]
+                logger.info(f"📊 PROGRESS: {step} COMPLETE - Jumping to {progress_percent}%")
+            else:
+                # Step is in progress, calculate current percentage within range
+                step_progress = progress / 100.0  # Convert 0-100 to 0-1
+                step_range = current_state["end_percent"] - current_state["start_percent"]
+                progress_percent = current_state["start_percent"] + (step_progress * step_range)
+                logger.info(f"📊 PROGRESS: {step} - {progress_percent:.1f}% (within range {current_state['start_percent']}-{current_state['end_percent']}%)")
+        else:
+            # Fallback for unknown steps
+            progress_percent = progress
+            logger.info(f"📊 PROGRESS: {step} - {progress_percent:.1f}% (unknown state)")
         
         if self.progress_callback:
             try:
                 self.progress_callback({
                     'step': step,
-                    'progress': progress,
-                    'completed_steps': self.completed_steps,
-                    'total_steps': self.total_steps,
-                    'overall_progress': (self.completed_steps + progress) / max(1, self.total_steps) * 100
+                    'progress': progress_percent,
+                    'step_complete': step_complete,
+                    'current_state': current_state["name"] if current_state else step
                 })
             except Exception as e:
                 logger.warning(f"Progress callback failed: {e}")
-        
-        logger.info(f"📊 PROGRESS: {step} - {progress:.1f}% (Overall: {self.completed_steps}/{self.total_steps})")
+    
+    def advance_to_next_step(self, step_name: str):
+        """Advance to the next progress step"""
+        if self.current_step_index < len(self.progress_states) - 1:
+            self.current_step_index += 1
+            next_state = self.progress_states[self.current_step_index]
+            logger.info(f"📊 PROGRESS: Advancing to next step: {next_state['name']} ({next_state['start_percent']}%)")
+            return next_state
+        return None
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
@@ -692,10 +734,6 @@ class ChatGPTSecurityScanner:
             logger.info(f"🚀 Priority 3 (Low): Large batches (8 files) for quick analysis")
             logger.info(f"🚀 Expected performance: 3-5x faster with batch analysis!")
             
-            # PROGRESS TRACKING: Calculate total steps for dynamic progress
-            self.total_steps = 4 + total_batches  # 4 main steps + each batch
-            logger.info(f"📊 PROGRESS: Total steps calculated: {self.total_steps}")
-            
             # Add overall scan timeout protection
             scan_start_time = datetime.now()
             max_scan_time = 900  # 15 minutes max
@@ -713,7 +751,7 @@ class ChatGPTSecurityScanner:
                 batch_start_time = datetime.now()
                 logger.info(f"📦 PHASE 1 BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)})")
                 
-                # PROGRESS TRACKING: Update batch progress
+                # PROGRESS TRACKING: Update batch progress within the batch range (45-70%)
                 batch_progress = (batch_num / total_batches) * 100
                 self.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_progress)
                 
@@ -726,9 +764,6 @@ class ChatGPTSecurityScanner:
                     logger.info(f"✅ PHASE 1 BATCH {batch_num + 1} complete: {len(batch_findings)} findings in {batch_time:.1f}s")
                     logger.info(f"✅ Total findings so far: {len(all_findings)}")
                     
-                    # PROGRESS TRACKING: Batch complete
-                    self.update_progress(f"Batch {batch_num + 1} complete", 100.0, step_complete=True)
-                    
                 except Exception as e:
                     logger.error(f"❌ PHASE 1 BATCH {batch_num + 1} failed: {e}")
                     continue
@@ -737,6 +772,9 @@ class ChatGPTSecurityScanner:
                 elapsed = (datetime.now() - scan_start_time).total_seconds()
                 files_per_second = sum(len(batch) for batch in file_batches[:batch_num + 1]) / elapsed
                 logger.info(f"📊 PHASE 1 Performance: {files_per_second:.1f} files/second, {elapsed:.0f}s elapsed")
+            
+            # PROGRESS TRACKING: All batches complete
+            self.update_progress("Analyzing batch", 100.0, step_complete=True)
             
             # PROGRESS TRACKING: Start condensing
             self.update_progress("Condensing security findings", 0.0)

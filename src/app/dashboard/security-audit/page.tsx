@@ -309,8 +309,12 @@ export default function SecurityAuditPage() {
   const [scanProgress, setScanProgress] = useState<{
     step: string;
     progress: number;
-    overall_progress: number;
+    step_complete: boolean;
+    current_state: string;
   } | null>(null);
+
+  // AUTO-COLLAPSE: Track which card is currently expanded
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -372,39 +376,13 @@ export default function SecurityAuditPage() {
 
       const repositoryUrl = `https://github.com/${userGitHubUsername}/${selectedRepository}`;
 
-      // PROGRESS TRACKING: Start with initial progress
-      setScanProgress({
-        step: "Initializing scan...",
-        progress: 0,
-        overall_progress: 0
-      });
-
-      // PROGRESS TRACKING: Simulate real-time progress updates
-      progressInterval = setInterval(() => {
-        setScanProgress(prev => {
-          if (!prev) return prev;
-          
-          // Simulate progress creeping up
-          const newProgress = Math.min(prev.progress + 0.5, 99);
-          
-          // Update step based on progress
-          let newStep = prev.step;
-          if (newProgress < 10) newStep = "Cloning repository...";
-          else if (newProgress < 20) newStep = "Analyzing repository structure...";
-          else if (newProgress < 30) newStep = "Preparing analysis batches...";
-          else if (newProgress < 60) newStep = "Running security analysis...";
-          else if (newProgress < 80) newStep = "Condensing findings...";
-          else if (newProgress < 90) newStep = "Generating remediation prompts...";
-          else newStep = "Creating final report...";
-          
-          return {
-            ...prev,
-            step: newStep,
-            progress: newProgress,
-            overall_progress: newProgress
-          };
+              // PROGRESS TRACKING: Start with initial progress
+        setScanProgress({
+            step: "Initializing scan...",
+            progress: 0,
+            step_complete: false,
+            current_state: "Initializing scan"
         });
-      }, 500);
 
       const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/', {
         method: 'POST',
@@ -427,15 +405,20 @@ export default function SecurityAuditPage() {
         throw new Error(data.error);
       }
 
-      // PROGRESS TRACKING: Update with final progress data if available
-      if (data.progress_data && data.progress_data.length > 0) {
-        const finalProgress = data.progress_data[data.progress_data.length - 1];
-        setScanProgress({
-          step: finalProgress.step,
-          progress: finalProgress.progress,
-          overall_progress: finalProgress.overall_progress
-        });
-      }
+              // PROGRESS TRACKING: Update with real-time progress data
+        if (data.progress_data && data.progress_data.length > 0) {
+            // Set up real-time progress updates
+            data.progress_data.forEach((progressUpdate: any, index: number) => {
+                setTimeout(() => {
+                    setScanProgress({
+                        step: progressUpdate.step,
+                        progress: progressUpdate.progress,
+                        step_complete: progressUpdate.step_complete,
+                        current_state: progressUpdate.current_state
+                    });
+                }, index * 100); // Stagger updates for smooth animation
+            });
+        }
 
       setScanResults(data);
       toast({
@@ -521,21 +504,21 @@ export default function SecurityAuditPage() {
             </Button>
           </div>
           
-          {/* PROGRESS BAR: Beautiful purple progress tracking */}
-          {isScanning && scanProgress && (
-            <div className="space-y-3 pt-4">
-              <div className="flex justify-between text-sm text-muted-foreground">
-                <span className="font-medium">{scanProgress.step}</span>
-                <span className="font-mono">{Math.round(scanProgress.overall_progress)}%</span>
-              </div>
-              <div className="w-full bg-muted rounded-full h-3">
-                <div 
-                  className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
-                  style={{ width: `${scanProgress.overall_progress}%` }}
-                />
-              </div>
-            </div>
-          )}
+                     {/* PROGRESS BAR: Beautiful purple progress tracking */}
+           {isScanning && scanProgress && (
+             <div className="space-y-3 pt-4">
+               <div className="flex justify-between text-sm text-muted-foreground">
+                 <span className="font-medium">{scanProgress.current_state}</span>
+                 <span className="font-mono">{Math.round(scanProgress.progress)}%</span>
+               </div>
+               <div className="w-full bg-muted rounded-full h-3">
+                 <div 
+                   className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
+                   style={{ width: `${scanProgress.progress}%` }}
+                 />
+               </div>
+             </div>
+           )}
         </CardContent>
       </Card>
 
