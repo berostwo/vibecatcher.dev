@@ -85,29 +85,10 @@ class ChatGPTSecurityScanner:
         self.pattern_database = {}  # Database of known security patterns
         self.file_risk_scores = {}  # Risk scores for files based on previous scans
         
-        # PROGRESS TRACKING: Real progress states with exact percentages
+        # SIMPLE PROGRESS TRACKING: Clean, accurate progress system
         self.progress_callback = None
         self.current_step = "Initializing"
-        self.current_step_index = 0
-        
-        # Define exact progress states with percentages - MUST MATCH step names in scan_repository
-        self.progress_states = [
-            {"name": "Initializing scan", "start_percent": 0, "end_percent": 5},
-            {"name": "Cloning repository", "start_percent": 5, "end_percent": 15},
-            {"name": "Repository cloned", "start_percent": 15, "end_percent": 20},
-            {"name": "Analyzing repository structure", "start_percent": 20, "end_percent": 30},
-            {"name": "Repository structure analyzed", "start_percent": 30, "end_percent": 35},
-            {"name": "Preparing analysis batches", "start_percent": 35, "end_percent": 40},
-            {"name": "Starting security analysis", "start_percent": 40, "end_percent": 45},
-            {"name": "Analyzing batch", "start_percent": 45, "end_percent": 70},  # Dynamic based on batches
-            {"name": "Condensing security findings", "start_percent": 70, "end_percent": 80},
-            {"name": "Findings condensed", "start_percent": 80, "end_percent": 85},
-            {"name": "Generating remediation prompts", "start_percent": 85, "end_percent": 90},
-            {"name": "Remediation prompts generated", "start_percent": 90, "end_percent": 95},
-            {"name": "Creating master remediation plan", "start_percent": 95, "end_percent": 98},
-            {"name": "Master plan complete", "start_percent": 98, "end_percent": 100},
-            {"name": "Finalizing report", "start_percent": 98, "end_percent": 100}
-        ]
+        self.step_progress = 0.0
         
         # Security categories for comprehensive coverage
         
@@ -163,76 +144,31 @@ class ChatGPTSecurityScanner:
         """Set callback function for progress updates"""
         self.progress_callback = callback
     
-    def update_progress(self, step: str, progress: float, step_complete: bool = False):
-        """Update progress and notify frontend with exact percentages"""
+    def update_progress(self, step: str, progress: float):
+        """Simple, accurate progress update"""
         self.current_step = step
-        
-        # Find the current progress state - EXACT MATCHING
-        current_state = None
-        for i, state in enumerate(self.progress_states):
-            # Exact match first, then partial match
-            if state["name"] == step:
-                current_state = state
-                self.current_step_index = i
-                logger.info(f"📊 EXACT MATCH: '{step}' matches '{state['name']}'")
-                break
-            elif step.startswith(state["name"]) or state["name"].startswith(step):
-                current_state = state
-                self.current_step_index = i
-                logger.info(f"📊 PARTIAL MATCH: '{step}' partially matches '{state['name']}'")
-                break
-        
-        if not current_state:
-            logger.warning(f"📊 NO PROGRESS STATE MATCH FOUND for step: '{step}'")
-            logger.warning(f"📊 Available states: {[s['name'] for s in self.progress_states]}")
-        
-        if current_state:
-            if step_complete:
-                # Step is complete, jump to end percentage
-                progress_percent = current_state["end_percent"]
-                logger.info(f"📊 PROGRESS: {step} COMPLETE - Jumping to {progress_percent}%")
-            else:
-                # Step is in progress, calculate current percentage within range
-                step_progress = progress / 100.0  # Convert 0-100 to 0-1
-                step_range = current_state["end_percent"] - current_state["start_percent"]
-                progress_percent = current_state["start_percent"] + (step_progress * step_range)
-                logger.info(f"📊 PROGRESS: {step} - {progress_percent:.1f}% (within range {current_state['start_percent']}-{current_state['end_percent']}%)")
-        else:
-            # Fallback for unknown steps
-            progress_percent = progress
-            logger.info(f"📊 PROGRESS: {step} - {progress_percent:.1f}% (unknown state)")
+        self.step_progress = progress
         
         if self.progress_callback:
             try:
                 progress_data = {
                     'step': step,
-                    'progress': progress_percent,
-                    'step_complete': step_complete,
-                    'current_state': current_state["name"] if current_state else step
+                    'progress': progress,
+                    'timestamp': datetime.now().isoformat()
                 }
-                logger.info(f"📊 CALLING PROGRESS CALLBACK: {progress_data}")
+                logger.info(f"📊 PROGRESS: {step} - {progress:.1f}%")
                 self.progress_callback(progress_data)
             except Exception as e:
                 logger.warning(f"Progress callback failed: {e}")
-                logger.error(f"Progress callback error details: {e}")
         else:
-            logger.warning(f"📊 NO PROGRESS CALLBACK SET - step: {step}, progress: {progress_percent}")
-    
-    def advance_to_next_step(self, step_name: str):
-        """Advance to the next progress step"""
-        if self.current_step_index < len(self.progress_states) - 1:
-            self.current_step_index += 1
-            next_state = self.progress_states[self.current_step_index]
-            logger.info(f"📊 PROGRESS: Advancing to next step: {next_state['name']} ({next_state['start_percent']}%)")
-            return next_state
-        return None
+            logger.warning(f"📊 NO PROGRESS CALLBACK SET - step: {step}, progress: {progress}")
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
         logger.info(f"📥 Cloning repository: {repo_url}")
         
         # PROGRESS TRACKING: Start cloning step
-        self.update_progress("Cloning repository", 0.0)
+        self.update_progress("Cloning repository", 10)
         
         # Validate repository URL
         if not any(domain in repo_url for domain in ALLOWED_REPO_DOMAINS):
@@ -288,7 +224,7 @@ class ChatGPTSecurityScanner:
             logger.info(f"📊 Total files: {file_count}")
             
             # PROGRESS TRACKING: Clone complete
-            self.update_progress("Repository cloned", 100.0, step_complete=True)
+            self.update_progress("Repository cloned", 25)
             
             return repo_path
             
@@ -707,8 +643,8 @@ class ChatGPTSecurityScanner:
         logger.info(f"🚀 Starting ChatGPT security scan for: {repo_url}")
         
         try:
-            # PROGRESS TRACKING: Initialize progress calculation
-            self.update_progress("Initializing scan", 0.0)
+            # PROGRESS TRACKING: Initialize progress
+            self.update_progress("Initializing scan", 5)
             
             # Clone repository with timeout
             repo_path = await asyncio.wait_for(
@@ -725,7 +661,7 @@ class ChatGPTSecurityScanner:
             }
             
             # PROGRESS TRACKING: Start file filtering
-            self.update_progress("Analyzing repository structure", 0.0)
+            self.update_progress("Analyzing repository structure", 30)
             
             # PHASE 1 NUCLEAR OPTIMIZATION: Smart File Filtering + Batch Analysis
             all_findings = []
@@ -762,10 +698,10 @@ class ChatGPTSecurityScanner:
             logger.info(f"🔍 Supported file types: {', '.join(file_types)}")
             
             # PROGRESS TRACKING: File filtering complete
-            self.update_progress("Repository structure analyzed", 100.0, step_complete=True)
+            self.update_progress("Repository structure analyzed", 40)
             
             # PROGRESS TRACKING: Start batch creation
-            self.update_progress("Preparing analysis batches", 0.0)
+            self.update_progress("Preparing analysis batches", 45)
             
             # Create intelligent file batches based on priority
             file_batches = self.create_file_batches(files_to_analyze)
@@ -782,7 +718,7 @@ class ChatGPTSecurityScanner:
             max_scan_time = 900  # 15 minutes max
             
             # PROGRESS TRACKING: Start batch processing
-            self.update_progress("Starting security analysis", 0.0, step_complete=True)
+            self.update_progress("Starting security analysis", 50)
             
             for batch_num, batch_files in enumerate(file_batches):
                 # Check if we're approaching timeout
@@ -794,8 +730,8 @@ class ChatGPTSecurityScanner:
                 batch_start_time = datetime.now()
                 logger.info(f"📦 PHASE 1 BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)})")
                 
-                # PROGRESS TRACKING: Update batch progress within the batch range (45-70%)
-                batch_progress = (batch_num / total_batches) * 100
+                # PROGRESS TRACKING: Update batch progress (50-70%)
+                batch_progress = 50 + (batch_num / total_batches) * 20
                 self.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_progress)
                 
                 # Process batch with NEW batch analysis (multiple files in ONE API call)
@@ -817,10 +753,10 @@ class ChatGPTSecurityScanner:
                 logger.info(f"📊 PHASE 1 Performance: {files_per_second:.1f} files/second, {elapsed:.0f}s elapsed")
             
             # PROGRESS TRACKING: All batches complete
-            self.update_progress("Analyzing batch", 100.0, step_complete=True)
+            self.update_progress("Batch analysis complete", 70)
             
             # PROGRESS TRACKING: Start condensing
-            self.update_progress("Condensing security findings", 0.0)
+            self.update_progress("Condensing security findings", 75)
             
             # Condense findings
             logger.info(f"🔍 Condensing {len(all_findings)} findings...")
@@ -828,10 +764,10 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
             
             # PROGRESS TRACKING: Condensing complete
-            self.update_progress("Findings condensed", 100.0, step_complete=True)
+            self.update_progress("Findings condensed", 80)
             
             # PROGRESS TRACKING: Start remediations
-            self.update_progress("Generating remediation prompts", 0.0)
+            self.update_progress("Generating remediation prompts", 85)
             
             # NUCLEAR OPTIMIZATION: Generate ALL remediations in ONE call
             logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call...")
@@ -841,10 +777,10 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ NUCLEAR OPTIMIZATION: Generated {len(condensed_remediations)} remediations in {remediation_time:.1f}s!")
             
             # PROGRESS TRACKING: Remediations complete
-            self.update_progress("Remediation prompts generated", 100.0, step_complete=True)
+            self.update_progress("Remediation prompts generated", 90)
             
             # PROGRESS TRACKING: Start master plan
-            self.update_progress("Creating master remediation plan", 0.0)
+            self.update_progress("Creating master remediation plan", 95)
             
             # Generate master remediation plan
             logger.info(f"🔍 Generating master remediation plan...")
@@ -852,7 +788,7 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ Master remediation generated")
             
             # PROGRESS TRACKING: Master plan complete
-            self.update_progress("Master plan complete", 100.0, step_complete=True)
+            self.update_progress("Master plan complete", 98)
             
             # Calculate scan duration
             scan_duration = (datetime.now() - start_time).total_seconds()
@@ -900,7 +836,7 @@ class ChatGPTSecurityScanner:
             )
             
             # PROGRESS TRACKING: Final completion
-            self.update_progress("Finalizing report", 100.0, step_complete=True)
+            self.update_progress("Finalizing report", 100)
             
             # Cleanup
             shutil.rmtree(repo_path, ignore_errors=True)
@@ -1493,8 +1429,6 @@ def security_scan():
         current_scan_progress = {
             'step': 'Starting scan...',
             'progress': 0,
-            'current_state': 'Initializing scan',
-            'step_complete': False,
             'timestamp': datetime.now().isoformat()
         }
         
@@ -1508,20 +1442,12 @@ def security_scan():
                 global current_scan_progress
                 
                 progress_updates.append(progress_data)
-                logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}% - State: {progress_data.get('current_state', 'Unknown')}")
-                logger.info(f"📊 PROGRESS DATA: {progress_data}")
-                
-                # IMMEDIATE PROGRESS LOGGING for debugging
-                step_name = progress_data.get('current_state', progress_data.get('step', 'Unknown'))
-                progress_percent = progress_data.get('progress', 0)
-                logger.info(f"🚀 IMMEDIATE PROGRESS: {step_name} - {progress_percent:.1f}%")
+                logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
                 
                 # Store current progress globally for real-time access
                 current_scan_progress = {
                     'step': progress_data.get('step', 'Unknown'),
                     'progress': progress_data.get('progress', 0),
-                    'current_state': step_name,
-                    'step_complete': progress_data.get('step_complete', False),
                     'timestamp': datetime.now().isoformat()
                 }
             

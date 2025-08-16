@@ -319,8 +319,6 @@ export default function SecurityAuditPage() {
   const [scanProgress, setScanProgress] = useState<{
     step: string;
     progress: number;
-    step_complete: boolean;
-    current_state: string;
   } | null>(null);
 
   // DEBUG: Log progress changes
@@ -376,8 +374,7 @@ export default function SecurityAuditPage() {
     setScanResults(null);
     setScanProgress(null); // Reset progress
     
-    // PROGRESS TRACKING: Declare interval variable for real-time polling
-    let progressInterval: NodeJS.Timeout | undefined;
+    // PROGRESS TRACKING: Simple progress tracking
     
     try {
       // Get GitHub token from user service
@@ -393,9 +390,7 @@ export default function SecurityAuditPage() {
       // PROGRESS TRACKING: Start with initial progress
       setScanProgress({
         step: "Initializing scan...",
-        progress: 0,
-        step_complete: false,
-        current_state: "Initializing scan"
+        progress: 0
       });
 
       // Start the security scan FIRST
@@ -414,36 +409,8 @@ export default function SecurityAuditPage() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // PROGRESS TRACKING: Start real-time progress polling AFTER scan request is sent
-      console.log('🚀 Starting progress polling after scan request...');
-      progressInterval = setInterval(async () => {
-        try {
-          console.log('📊 Polling progress endpoint...');
-          const progressResponse = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
-          console.log('📊 Progress response status:', progressResponse.status);
-          
-          if (progressResponse.ok) {
-            const progressData = await progressResponse.json();
-            console.log('📊 Progress data received:', progressData);
-            
-            if (progressData.status !== 'no_scan_running') {
-              console.log('📊 Setting progress update:', progressData);
-              setScanProgress({
-                step: progressData.step,
-                progress: progressData.progress,
-                step_complete: progressData.step_complete,
-                current_state: progressData.current_state
-              });
-            } else {
-              console.log('📊 No scan running, status:', progressData.status);
-            }
-          } else {
-            console.warn('📊 Progress response not ok:', progressResponse.status);
-          }
-        } catch (error) {
-          console.error('📊 Progress polling failed:', error);
-        }
-      }, 500); // Poll every 500ms
+      // PROGRESS TRACKING: Simple progress updates during scan
+      console.log('🚀 Starting security scan...');
 
       const data = await response.json();
       
@@ -465,16 +432,11 @@ export default function SecurityAuditPage() {
         variant: 'destructive',
       });
     } finally {
-      // PROGRESS TRACKING: Clean up interval and set final progress
-      if (progressInterval) {
-        clearInterval(progressInterval);
-      }
+      // PROGRESS TRACKING: Set final progress
       setScanProgress(prev => prev ? {
         ...prev,
         step: "Scan complete!",
-        progress: 100,
-        step_complete: true,
-        current_state: "Scan complete!"
+        progress: 100
       } : null);
       
       setIsScanning(false);
@@ -539,10 +501,10 @@ export default function SecurityAuditPage() {
                      {/* PROGRESS BAR: Beautiful purple progress tracking */}
            {isScanning && scanProgress && (
              <div className="space-y-3 pt-4">
-               <div className="flex justify-between text-sm text-muted-foreground">
-                 <span className="font-medium">{scanProgress.current_state}</span>
-                 <span className="font-mono">{Math.round(scanProgress.progress)}%</span>
-               </div>
+                          <div className="flex justify-between text-sm text-muted-foreground">
+             <span className="font-medium">{scanProgress.step}</span>
+             <span className="font-mono">{Math.round(scanProgress.progress)}%</span>
+           </div>
                <div className="w-full bg-muted rounded-full h-3">
                  <div 
                    className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
