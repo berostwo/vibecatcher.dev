@@ -90,7 +90,7 @@ class ChatGPTSecurityScanner:
         self.current_step = "Initializing"
         self.current_step_index = 0
         
-        # Define exact progress states with percentages
+        # Define exact progress states with percentages - MUST MATCH step names in scan_repository
         self.progress_states = [
             {"name": "Initializing scan", "start_percent": 0, "end_percent": 5},
             {"name": "Cloning repository", "start_percent": 5, "end_percent": 15},
@@ -105,7 +105,8 @@ class ChatGPTSecurityScanner:
             {"name": "Generating remediation prompts", "start_percent": 85, "end_percent": 90},
             {"name": "Remediation prompts generated", "start_percent": 90, "end_percent": 95},
             {"name": "Creating master remediation plan", "start_percent": 95, "end_percent": 98},
-            {"name": "Master plan complete", "start_percent": 98, "end_percent": 100}
+            {"name": "Master plan complete", "start_percent": 98, "end_percent": 100},
+            {"name": "Finalizing report", "start_percent": 98, "end_percent": 100}
         ]
         
         # Security categories for comprehensive coverage
@@ -192,14 +193,19 @@ class ChatGPTSecurityScanner:
         
         if self.progress_callback:
             try:
-                self.progress_callback({
+                progress_data = {
                     'step': step,
                     'progress': progress_percent,
                     'step_complete': step_complete,
                     'current_state': current_state["name"] if current_state else step
-                })
+                }
+                logger.info(f"📊 CALLING PROGRESS CALLBACK: {progress_data}")
+                self.progress_callback(progress_data)
             except Exception as e:
                 logger.warning(f"Progress callback failed: {e}")
+                logger.error(f"Progress callback error details: {e}")
+        else:
+            logger.warning(f"📊 NO PROGRESS CALLBACK SET - step: {step}, progress: {progress_percent}")
     
     def advance_to_next_step(self, step_name: str):
         """Advance to the next progress step"""
@@ -1431,7 +1437,8 @@ def security_scan():
             progress_updates = []
             def progress_callback(progress_data):
                 progress_updates.append(progress_data)
-                logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['overall_progress']:.1f}%")
+                logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}% - State: {progress_data.get('current_state', 'Unknown')}")
+                logger.info(f"📊 PROGRESS DATA: {progress_data}")
             
             scanner.set_progress_callback(progress_callback)
             
