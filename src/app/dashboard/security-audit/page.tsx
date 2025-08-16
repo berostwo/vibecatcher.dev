@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { GitHubService } from '@/lib/github-service';
 import { FirebaseUserService } from '@/lib/firebase-user-service';
+import { FirebaseAuditService, SecurityAudit } from '@/lib/firebase-audit-service';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -47,6 +48,7 @@ interface ScanResults {
     high_count: number;
     medium_count: number;
     low_count: number;
+    codebase_health: number;
     files_scanned: number;
     scan_duration: number;
   };
@@ -320,6 +322,9 @@ export default function SecurityAuditPage() {
     step: string;
     progress: number;
   } | null>(null);
+  
+  // PERSISTENT AUDIT STATE: Track current audit across page refreshes
+  const [currentAudit, setCurrentAudit] = useState<SecurityAudit | null>(null);
 
   // DEBUG: Log progress changes
   useEffect(() => {
@@ -334,8 +339,75 @@ export default function SecurityAuditPage() {
     if (user) {
       fetchRepositories();
       fetchGitHubUsername();
+      checkExistingAudit();
     }
   }, [user]);
+
+  // Check for existing active audit on page load/refresh
+  const checkExistingAudit = async () => {
+    if (!user) return;
+    
+    try {
+      const activeAudit = await FirebaseAuditService.getActiveAudit(user.uid);
+      if (activeAudit) {
+        console.log('🔍 Found existing active audit:', activeAudit);
+        setCurrentAudit(activeAudit);
+        
+        if (activeAudit.status === 'running') {
+          setIsScanning(true);
+          if (activeAudit.progress) {
+            setScanProgress({
+              step: activeAudit.progress.step,
+              progress: activeAudit.progress.progress
+            });
+          }
+          
+          // Resume progress polling for existing audit
+          startProgressPolling(activeAudit.id);
+        } else if (activeAudit.status === 'completed' && activeAudit.scanResults) {
+          setScanResults(activeAudit.scanResults);
+          setIsScanning(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking existing audit:', error);
+    }
+  };
+
+  // Start progress polling for an existing audit
+  const startProgressPolling = (auditId: string) => {
+    const pollProgress = async () => {
+      try {
+        const progressResponse = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+        
+        if (progressResponse.ok) {
+          const progressData = await progressResponse.json();
+          
+          if (progressData.step && typeof progressData.progress === 'number') {
+            setScanProgress({
+              step: progressData.step,
+              progress: progressData.progress
+            });
+            
+            // Update Firebase with progress
+            await FirebaseAuditService.updateAuditProgress(auditId, {
+              step: progressData.step,
+              progress: progressData.progress,
+              timestamp: new Date().toISOString()
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Progress polling failed:', error);
+      }
+    };
+    
+    // Poll every 500ms
+    const interval = setInterval(pollProgress, 500);
+    
+    // Return cleanup function
+    return () => clearInterval(interval);
+  };
 
   const fetchGitHubUsername = async () => {
     try {
@@ -372,6 +444,21 @@ export default function SecurityAuditPage() {
       return;
     }
 
+    // Check if user already has an active audit
+    try {
+      const hasActive = await FirebaseAuditService.hasActiveAudit(user!.uid);
+      if (hasActive) {
+        toast({
+          title: 'Audit Already Running',
+          description: 'You already have a security audit in progress. Please wait for it to complete.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('Error checking active audit:', error);
+    }
+
     setIsScanning(true);
     setScanResults(null);
     setScanProgress(null); // Reset progress
@@ -389,6 +476,28 @@ export default function SecurityAuditPage() {
       }
 
       const repositoryUrl = `https://github.com/${userGitHubUsername}/${selectedRepository}`;
+
+      // Create audit record in Firebase FIRST
+      const auditId = await FirebaseAuditService.createAudit(
+        user!.uid,
+        repositoryUrl,
+        selectedRepository
+      );
+      
+      console.log('🔍 Created audit record:', auditId);
+      setCurrentAudit({
+        id: auditId,
+        userId: user!.uid,
+        repositoryUrl,
+        repositoryName: selectedRepository,
+        status: 'pending',
+        progress: null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+
+      // Update status to running
+      await FirebaseAuditService.updateAuditStatus(auditId, 'running');
 
       // PROGRESS TRACKING: Start with initial progress
       setScanProgress({
@@ -431,6 +540,13 @@ export default function SecurityAuditPage() {
                 step: progressData.step,
                 progress: progressData.progress
               });
+              
+              // Update Firebase with progress
+              await FirebaseAuditService.updateAuditProgress(auditId, {
+                step: progressData.step,
+                progress: progressData.progress,
+                timestamp: new Date().toISOString()
+              });
             } else if (progressData.status === 'no_scan_running') {
               console.log('📊 No scan running, status:', progressData.status);
             } else {
@@ -456,7 +572,13 @@ export default function SecurityAuditPage() {
         throw new Error(data.error);
       }
 
+      // Save completed audit results to Firebase
+      await FirebaseAuditService.updateAuditStatus(auditId, 'completed', data);
+      
+      // Update local state
       setScanResults(data);
+      setCurrentAudit(prev => prev ? { ...prev, status: 'completed', scanResults: data } : null);
+      
       toast({
         title: 'Success',
         description: `Security audit completed! Found ${data.summary.total_findings} issues.`,
@@ -464,6 +586,18 @@ export default function SecurityAuditPage() {
 
     } catch (error) {
       console.error('Audit failed:', error);
+      
+      // Save failed audit to Firebase
+      if (currentAudit) {
+        await FirebaseAuditService.updateAuditStatus(
+          currentAudit.id, 
+          'failed', 
+          undefined, 
+          error instanceof Error ? error.message : 'Unknown error occurred'
+        );
+        setCurrentAudit(prev => prev ? { ...prev, status: 'failed' } : null);
+      }
+      
       toast({
         title: 'Audit Failed',
         description: error instanceof Error ? error.message : 'Unknown error occurred',
@@ -560,16 +694,21 @@ export default function SecurityAuditPage() {
                      {/* PROGRESS BAR: Beautiful purple progress tracking */}
            {isScanning && scanProgress && (
              <div className="space-y-3 pt-4">
-                          <div className="flex justify-between text-sm text-muted-foreground">
-             <span className="font-medium">{scanProgress.step}</span>
-             <span className="font-mono">{Math.round(scanProgress.progress)}%</span>
-           </div>
+               <div className="flex justify-between text-sm text-muted-foreground">
+                 <span className="font-medium">{scanProgress.step}</span>
+                 <span className="font-mono">{Math.round(scanProgress.progress)}%</span>
+               </div>
                <div className="w-full bg-muted rounded-full h-3">
                  <div 
                    className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
                    style={{ width: `${scanProgress.progress}%` }}
                  />
                </div>
+               {currentAudit && (
+                 <div className="text-xs text-muted-foreground text-center">
+                   Audit ID: {currentAudit.id} • Status: {currentAudit.status}
+                 </div>
+               )}
              </div>
            )}
         </CardContent>
