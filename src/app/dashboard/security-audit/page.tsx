@@ -304,6 +304,13 @@ export default function SecurityAuditPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanResults, setScanResults] = useState<ScanResults | null>(null);
   const [userGitHubUsername, setUserGitHubUsername] = useState<string>('');
+  
+  // PROGRESS TRACKING: State for real-time progress updates
+  const [scanProgress, setScanProgress] = useState<{
+    step: string;
+    progress: number;
+    overall_progress: number;
+  } | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -349,7 +356,11 @@ export default function SecurityAuditPage() {
 
     setIsScanning(true);
     setScanResults(null);
-
+    setScanProgress(null); // Reset progress
+    
+        // PROGRESS TRACKING: Declare interval variable
+    let progressInterval: NodeJS.Timeout | undefined;
+    
     try {
       // Get GitHub token from user service
       const firebaseUser = await FirebaseUserService.getUserByUid(user!.uid);
@@ -360,6 +371,40 @@ export default function SecurityAuditPage() {
       }
 
       const repositoryUrl = `https://github.com/${userGitHubUsername}/${selectedRepository}`;
+
+      // PROGRESS TRACKING: Start with initial progress
+      setScanProgress({
+        step: "Initializing scan...",
+        progress: 0,
+        overall_progress: 0
+      });
+
+      // PROGRESS TRACKING: Simulate real-time progress updates
+      progressInterval = setInterval(() => {
+        setScanProgress(prev => {
+          if (!prev) return prev;
+          
+          // Simulate progress creeping up
+          const newProgress = Math.min(prev.progress + 0.5, 99);
+          
+          // Update step based on progress
+          let newStep = prev.step;
+          if (newProgress < 10) newStep = "Cloning repository...";
+          else if (newProgress < 20) newStep = "Analyzing repository structure...";
+          else if (newProgress < 30) newStep = "Preparing analysis batches...";
+          else if (newProgress < 60) newStep = "Running security analysis...";
+          else if (newProgress < 80) newStep = "Condensing findings...";
+          else if (newProgress < 90) newStep = "Generating remediation prompts...";
+          else newStep = "Creating final report...";
+          
+          return {
+            ...prev,
+            step: newStep,
+            progress: newProgress,
+            overall_progress: newProgress
+          };
+        });
+      }, 500);
 
       const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/', {
         method: 'POST',
@@ -382,6 +427,16 @@ export default function SecurityAuditPage() {
         throw new Error(data.error);
       }
 
+      // PROGRESS TRACKING: Update with final progress data if available
+      if (data.progress_data && data.progress_data.length > 0) {
+        const finalProgress = data.progress_data[data.progress_data.length - 1];
+        setScanProgress({
+          step: finalProgress.step,
+          progress: finalProgress.progress,
+          overall_progress: finalProgress.overall_progress
+        });
+      }
+
       setScanResults(data);
       toast({
         title: 'Success',
@@ -396,6 +451,17 @@ export default function SecurityAuditPage() {
         variant: 'destructive',
       });
     } finally {
+      // PROGRESS TRACKING: Clean up interval and set final progress
+      if (progressInterval) {
+        clearInterval(progressInterval);
+      }
+      setScanProgress(prev => prev ? {
+        ...prev,
+        step: "Scan complete!",
+        progress: 100,
+        overall_progress: 100
+      } : null);
+      
       setIsScanning(false);
     }
   };
@@ -454,6 +520,22 @@ export default function SecurityAuditPage() {
               {isScanning ? 'Scanning...' : 'Run Security Audit'}
             </Button>
           </div>
+          
+          {/* PROGRESS BAR: Beautiful purple progress tracking */}
+          {isScanning && scanProgress && (
+            <div className="space-y-3 pt-4">
+              <div className="flex justify-between text-sm text-muted-foreground">
+                <span className="font-medium">{scanProgress.step}</span>
+                <span className="font-mono">{Math.round(scanProgress.overall_progress)}%</span>
+              </div>
+              <div className="w-full bg-muted rounded-full h-3">
+                <div 
+                  className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
+                  style={{ width: `${scanProgress.overall_progress}%` }}
+                />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -85,6 +85,40 @@ class ChatGPTSecurityScanner:
         self.pattern_database = {}  # Database of known security patterns
         self.file_risk_scores = {}  # Risk scores for files based on previous scans
         
+        # PROGRESS TRACKING: Dynamic progress calculation and tracking
+        self.progress_callback = None
+        self.current_step = "Initializing"
+        self.step_progress = 0.0
+        self.total_steps = 0
+        self.completed_steps = 0
+        
+        # PROGRESS TRACKING METHODS
+        def set_progress_callback(self, callback):
+            """Set callback function for progress updates"""
+            self.progress_callback = callback
+        
+        def update_progress(self, step: str, progress: float, step_complete: bool = False):
+            """Update progress and notify frontend"""
+            self.current_step = step
+            self.step_progress = progress
+            
+            if step_complete:
+                self.completed_steps += 1
+            
+            if self.progress_callback:
+                try:
+                    self.progress_callback({
+                        'step': step,
+                        'progress': progress,
+                        'completed_steps': self.completed_steps,
+                        'total_steps': self.total_steps,
+                        'overall_progress': (self.completed_steps + progress) / max(1, self.total_steps) * 100
+                    })
+                except Exception as e:
+                    logger.warning(f"Progress callback failed: {e}")
+            
+            logger.info(f"📊 PROGRESS: {step} - {progress:.1f}% (Overall: {self.completed_steps}/{self.total_steps})")
+        
         # Security categories for comprehensive coverage
         self.security_categories = [
             "Authentication & Authorization",
@@ -136,6 +170,9 @@ class ChatGPTSecurityScanner:
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
         logger.info(f"📥 Cloning repository: {repo_url}")
+        
+        # PROGRESS TRACKING: Start cloning step
+        self.update_progress("Cloning repository", 0.0)
         
         # Validate repository URL
         if not any(domain in repo_url for domain in ALLOWED_REPO_DOMAINS):
@@ -189,6 +226,9 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ Repository cloned successfully: {repo_path}")
             logger.info(f"📊 Repository size: {repo_size}")
             logger.info(f"📊 Total files: {file_count}")
+            
+            # PROGRESS TRACKING: Clone complete
+            self.update_progress("Repository cloned", 100.0, step_complete=True)
             
             return repo_path
             
@@ -581,6 +621,9 @@ class ChatGPTSecurityScanner:
         logger.info(f"🚀 Starting ChatGPT security scan for: {repo_url}")
         
         try:
+            # PROGRESS TRACKING: Initialize progress calculation
+            self.update_progress("Initializing scan", 0.0)
+            
             # Clone repository with timeout
             repo_path = await asyncio.wait_for(
                 self.clone_repository(repo_url, github_token), 
@@ -594,6 +637,9 @@ class ChatGPTSecurityScanner:
                 'size': self.get_directory_size(repo_path),
                 'file_count': self.count_files(repo_path)
             }
+            
+            # PROGRESS TRACKING: Start file filtering
+            self.update_progress("Analyzing repository structure", 0.0)
             
             # PHASE 1 NUCLEAR OPTIMIZATION: Smart File Filtering + Batch Analysis
             all_findings = []
@@ -629,6 +675,12 @@ class ChatGPTSecurityScanner:
             logger.info(f"🔍 Size skipped: {skipped_size/1024/1024:.1f}MB")
             logger.info(f"🔍 Supported file types: {', '.join(file_types)}")
             
+            # PROGRESS TRACKING: File filtering complete
+            self.update_progress("Repository structure analyzed", 100.0, step_complete=True)
+            
+            # PROGRESS TRACKING: Start batch creation
+            self.update_progress("Preparing analysis batches", 0.0)
+            
             # Create intelligent file batches based on priority
             file_batches = self.create_file_batches(files_to_analyze)
             total_batches = len(file_batches)
@@ -639,9 +691,16 @@ class ChatGPTSecurityScanner:
             logger.info(f"🚀 Priority 3 (Low): Large batches (8 files) for quick analysis")
             logger.info(f"🚀 Expected performance: 3-5x faster with batch analysis!")
             
+            # PROGRESS TRACKING: Calculate total steps for dynamic progress
+            self.total_steps = 4 + total_batches  # 4 main steps + each batch
+            logger.info(f"📊 PROGRESS: Total steps calculated: {self.total_steps}")
+            
             # Add overall scan timeout protection
             scan_start_time = datetime.now()
             max_scan_time = 900  # 15 minutes max
+            
+            # PROGRESS TRACKING: Start batch processing
+            self.update_progress("Starting security analysis", 0.0, step_complete=True)
             
             for batch_num, batch_files in enumerate(file_batches):
                 # Check if we're approaching timeout
@@ -653,6 +712,10 @@ class ChatGPTSecurityScanner:
                 batch_start_time = datetime.now()
                 logger.info(f"📦 PHASE 1 BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)})")
                 
+                # PROGRESS TRACKING: Update batch progress
+                batch_progress = (batch_num / total_batches) * 100
+                self.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_progress)
+                
                 # Process batch with NEW batch analysis (multiple files in ONE API call)
                 try:
                     batch_findings = self.analyze_files_batch(batch_files)
@@ -661,6 +724,9 @@ class ChatGPTSecurityScanner:
                     batch_time = (datetime.now() - batch_start_time).total_seconds()
                     logger.info(f"✅ PHASE 1 BATCH {batch_num + 1} complete: {len(batch_findings)} findings in {batch_time:.1f}s")
                     logger.info(f"✅ Total findings so far: {len(all_findings)}")
+                    
+                    # PROGRESS TRACKING: Batch complete
+                    self.update_progress(f"Batch {batch_num + 1} complete", 100.0, step_complete=True)
                     
                 except Exception as e:
                     logger.error(f"❌ PHASE 1 BATCH {batch_num + 1} failed: {e}")
@@ -671,10 +737,19 @@ class ChatGPTSecurityScanner:
                 files_per_second = sum(len(batch) for batch in file_batches[:batch_num + 1]) / elapsed
                 logger.info(f"📊 PHASE 1 Performance: {files_per_second:.1f} files/second, {elapsed:.0f}s elapsed")
             
+            # PROGRESS TRACKING: Start condensing
+            self.update_progress("Condensing security findings", 0.0)
+            
             # Condense findings
             logger.info(f"🔍 Condensing {len(all_findings)} findings...")
             condensed_findings = self.condense_findings(all_findings)
             logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
+            
+            # PROGRESS TRACKING: Condensing complete
+            self.update_progress("Findings condensed", 100.0, step_complete=True)
+            
+            # PROGRESS TRACKING: Start remediations
+            self.update_progress("Generating remediation prompts", 0.0)
             
             # NUCLEAR OPTIMIZATION: Generate ALL remediations in ONE call
             logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call...")
@@ -683,10 +758,19 @@ class ChatGPTSecurityScanner:
             remediation_time = (datetime.now() - start_time_remediations).total_seconds()
             logger.info(f"✅ NUCLEAR OPTIMIZATION: Generated {len(condensed_remediations)} remediations in {remediation_time:.1f}s!")
             
+            # PROGRESS TRACKING: Remediations complete
+            self.update_progress("Remediation prompts generated", 100.0, step_complete=True)
+            
+            # PROGRESS TRACKING: Start master plan
+            self.update_progress("Creating master remediation plan", 0.0)
+            
             # Generate master remediation plan
             logger.info(f"🔍 Generating master remediation plan...")
             master_remediation = self.generate_master_remediation(condensed_findings)
             logger.info(f"✅ Master remediation generated")
+            
+            # PROGRESS TRACKING: Master plan complete
+            self.update_progress("Master plan complete", 100.0, step_complete=True)
             
             # Calculate scan duration
             scan_duration = (datetime.now() - start_time).total_seconds()
@@ -732,6 +816,9 @@ class ChatGPTSecurityScanner:
                 timestamp=datetime.now().isoformat(),
                 repository_info=repo_info
             )
+            
+            # PROGRESS TRACKING: Final completion
+            self.update_progress("Finalizing report", 100.0, step_complete=True)
             
             # Cleanup
             shutil.rmtree(repo_path, ignore_errors=True)
@@ -1301,6 +1388,14 @@ def security_scan():
         try:
             scanner = ChatGPTSecurityScanner()
             
+            # PROGRESS TRACKING: Set up progress callback for real-time updates
+            progress_updates = []
+            def progress_callback(progress_data):
+                progress_updates.append(progress_data)
+                logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['overall_progress']:.1f}%")
+            
+            scanner.set_progress_callback(progress_callback)
+            
             # Set a hard timeout for the entire scan
             scan_timeout = 600  # 10 minutes max (Cloud Run timeout is 15 minutes)
             
@@ -1316,6 +1411,9 @@ def security_scan():
             if 'error' in result:
                 logger.error(f"Scan failed: {result['error']}")
                 return jsonify(result), 500
+            
+            # Add progress data to result
+            result['progress_data'] = progress_updates
             
             logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
             return jsonify(result)
