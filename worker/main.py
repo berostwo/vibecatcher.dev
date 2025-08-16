@@ -819,11 +819,11 @@ def security_scan():
             
             logger.info(f"🚀 Starting scan with {scan_timeout}s timeout protection")
             
-            # Run with timeout protection
-            result = await asyncio.wait_for(
+            # Run with timeout protection using asyncio.run()
+            result = asyncio.run(asyncio.wait_for(
                 scanner.scan_repository(repo_url, github_token),
                 timeout=scan_timeout
-            )
+            ))
             
             # Check if scan failed
             if 'error' in result:
@@ -861,7 +861,7 @@ if __name__ == "__main__":
         logger.info(f"🔍 Environment: PORT={port}")
         logger.info(f"🔒 CORS enabled for all endpoints")
         logger.info(f"⏱️  Scan timeout protection: 900s")
-        logger.info(f"📦 Batch processing: 5 files concurrently")
+        logger.info(f"📦 Batch processing: 20 files concurrently (NUCLEAR OPTIMIZATION)")
         logger.info(f"⚠️  IMPORTANT: Set Cloud Run timeout to 900s (15 minutes) to avoid 504 errors")
         logger.info(f"⚠️  IMPORTANT: Ensure OPENAI_API_KEY is set")
         
