@@ -167,13 +167,24 @@ class ChatGPTSecurityScanner:
         """Update progress and notify frontend with exact percentages"""
         self.current_step = step
         
-        # Find the current progress state
+        # Find the current progress state - EXACT MATCHING
         current_state = None
         for i, state in enumerate(self.progress_states):
-            if state["name"] in step or step in state["name"]:
+            # Exact match first, then partial match
+            if state["name"] == step:
                 current_state = state
                 self.current_step_index = i
+                logger.info(f"📊 EXACT MATCH: '{step}' matches '{state['name']}'")
                 break
+            elif step.startswith(state["name"]) or state["name"].startswith(step):
+                current_state = state
+                self.current_step_index = i
+                logger.info(f"📊 PARTIAL MATCH: '{step}' partially matches '{state['name']}'")
+                break
+        
+        if not current_state:
+            logger.warning(f"📊 NO PROGRESS STATE MATCH FOUND for step: '{step}'")
+            logger.warning(f"📊 Available states: {[s['name'] for s in self.progress_states]}")
         
         if current_state:
             if step_complete:
@@ -1388,6 +1399,9 @@ def handle_options():
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
+# Global variable to store current scan progress
+current_scan_progress = None
+
 @app.route('/', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -1413,6 +1427,19 @@ def health_check():
         'health_checks': checks
     })
 
+@app.route('/progress', methods=['GET'])
+def get_progress():
+    """Get current scan progress for real-time updates"""
+    global current_scan_progress
+    
+    if current_scan_progress is None:
+        return jsonify({
+            'status': 'no_scan_running',
+            'message': 'No security scan is currently running'
+        })
+    
+    return jsonify(current_scan_progress)
+
 @app.route('/', methods=['POST'])
 def security_scan():
     """Main endpoint for security scans"""
@@ -1429,6 +1456,16 @@ def security_scan():
         
         logger.info(f"🚀 Starting security scan for: {repo_url}")
         
+        # Reset global progress for new scan
+        global current_scan_progress
+        current_scan_progress = {
+            'step': 'Starting scan...',
+            'progress': 0,
+            'current_state': 'Initializing scan',
+            'step_complete': False,
+            'timestamp': datetime.now().isoformat()
+        }
+        
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
             scanner = ChatGPTSecurityScanner()
@@ -1436,9 +1473,25 @@ def security_scan():
             # PROGRESS TRACKING: Set up progress callback for real-time updates
             progress_updates = []
             def progress_callback(progress_data):
+                global current_scan_progress
+                
                 progress_updates.append(progress_data)
                 logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}% - State: {progress_data.get('current_state', 'Unknown')}")
                 logger.info(f"📊 PROGRESS DATA: {progress_data}")
+                
+                # IMMEDIATE PROGRESS LOGGING for debugging
+                step_name = progress_data.get('current_state', progress_data.get('step', 'Unknown'))
+                progress_percent = progress_data.get('progress', 0)
+                logger.info(f"🚀 IMMEDIATE PROGRESS: {step_name} - {progress_percent:.1f}%")
+                
+                # Store current progress globally for real-time access
+                current_scan_progress = {
+                    'step': progress_data.get('step', 'Unknown'),
+                    'progress': progress_data.get('progress', 0),
+                    'current_state': step_name,
+                    'step_complete': progress_data.get('step_complete', False),
+                    'timestamp': datetime.now().isoformat()
+                }
             
             scanner.set_progress_callback(progress_callback)
             
@@ -1462,6 +1515,10 @@ def security_scan():
             result['progress_data'] = progress_updates
             
             logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
+            
+            # Reset global progress when scan completes
+            current_scan_progress = None
+            
             return jsonify(result)
             
         except asyncio.TimeoutError:
