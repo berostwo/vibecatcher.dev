@@ -168,7 +168,7 @@ class ChatGPTSecurityScanner:
         """Clone repository with authentication"""
         logger.info(f"📥 Cloning repository: {repo_url}")
         
-        # PROGRESS TRACKING: Start cloning step
+        # PROGRESS TRACKING: Start cloning step (EVEN DISTRIBUTION!)
         self.update_progress("Cloning repository", 10)
         
         # Validate repository URL
@@ -224,8 +224,8 @@ class ChatGPTSecurityScanner:
             logger.info(f"📊 Repository size: {repo_size}")
             logger.info(f"📊 Total files: {file_count}")
             
-            # PROGRESS TRACKING: Clone complete
-            self.update_progress("Repository cloned", 25)
+            # PROGRESS TRACKING: Clone complete (EVEN DISTRIBUTION!)
+            self.update_progress("Repository cloned", 20)
             
             return repo_path
             
@@ -638,13 +638,142 @@ class ChatGPTSecurityScanner:
             logger.error(f"Error generating master remediation: {e}")
             return "Failed to generate master remediation plan."
     
+    def calculate_codebase_health(self, condensed_findings: List[SecurityFinding], all_findings: List[SecurityFinding], repo_info: Dict[str, Any]) -> int:
+         """Calculate accurate codebase health percentage using ChatGPT analysis"""
+         try:
+             logger.info(f"🔍 Calculating codebase health for {len(condensed_findings)} condensed findings")
+             
+             # Group findings by severity
+             critical = [f for f in condensed_findings if f.severity == "Critical"]
+             high = [f for f in condensed_findings if f.severity == "High"]
+             medium = [f for f in condensed_findings if f.severity == "Medium"]
+             low = [f for f in condensed_findings if f.severity == "Low"]
+             
+             # Create comprehensive health analysis prompt
+             prompt = f"""
+             You are an expert security engineer evaluating codebase health. Analyze this security scan and provide an accurate health percentage.
+             
+             REPOSITORY INFO:
+             - Name: {repo_info.get('name', 'Unknown')}
+             - Files scanned: {repo_info.get('file_count', 0)}
+             - Repository size: {repo_info.get('size', 'Unknown')}
+             
+             SECURITY FINDINGS:
+             - Total findings: {len(all_findings)}
+             - Condensed findings: {len(condensed_findings)}
+             - Critical: {len(critical)} findings
+             - High: {len(high)} findings
+             - Medium: {len(medium)} findings
+             - Low: {len(low)} findings
+             
+             CRITICAL FINDINGS DETAILS:
+             {json.dumps([{'message': f.message, 'description': f.description} for f in critical[:5]], indent=2)}
+             
+             HIGH FINDINGS DETAILS:
+             {json.dumps([{'message': f.message, 'description': f.description} for f in high[:5]], indent=2)}
+             
+             HEALTH CALCULATION RULES:
+             - Start with 100% (perfect security)
+             - Critical findings: -15% each (major security risks)
+             - High findings: -8% each (significant security risks)
+             - Medium findings: -4% each (moderate security risks)
+             - Low findings: -1% each (minor security risks)
+             - Bonus points for good practices (if any found)
+             - Minimum health: 0% (completely compromised)
+             
+             Return ONLY a single integer percentage (0-100) representing the codebase health.
+             
+             Example: If there are 2 Critical, 3 High, 5 Medium, and 10 Low findings:
+             - Critical: 2 × -15% = -30%
+             - High: 3 × -8% = -24%
+             - Medium: 5 × -4% = -20%
+             - Low: 10 × -1% = -10%
+             - Total: 100% - 84% = 16%
+             
+             Calculate the health percentage now:
+             """
+             
+             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
+             api_key_index = self.api_calls_made % len(self.api_keys)
+             selected_api_key = self.api_keys[api_key_index]
+             
+             # Call ChatGPT for health calculation
+             client = openai.OpenAI(api_key=selected_api_key)
+             response = client.chat.completions.create(
+                 model="gpt-4o-mini",
+                 messages=[
+                     {"role": "system", "content": "You are an expert security engineer calculating codebase health percentages. Return only the number."},
+                     {"role": "user", "content": prompt}
+                 ],
+                 max_tokens=100,  # Very short response needed
+                 temperature=0.1
+             )
+             
+             # Track token usage
+             self.api_calls_made += 1
+             if hasattr(response, 'usage') and response.usage:
+                 self.prompt_tokens += response.usage.prompt_tokens
+                 self.completion_tokens += response.usage.completion_tokens
+                 self.total_tokens_used += response.usage.total_tokens
+                 logger.info(f"🔍 Health calculation token usage: {response.usage.total_tokens} tokens")
+             
+             # Parse the health percentage
+             content = response.choices[0].message.content.strip()
+             logger.info(f"🔍 ChatGPT health response: {content}")
+             
+             try:
+                 # Extract the percentage number
+                 import re
+                 health_match = re.search(r'(\d+)', content)
+                 if health_match:
+                     health_percentage = int(health_match.group(1))
+                     # Ensure it's within valid range
+                     health_percentage = max(0, min(100, health_percentage))
+                     logger.info(f"✅ Parsed health percentage: {health_percentage}%")
+                     return health_percentage
+                 else:
+                     logger.warning(f"⚠️ No percentage found in health response, using fallback calculation")
+                     return self.calculate_fallback_health(critical, high, medium, low)
+                     
+             except Exception as e:
+                 logger.error(f"❌ Failed to parse health percentage: {e}")
+                 logger.warning(f"⚠️ Using fallback health calculation")
+                 return self.calculate_fallback_health(critical, high, medium, low)
+             
+         except Exception as e:
+             logger.error(f"❌ Health calculation failed: {e}")
+             logger.warning(f"⚠️ Using fallback health calculation")
+             return self.calculate_fallback_health(critical, high, medium, low)
+    
+    def calculate_fallback_health(self, critical: List[SecurityFinding], high: List[SecurityFinding], medium: List[SecurityFinding], low: List[SecurityFinding]) -> int:
+         """Fallback health calculation if ChatGPT fails"""
+         try:
+             # Start with 100%
+             health = 100
+             
+             # Apply penalties based on severity
+             health -= len(critical) * 15  # Critical: -15% each
+             health -= len(high) * 8       # High: -8% each
+             health -= len(medium) * 4     # Medium: -4% each
+             health -= len(low) * 1        # Low: -1% each
+             
+             # Ensure health is within valid range
+             health = max(0, min(100, health))
+             
+             logger.info(f"📊 Fallback health calculation: {health}%")
+             return health
+             
+         except Exception as e:
+             logger.error(f"❌ Fallback health calculation failed: {e}")
+             return 50  # Default to 50% if everything fails
+    
     async def scan_repository(self, repo_url: str, github_token: str = None) -> Dict[str, Any]:
         """Main method to scan repository for security vulnerabilities"""
         start_time = datetime.now()
         logger.info(f"🚀 Starting ChatGPT security scan for: {repo_url}")
         
         try:
-            # PROGRESS TRACKING: Initialize progress
+            # PROGRESS TRACKING: Initialize progress (EVEN DISTRIBUTION!)
             self.update_progress("Initializing scan", 5)
             
             # Clone repository with timeout
@@ -661,8 +790,8 @@ class ChatGPTSecurityScanner:
                 'file_count': self.count_files(repo_path)
             }
             
-            # PROGRESS TRACKING: Start file filtering
-            self.update_progress("Analyzing repository structure", 30)
+            # PROGRESS TRACKING: Start file filtering (EVEN DISTRIBUTION!)
+            self.update_progress("Analyzing repository structure", 20)
             
             # PHASE 1 NUCLEAR OPTIMIZATION: Smart File Filtering + Batch Analysis
             all_findings = []
@@ -698,11 +827,11 @@ class ChatGPTSecurityScanner:
             logger.info(f"🔍 Size skipped: {skipped_size/1024/1024:.1f}MB")
             logger.info(f"🔍 Supported file types: {', '.join(file_types)}")
             
-            # PROGRESS TRACKING: File filtering complete
-            self.update_progress("Repository structure analyzed", 40)
+            # PROGRESS TRACKING: File filtering complete (EVEN DISTRIBUTION!)
+            self.update_progress("Repository structure analyzed", 25)
             
-            # PROGRESS TRACKING: Start batch creation
-            self.update_progress("Preparing analysis batches", 45)
+            # PROGRESS TRACKING: Start batch creation (EVEN DISTRIBUTION!)
+            self.update_progress("Preparing analysis batches", 30)
             
             # Create intelligent file batches based on priority
             file_batches = self.create_file_batches(files_to_analyze)
@@ -718,8 +847,8 @@ class ChatGPTSecurityScanner:
             scan_start_time = datetime.now()
             max_scan_time = 900  # 15 minutes max
             
-            # PROGRESS TRACKING: Start batch processing
-            self.update_progress("Starting security analysis", 45)
+            # PROGRESS TRACKING: Start batch processing (EVEN DISTRIBUTION!)
+            self.update_progress("Starting security analysis", 35)
             
             # 🚀 PHASE 5: TRUE PARALLEL PROCESSING WITH RATE LIMITING PROTECTION!
             logger.info(f"🚀 PHASE 5 PARALLEL PROCESSING: Starting {total_batches} batches with rate limiting protection!")
@@ -796,10 +925,10 @@ class ChatGPTSecurityScanner:
                         logger.error(f"❌ Sequential fallback batch {batch_num + 1} failed: {batch_error}")
                         continue
             
-            # PROGRESS TRACKING: All batches complete
+            # PROGRESS TRACKING: All batches complete (EVEN DISTRIBUTION!)
             self.update_progress("Parallel batch analysis complete", 65)
             
-            # PROGRESS TRACKING: Start condensing
+            # PROGRESS TRACKING: Start condensing (EVEN DISTRIBUTION!)
             self.update_progress("Condensing security findings", 70)
             
             # Condense findings
@@ -807,10 +936,10 @@ class ChatGPTSecurityScanner:
             condensed_findings = self.condense_findings(all_findings)
             logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
             
-            # PROGRESS TRACKING: Condensing complete
+            # PROGRESS TRACKING: Condensing complete (EVEN DISTRIBUTION!)
             self.update_progress("Findings condensed", 75)
             
-            # PROGRESS TRACKING: Start remediations
+            # PROGRESS TRACKING: Start remediations (EVEN DISTRIBUTION!)
             self.update_progress("Generating remediation prompts", 80)
             
             # NUCLEAR OPTIMIZATION: Generate ALL remediations in ONE call
@@ -820,10 +949,10 @@ class ChatGPTSecurityScanner:
             remediation_time = (datetime.now() - start_time_remediations).total_seconds()
             logger.info(f"✅ NUCLEAR OPTIMIZATION: Generated {len(condensed_remediations)} remediations in {remediation_time:.1f}s!")
             
-            # PROGRESS TRACKING: Remediations complete
+            # PROGRESS TRACKING: Remediations complete (EVEN DISTRIBUTION!)
             self.update_progress("Remediation prompts generated", 85)
             
-            # PROGRESS TRACKING: Start master plan
+            # PROGRESS TRACKING: Start master plan (EVEN DISTRIBUTION!)
             self.update_progress("Creating master remediation plan", 90)
             
             # Generate master remediation plan
@@ -831,8 +960,16 @@ class ChatGPTSecurityScanner:
             master_remediation = self.generate_master_remediation(condensed_findings)
             logger.info(f"✅ Master remediation generated")
             
-            # PROGRESS TRACKING: Master plan complete
-            self.update_progress("Master plan complete", 95)
+            # PROGRESS TRACKING: Calculate codebase health (EVEN DISTRIBUTION!)
+            self.update_progress("Calculating codebase health", 92)
+            
+            # Calculate accurate codebase health using ChatGPT
+            logger.info(f"🔍 Calculating accurate codebase health...")
+            codebase_health = self.calculate_codebase_health(condensed_findings, all_findings, repo_info)
+            logger.info(f"✅ Codebase health calculated: {codebase_health}%")
+            
+            # PROGRESS TRACKING: Health calculation complete (EVEN DISTRIBUTION!)
+            self.update_progress("Health calculation complete", 95)
             
             # Calculate scan duration
             scan_duration = (datetime.now() - start_time).total_seconds()
@@ -858,6 +995,7 @@ class ChatGPTSecurityScanner:
                     'high_count': high_count,
                     'medium_count': medium_count,
                     'low_count': low_count,
+                    'codebase_health': codebase_health,
                     'files_scanned': repo_info['file_count'],
                     'scan_duration': scan_duration,
                     'gpt_api_usage': {
@@ -1066,8 +1204,8 @@ class ChatGPTSecurityScanner:
             batch_start_time = datetime.now()
             logger.info(f"📦 THREAD BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)}) - STARTING")
             
-            # PROGRESS TRACKING: Update batch progress (45-65%)
-            batch_progress = 45 + (batch_num / total_batches) * 20
+            # PROGRESS TRACKING: Update batch progress (35-65% - EVEN DISTRIBUTION!)
+            batch_progress = 35 + (batch_num / total_batches) * 30
             self.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_progress)
             
             # Build comprehensive batch prompt with content chunking
@@ -1266,8 +1404,8 @@ class ChatGPTSecurityScanner:
             batch_start_time = datetime.now()
             logger.info(f"📦 PARALLEL BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)}) - STARTING")
             
-            # PROGRESS TRACKING: Update batch progress (45-65%)
-            batch_progress = 45 + (batch_num / total_batches) * 20
+            # PROGRESS TRACKING: Update batch progress (35-65% - EVEN DISTRIBUTION!)
+            batch_progress = 35 + (batch_num / total_batches) * 30
             self.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_progress)
             
             # Build comprehensive batch prompt with content chunking
