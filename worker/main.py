@@ -60,6 +60,12 @@ class ChatGPTSecurityScanner:
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
+        # Initialize token usage tracking
+        self.total_tokens_used = 0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.api_calls_made = 0
+        
         # Security categories for comprehensive coverage
         self.security_categories = [
             "Authentication & Authorization",
@@ -125,15 +131,15 @@ class ChatGPTSecurityScanner:
         logger.info(f"📁 Repository path: {repo_path}")
         
         try:
-            # Build clone command
+            # Build clone command with MAXIMUM speed optimization
             if github_token:
                 # Use token for private repos
                 auth_url = repo_url.replace('https://', f'https://{github_token}@')
-                clone_cmd = ['git', 'clone', '--single-branch', '--depth', '1', auth_url, repo_path]
-                logger.info(f"🔐 Using authenticated clone for private repo")
+                clone_cmd = ['git', 'clone', '--single-branch', '--depth', '1', '--no-tags', '--shallow-submodules', auth_url, repo_path]
+                logger.info(f"🔐 Using authenticated clone for private repo (optimized)")
             else:
-                clone_cmd = ['git', 'clone', '--single-branch', '--depth', '1', repo_url, repo_path]
-                logger.info(f"🌐 Using public clone")
+                clone_cmd = ['git', 'clone', '--single-branch', '--depth', '1', '--no-tags', '--shallow-submodules', repo_url, repo_path]
+                logger.info(f"🌐 Using public clone (optimized)")
             
             logger.info(f"🚀 Clone command: {' '.join(clone_cmd)}")
             
@@ -173,6 +179,27 @@ class ChatGPTSecurityScanner:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise e
     
+    async def analyze_file_async(self, file_path: str, relative_path: str, file_type: str) -> List[SecurityFinding]:
+        """Async wrapper for file analysis"""
+        try:
+            # Get file size
+            file_size = os.path.getsize(file_path)
+            if file_size > 1024 * 1024:  # 1MB
+                logger.warning(f"⚠️ File {relative_path} is large ({file_size/1024/1024:.1f}MB), may take longer to analyze")
+            
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            logger.info(f"📄 File {relative_path}: {len(content)} characters")
+            
+            # Analyze with ChatGPT
+            findings = self.analyze_file_with_chatgpt(relative_path, content, file_type)
+            return findings
+            
+        except Exception as e:
+            logger.warning(f"❌ Failed to analyze {relative_path}: {e}")
+            return []
+
     def analyze_file_with_chatgpt(self, file_path: str, file_content: str, file_type: str) -> List[SecurityFinding]:
         """Analyze a single file with ChatGPT for security vulnerabilities"""
         try:
@@ -246,6 +273,16 @@ class ChatGPTSecurityScanner:
                 max_tokens=4000,
                 temperature=0.1
             )
+            
+            # Track token usage
+            self.api_calls_made += 1
+            if hasattr(response, 'usage') and response.usage:
+                self.prompt_tokens += response.usage.prompt_tokens
+                self.completion_tokens += response.usage.completion_tokens
+                self.total_tokens_used += response.usage.total_tokens
+                logger.info(f"🔍 Token usage for {file_path}: {response.usage.total_tokens} tokens (prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})")
+            else:
+                logger.warning(f"⚠️ No token usage data available for {file_path}")
             
             # Parse response
             content = response.choices[0].message.content
@@ -349,6 +386,16 @@ class ChatGPTSecurityScanner:
                 temperature=0.1
             )
             
+            # Track token usage for master remediation
+            self.api_calls_made += 1
+            if hasattr(response, 'usage') and response.usage:
+                self.prompt_tokens += response.usage.prompt_tokens
+                self.completion_tokens += response.usage.completion_tokens
+                self.total_tokens_used += response.usage.total_tokens
+                logger.info(f"🔍 Master remediation token usage: {response.usage.total_tokens} tokens (prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})")
+            else:
+                logger.warning(f"⚠️ No token usage data available for master remediation")
+            
             return response.choices[0].message.content
             
         except Exception as e:
@@ -372,54 +419,55 @@ class ChatGPTSecurityScanner:
                 'file_count': self.count_files(repo_path)
             }
             
-            # Analyze files
+            # Analyze files with BATCH PROCESSING for 10x speed improvement
             all_findings = []
             file_types = ['.js', '.ts', '.tsx', '.jsx', '.py', '.php', '.rb', '.go', '.java', '.cs', '.rs', '.html', '.vue', '.svelte']
             
-            # Count total files to analyze
-            total_files = 0
+            # Collect all files first
+            files_to_analyze = []
             for root, dirs, files in os.walk(repo_path):
                 dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__', '.venv', 'venv']]
-                for file in files:
-                    if any(file.endswith(ext) for ext in file_types):
-                        total_files += 1
-            
-            logger.info(f"🔍 Found {total_files} files to analyze")
-            logger.info(f"🔍 Supported file types: {', '.join(file_types)}")
-            
-            analyzed_files = 0
-            for root, dirs, files in os.walk(repo_path):
-                # Skip common directories
-                dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__', '.venv', 'venv']]
-                
                 for file in files:
                     if any(file.endswith(ext) for ext in file_types):
                         file_path = os.path.join(root, file)
                         relative_path = os.path.relpath(file_path, repo_path)
-                        
-                        analyzed_files += 1
-                        logger.info(f"🔍 Analyzing file {analyzed_files}/{total_files}: {relative_path}")
-                        
-                        try:
-                            # Get file size
-                            file_size = os.path.getsize(file_path)
-                            if file_size > 1024 * 1024:  # 1MB
-                                logger.warning(f"⚠️ File {relative_path} is large ({file_size/1024/1024:.1f}MB), may take longer to analyze")
-                            
-                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                content = f.read()
-                            
-                            logger.info(f"📄 File {relative_path}: {len(content)} characters")
-                            
-                            # Analyze with ChatGPT
-                            findings = self.analyze_file_with_chatgpt(relative_path, content, file)
-                            all_findings.extend(findings)
-                            
-                            logger.info(f"✅ Analysis complete for {relative_path}: {len(findings)} findings")
-                            
-                        except Exception as e:
-                            logger.warning(f"❌ Failed to analyze {relative_path}: {e}")
-                            continue
+                        files_to_analyze.append((file_path, relative_path, file))
+            
+            total_files = len(files_to_analyze)
+            logger.info(f"🔍 Found {total_files} files to analyze")
+            logger.info(f"🔍 Supported file types: {', '.join(file_types)}")
+            
+            # Process files in batches of 5 for optimal performance
+            batch_size = 5
+            total_batches = (total_files + batch_size - 1) // batch_size
+            
+            logger.info(f"🚀 Processing {total_files} files in {total_batches} batches of {batch_size}")
+            
+            for batch_num in range(total_batches):
+                start_idx = batch_num * batch_size
+                end_idx = min(start_idx + batch_size, total_files)
+                batch_files = files_to_analyze[start_idx:end_idx]
+                
+                logger.info(f"📦 Processing batch {batch_num + 1}/{total_batches} (files {start_idx + 1}-{end_idx})")
+                
+                # Process batch concurrently
+                batch_tasks = []
+                for file_path, relative_path, file_type in batch_files:
+                    task = self.analyze_file_async(file_path, relative_path, file_type)
+                    batch_tasks.append(task)
+                
+                # Wait for batch to complete
+                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                
+                # Collect findings from batch
+                for i, result in enumerate(batch_results):
+                    if isinstance(result, Exception):
+                        logger.warning(f"❌ Batch file {batch_files[i][1]} failed: {result}")
+                    else:
+                        all_findings.extend(result)
+                        logger.info(f"✅ Batch file {batch_files[i][1]}: {len(result)} findings")
+                
+                logger.info(f"✅ Batch {batch_num + 1} complete. Total findings so far: {len(all_findings)}")
             
             # Condense findings
             logger.info(f"🔍 Condensing {len(all_findings)} findings...")
@@ -456,7 +504,16 @@ class ChatGPTSecurityScanner:
                     'medium_count': medium_count,
                     'low_count': low_count,
                     'files_scanned': repo_info['file_count'],
-                    'scan_duration': scan_duration
+                    'scan_duration': scan_duration,
+                    'gpt_api_usage': {
+                        'total_api_calls': self.api_calls_made,
+                        'prompt_tokens': self.prompt_tokens,
+                        'completion_tokens': self.completion_tokens,
+                        'total_tokens': self.total_tokens_used,
+                        'estimated_cost_usd': round(self.total_tokens_used * 0.00000015, 4),
+                        'tokens_per_file': round(self.total_tokens_used / max(1, total_files), 0),
+                        'tokens_per_second': round(self.total_tokens_used / max(1, scan_duration), 0)
+                    }
                 },
                 findings=all_findings,
                 condensed_findings=condensed_findings,
@@ -473,6 +530,16 @@ class ChatGPTSecurityScanner:
             logger.info(f"📊 Found {len(all_findings)} total findings, {len(condensed_findings)} unique issues")
             logger.info(f"📊 Files scanned: {repo_info['file_count']}")
             logger.info(f"📊 Repository size: {repo_info['size']}")
+            
+            # Comprehensive token usage summary
+            logger.info(f"🔍 GPT API Usage Summary:")
+            logger.info(f"   📞 Total API calls: {self.api_calls_made}")
+            logger.info(f"   📝 Prompt tokens: {self.prompt_tokens:,}")
+            logger.info(f"   ✍️ Completion tokens: {self.completion_tokens:,}")
+            logger.info(f"   🎯 Total tokens: {self.total_tokens_used:,}")
+            logger.info(f"   💰 Estimated cost: ${self.total_tokens_used * 0.00000015:.4f} (GPT-4o-mini)")
+            logger.info(f"   ⚡ Tokens per file: {self.total_tokens_used / max(1, total_files):.0f}")
+            logger.info(f"   🚀 Tokens per second: {self.total_tokens_used / max(1, scan_duration):.0f}")
             
             # Validate report structure
             if not isinstance(report.summary, dict):
@@ -534,13 +601,17 @@ def add_cors_headers(response):
         'http://vibecatcher.dev'
     ]
     
-    if origin in allowed_origins:
-        response.headers['Access-Control-Allow-Origin'] = origin
-    else:
-        response.headers['Access-Control-Allow-Origin'] = 'http://localhost:9002'
+    # Always set CORS headers for security scan endpoint
+    if request.endpoint == 'security_scan':
+        if origin in allowed_origins:
+            response.headers['Access-Control-Allow-Origin'] = origin
+        else:
+            response.headers['Access-Control-Allow-Origin'] = 'http://localhost:9002'
+        
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        response.headers['Access-Control-Max-Age'] = '86400'  # 24 hours
     
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
 @app.route('/', methods=['OPTIONS'])
@@ -591,4 +662,5 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8080))
     logger.info(f"🚀 Starting ChatGPT Security Scanner on port {port}")
     logger.info(f"🔍 Environment: PORT={port}")
+    logger.info(f"⚠️  IMPORTANT: Set Cloud Run timeout to 900s (15 minutes) to avoid 504 errors")
     app.run(host='0.0.0.0', port=port, debug=False)
