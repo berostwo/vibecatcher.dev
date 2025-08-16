@@ -142,10 +142,14 @@ const AuditReportTemplate = ({ results, masterRemediation }: {
       line: number;
       description: string;
       remediation: string;
+      occurrences: number;
     }>;
   };
   masterRemediation: string;
 }) => {
+  // AUTO-COLLAPSE: Track which card is currently expanded
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  
   const healthScore = useMemo(() => {
     if (!results.summary.totalIssues) return 100;
     const weightedScore = (results.summary.critical * 10) + (results.summary.high * 5) + (results.summary.medium * 2) + (results.summary.low * 1);
@@ -240,7 +244,13 @@ Provide a git-compatible diff for each required code change.`}
         </div>
       </CardHeader>
       <CardContent>
-        <Accordion type="single" collapsible className="w-full">
+        <Accordion 
+          type="single" 
+          collapsible 
+          className="w-full"
+          value={expandedCard || undefined}
+          onValueChange={(value) => setExpandedCard(value)}
+        >
           {sortedVulnerabilities.map((vuln: any) => {
             const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
             return (
@@ -250,14 +260,14 @@ Provide a git-compatible diff for each required code change.`}
                     {icon}
                     <div className="flex-grow text-left">
                       <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm text-muted-foreground font-mono">{vuln.file}:{vuln.line}</p>
-                        {vuln.occurrences > 1 && (
-                          <Badge variant="outline" className="bg-blue-100 text-blue-800 text-xs">
-                            {vuln.occurrences} occurrence{vuln.occurrences > 1 ? 's' : ''}
-                          </Badge>
-                        )}
-                      </div>
+                                             <div className="flex items-center gap-2">
+                         <p className="text-sm text-muted-foreground font-mono">
+                           {vuln.occurrences > 1 
+                             ? `${vuln.file}:${vuln.line} (${vuln.occurrences} occurrences)`
+                             : `${vuln.file}:${vuln.line}`
+                           }
+                         </p>
+                       </div>
                     </div>
                   </div>
                 </AccordionTrigger>
@@ -312,9 +322,6 @@ export default function SecurityAuditPage() {
     step_complete: boolean;
     current_state: string;
   } | null>(null);
-
-  // AUTO-COLLAPSE: Track which card is currently expanded
-  const [expandedCard, setExpandedCard] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -546,7 +553,8 @@ export default function SecurityAuditPage() {
                 file: finding.file_path,
                 line: finding.line_number,
                 description: finding.description,
-                remediation: remediationPrompt
+                remediation: remediationPrompt,
+                occurrences: finding.occurrences || 1
               };
             })
           }}
