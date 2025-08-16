@@ -719,7 +719,7 @@ class ChatGPTSecurityScanner:
             max_scan_time = 900  # 15 minutes max
             
             # PROGRESS TRACKING: Start batch processing
-            self.update_progress("Starting security analysis", 50)
+            self.update_progress("Starting security analysis", 45)
             
             for batch_num, batch_files in enumerate(file_batches):
                 # Check if we're approaching timeout
@@ -731,8 +731,8 @@ class ChatGPTSecurityScanner:
                 batch_start_time = datetime.now()
                 logger.info(f"📦 PHASE 1 BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)})")
                 
-                # PROGRESS TRACKING: Update batch progress (50-70%)
-                batch_progress = 50 + (batch_num / total_batches) * 20
+                # PROGRESS TRACKING: Update batch progress (45-65%)
+                batch_progress = 45 + (batch_num / total_batches) * 20
                 self.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_progress)
                 
                 # Process batch with NEW batch analysis (multiple files in ONE API call)
@@ -754,10 +754,10 @@ class ChatGPTSecurityScanner:
                 logger.info(f"📊 PHASE 1 Performance: {files_per_second:.1f} files/second, {elapsed:.0f}s elapsed")
             
             # PROGRESS TRACKING: All batches complete
-            self.update_progress("Batch analysis complete", 70)
+            self.update_progress("Batch analysis complete", 65)
             
             # PROGRESS TRACKING: Start condensing
-            self.update_progress("Condensing security findings", 75)
+            self.update_progress("Condensing security findings", 70)
             
             # Condense findings
             logger.info(f"🔍 Condensing {len(all_findings)} findings...")
@@ -765,10 +765,10 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
             
             # PROGRESS TRACKING: Condensing complete
-            self.update_progress("Findings condensed", 80)
+            self.update_progress("Findings condensed", 75)
             
             # PROGRESS TRACKING: Start remediations
-            self.update_progress("Generating remediation prompts", 85)
+            self.update_progress("Generating remediation prompts", 80)
             
             # NUCLEAR OPTIMIZATION: Generate ALL remediations in ONE call
             logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call...")
@@ -778,10 +778,10 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ NUCLEAR OPTIMIZATION: Generated {len(condensed_remediations)} remediations in {remediation_time:.1f}s!")
             
             # PROGRESS TRACKING: Remediations complete
-            self.update_progress("Remediation prompts generated", 90)
+            self.update_progress("Remediation prompts generated", 85)
             
             # PROGRESS TRACKING: Start master plan
-            self.update_progress("Creating master remediation plan", 95)
+            self.update_progress("Creating master remediation plan", 90)
             
             # Generate master remediation plan
             logger.info(f"🔍 Generating master remediation plan...")
@@ -789,7 +789,7 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ Master remediation generated")
             
             # PROGRESS TRACKING: Master plan complete
-            self.update_progress("Master plan complete", 98)
+            self.update_progress("Master plan complete", 95)
             
             # Calculate scan duration
             scan_duration = (datetime.now() - start_time).total_seconds()
@@ -1401,7 +1401,11 @@ def get_progress():
     """Get current scan progress for real-time updates"""
     global current_scan_progress
     
-    logger.info(f"📊 PROGRESS ENDPOINT CALLED: current_scan_progress = {current_scan_progress}")
+    # CRITICAL DEBUGGING: Check if we're in the right context
+    import threading
+    current_thread = threading.current_thread()
+    logger.info(f"📊 PROGRESS ENDPOINT CALLED: Thread={current_thread.name}, current_scan_progress = {current_scan_progress}")
+    logger.info(f"📊 PROGRESS ENDPOINT: Global variable ID = {id(current_scan_progress)}")
     
     if current_scan_progress is None:
         logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
@@ -1458,6 +1462,8 @@ def security_scan():
                 }
                 
                 logger.info(f"📊 STORED PROGRESS: {current_scan_progress}")
+                logger.info(f"📊 PROGRESS CALLBACK: Global variable ID = {id(current_scan_progress)}")
+                logger.info(f"📊 PROGRESS CALLBACK: Thread = {threading.current_thread().name}")
             
             scanner.set_progress_callback(progress_callback)
             
