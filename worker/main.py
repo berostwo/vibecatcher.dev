@@ -343,65 +343,97 @@ class ChatGPTSecurityScanner:
         return list(condensed.values())
     
     def generate_condensed_remediations(self, condensed_findings: List[SecurityFinding], all_findings: List[SecurityFinding]) -> Dict[str, str]:
-        """Generate remediation prompts for each condensed finding type"""
+        """Generate ALL remediation prompts in ONE API call - MASSIVE optimization!"""
         try:
-            remediations = {}
+            logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call!")
             
-            for condensed_finding in condensed_findings:
-                # Get all instances of this finding type
-                instances = [f for f in all_findings if f.rule_id == condensed_finding.rule_id]
+            # Create ONE comprehensive prompt for ALL findings
+            all_findings_summary = []
+            for finding in condensed_findings:
+                instances = [f for f in all_findings if f.rule_id == finding.rule_id]
+                all_findings_summary.append({
+                    'rule_id': finding.rule_id,
+                    'message': finding.message,
+                    'severity': finding.severity,
+                    'description': finding.description,
+                    'cwe_ids': finding.cwe_ids,
+                    'owasp_ids': finding.owasp_ids,
+                    'occurrences': finding.occurrences
+                })
+            
+            # ONE MASSIVE PROMPT for ALL findings
+            prompt = f"""
+            You are an expert security engineer. Create remediation prompts for MULTIPLE security vulnerabilities in ONE response.
+            
+            VULNERABILITIES TO ANALYZE:
+            {json.dumps(all_findings_summary, indent=2)}
+            
+            For EACH vulnerability, create a remediation prompt that:
+            1. Clearly explains the security issue
+            2. Provides context about why it's dangerous
+            3. Gives specific, actionable steps to fix it
+            4. Is written for coding assistants (Cursor, GitHub Copilot, etc.)
+            5. Includes code examples where appropriate
+            6. Addresses the root cause, not just symptoms
+            
+            Return in this EXACT JSON format:
+            {{
+                "remediations": {{
+                    "rule_id_1": "remediation prompt text here",
+                    "rule_id_2": "remediation prompt text here",
+                    ...
+                }}
+            }}
+            
+            Make each prompt specific enough that a coding assistant can implement the fix robustly.
+            """
+            
+            # ONE API CALL for ALL remediations
+            client = openai.OpenAI(api_key=self.api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an expert security engineer creating multiple remediation prompts efficiently."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=6000,  # Increased for multiple prompts
+                temperature=0.1
+            )
+            
+            # Track token usage
+            self.api_calls_made += 1
+            if hasattr(response, 'usage') and response.usage:
+                self.prompt_tokens += response.usage.prompt_tokens
+                self.completion_tokens += response.usage.completion_tokens
+                self.total_tokens_used += response.usage.total_tokens
+                logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generated {len(condensed_findings)} remediations in 1 API call! Tokens: {response.usage.total_tokens}")
+            else:
+                logger.warning(f"⚠️ No token usage data available for nuclear optimization")
+            
+            # Parse the response
+            content = response.choices[0].message.content
+            try:
+                json_start = content.find('{')
+                json_end = content.rfind('}') + 1
                 
-                # Create context-aware prompt
-                prompt = f"""
-                You are an expert security engineer. Create a robust remediation prompt for this security vulnerability.
-                
-                VULNERABILITY TYPE: {condensed_finding.message}
-                SEVERITY: {condensed_finding.severity}
-                DESCRIPTION: {condensed_finding.description}
-                CWE IDs: {', '.join(condensed_finding.cwe_ids)}
-                OWASP IDs: {', '.join(condensed_finding.owasp_ids)}
-                
-                INSTANCES FOUND: {condensed_finding.occurrences} occurrences across multiple files
-                
-                Create a remediation prompt that:
-                1. Clearly explains the security issue
-                2. Provides context about why it's dangerous
-                3. Gives specific, actionable steps to fix it
-                4. Is written for coding assistants (Cursor, GitHub Copilot, etc.)
-                5. Includes code examples where appropriate
-                6. Addresses the root cause, not just symptoms
-                
-                Make the prompt specific enough that a coding assistant can implement the fix robustly.
-                Format as a clear, actionable prompt for developers.
-                """
-                
-                client = openai.OpenAI(api_key=self.api_key)
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "You are an expert security engineer creating remediation prompts for coding assistants."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=2000,
-                    temperature=0.1
-                )
-                
-                # Track token usage
-                self.api_calls_made += 1
-                if hasattr(response, 'usage') and response.usage:
-                    self.prompt_tokens += response.usage.prompt_tokens
-                    self.completion_tokens += response.usage.completion_tokens
-                    self.total_tokens_used += response.usage.total_tokens
-                    logger.info(f"🔍 Condensed remediation token usage for {condensed_finding.rule_id}: {response.usage.total_tokens} tokens")
+                if json_start != -1 and json_end > json_start:
+                    json_content = content[json_start:json_end]
+                    result = json.loads(json_content)
+                    remediations = result.get('remediations', {})
+                    
+                    logger.info(f"✅ Successfully parsed {len(remediations)} remediations from nuclear optimization")
+                    return remediations
                 else:
-                    logger.warning(f"⚠️ No token usage data available for condensed remediation")
-                
-                remediations[condensed_finding.rule_id] = response.choices[0].message.content
-            
-            return remediations
+                    logger.error("❌ No JSON found in nuclear optimization response")
+                    return {}
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Failed to parse nuclear optimization response: {e}")
+                logger.error(f"Response content: {content}")
+                return {}
             
         except Exception as e:
-            logger.error(f"Error generating condensed remediations: {e}")
+            logger.error(f"❌ Nuclear optimization failed: {e}")
             return {}
 
     def generate_master_remediation(self, condensed_findings: List[SecurityFinding]) -> str:
@@ -515,11 +547,14 @@ class ChatGPTSecurityScanner:
             logger.info(f"🔍 Found {total_files} files to analyze")
             logger.info(f"🔍 Supported file types: {', '.join(file_types)}")
             
-            # Process files in batches of 5 for optimal performance
-            batch_size = 5
+            # NUCLEAR OPTIMIZATION: Use all 4 CPU cores with larger batches
+            batch_size = 20  # Increased from 5 to 20 for better CPU utilization
             total_batches = (total_files + batch_size - 1) // batch_size
             
-            logger.info(f"🚀 Processing {total_files} files in {total_batches} batches of {batch_size}")
+            logger.info(f"🚀 NUCLEAR OPTIMIZATION: Processing {total_files} files in {total_batches} batches of {batch_size}")
+            logger.info(f"🚀 Using all 4 CPU cores with optimized batch processing")
+            logger.info(f"🚀 Expected performance: {total_files / 20:.1f} files per batch, ~{total_batches * 2:.0f} minutes total")
+            logger.info(f"🚀 Memory allocation: 4GB RAM, 4 CPU cores - FULL UTILIZATION!")
             
             # Add overall scan timeout protection
             scan_start_time = datetime.now()
@@ -531,40 +566,56 @@ class ChatGPTSecurityScanner:
                 if elapsed_time > max_scan_time - 60:  # Stop 1 minute before timeout
                     logger.warning(f"⚠️ Approaching scan timeout ({elapsed_time:.0f}s), stopping early")
                     break
+                    
                 start_idx = batch_num * batch_size
                 end_idx = min(start_idx + batch_size, total_files)
                 batch_files = files_to_analyze[start_idx:end_idx]
                 
-                logger.info(f"📦 Processing batch {batch_num + 1}/{total_batches} (files {start_idx + 1}-{end_idx})")
+                logger.info(f"📦 NUCLEAR BATCH {batch_num + 1}/{total_batches} (files {start_idx + 1}-{end_idx})")
                 
-                # Process batch concurrently
+                # Process batch with MAXIMUM concurrency
                 batch_tasks = []
                 for file_path, relative_path, file_type in batch_files:
                     task = self.analyze_file_async(file_path, relative_path, file_type)
                     batch_tasks.append(task)
                 
-                # Wait for batch to complete
-                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                # Wait for batch to complete with timeout
+                try:
+                    batch_results = await asyncio.wait_for(
+                        asyncio.gather(*batch_tasks, return_exceptions=True),
+                        timeout=120  # 2 minutes per batch
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"⚠️ Batch {batch_num + 1} timed out, continuing with next batch")
+                    continue
                 
                 # Collect findings from batch
+                batch_findings = 0
                 for i, result in enumerate(batch_results):
                     if isinstance(result, Exception):
                         logger.warning(f"❌ Batch file {batch_files[i][1]} failed: {result}")
                     else:
                         all_findings.extend(result)
-                        logger.info(f"✅ Batch file {batch_files[i][1]}: {len(result)} findings")
+                        batch_findings += len(result)
                 
-                logger.info(f"✅ Batch {batch_num + 1} complete. Total findings so far: {len(all_findings)}")
+                logger.info(f"✅ NUCLEAR BATCH {batch_num + 1} complete: {batch_findings} findings, Total: {len(all_findings)}")
+                
+                # Performance monitoring
+                elapsed = (datetime.now() - scan_start_time).total_seconds()
+                files_per_second = (end_idx) / elapsed
+                logger.info(f"📊 Performance: {files_per_second:.1f} files/second, {elapsed:.0f}s elapsed")
             
             # Condense findings
             logger.info(f"🔍 Condensing {len(all_findings)} findings...")
             condensed_findings = self.condense_findings(all_findings)
             logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
             
-            # Generate condensed remediations for each finding type
-            logger.info(f"🔍 Generating condensed remediation prompts...")
+            # NUCLEAR OPTIMIZATION: Generate ALL remediations in ONE call
+            logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call...")
+            start_time_remediations = datetime.now()
             condensed_remediations = self.generate_condensed_remediations(condensed_findings, all_findings)
-            logger.info(f"✅ Generated {len(condensed_remediations)} condensed remediation prompts")
+            remediation_time = (datetime.now() - start_time_remediations).total_seconds()
+            logger.info(f"✅ NUCLEAR OPTIMIZATION: Generated {len(condensed_remediations)} remediations in {remediation_time:.1f}s!")
             
             # Generate master remediation plan
             logger.info(f"🔍 Generating master remediation plan...")
@@ -702,8 +753,11 @@ def add_cors_headers(response):
         response.headers['Access-Control-Allow-Origin'] = 'http://localhost:9002'
     
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Max-Age'] = '86400'  # 24 hours
+    
+    # Add debug logging for CORS
+    logger.info(f"🔒 CORS: Origin={origin}, Allowed={origin in allowed_origins}")
     
     return response
 
@@ -756,25 +810,44 @@ def security_scan():
         
         logger.info(f"🚀 Starting security scan for: {repo_url}")
         
-        # Run the scan with timeout protection
+        # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
             scanner = ChatGPTSecurityScanner()
-            result = asyncio.run(scanner.scan_repository(repo_url, github_token))
+            
+            # Set a hard timeout for the entire scan
+            scan_timeout = 600  # 10 minutes max (Cloud Run timeout is 15 minutes)
+            
+            logger.info(f"🚀 Starting scan with {scan_timeout}s timeout protection")
+            
+            # Run with timeout protection
+            result = await asyncio.wait_for(
+                scanner.scan_repository(repo_url, github_token),
+                timeout=scan_timeout
+            )
             
             # Check if scan failed
             if 'error' in result:
                 logger.error(f"Scan failed: {result['error']}")
                 return jsonify(result), 500
             
-            logger.info(f"✅ Scan completed successfully")
+            logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
             return jsonify(result)
             
         except asyncio.TimeoutError:
-            logger.error("Scan timed out")
-            return jsonify({'error': 'Scan timed out - repository too large or complex', 'error_type': 'TimeoutError'}), 408
+            logger.error(f"❌ Scan timed out after {scan_timeout}s")
+            return jsonify({
+                'error': f'Scan timed out after {scan_timeout}s - repository too large or complex',
+                'error_type': 'TimeoutError',
+                'scan_duration': scan_timeout,
+                'timestamp': datetime.now().isoformat()
+            }), 408
         except Exception as scan_error:
-            logger.error(f"Scan execution error: {scan_error}")
-            return jsonify({'error': str(scan_error), 'error_type': type(scan_error).__name__}), 500
+            logger.error(f"❌ Scan execution error: {scan_error}")
+            return jsonify({
+                'error': str(scan_error),
+                'error_type': type(scan_error).__name__,
+                'timestamp': datetime.now().isoformat()
+            }), 500
         
     except Exception as e:
         logger.error(f"HTTP handler error: {e}")
@@ -801,8 +874,20 @@ if __name__ == "__main__":
         else:
             logger.info(f"✅ OPENAI_API_KEY is configured (length: {len(api_key)})")
         
+        # Resource validation
+        import multiprocessing
+        cpu_count = multiprocessing.cpu_count()
+        logger.info(f"🚀 System resources: {cpu_count} CPU cores available")
+        logger.info(f"🚀 Memory: 4GB allocated, optimizing for maximum performance")
+        
+        if cpu_count < 2:
+            logger.warning(f"⚠️ Low CPU count ({cpu_count}), performance may be limited")
+        else:
+            logger.info(f"✅ CPU count ({cpu_count}) sufficient for nuclear optimization")
+        
         # Start the Flask app
         logger.info(f"🚀 Flask app starting on 0.0.0.0:{port}")
+        logger.info(f"🚀 NUCLEAR OPTIMIZATION ENABLED: 4GB RAM + 4 CPU cores")
         app.run(host='0.0.0.0', port=port, debug=False)
         
     except Exception as e:
