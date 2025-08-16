@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { GitHubService } from '@/lib/github-service';
 import { FirebaseUserService } from '@/lib/firebase-user-service';
@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code } from 'lucide-react';
 
 interface Repository {
   name: string;
@@ -51,6 +52,7 @@ interface ScanResults {
   };
   findings: SecurityFinding[];
   condensed_findings: SecurityFinding[];
+  condensed_remediations: { [key: string]: string };
   master_remediation: string;
   scan_duration: number;
   timestamp: string;
@@ -86,6 +88,212 @@ const renderFileLocation = (finding: SecurityFinding) => {
     return `${finding.file_path}:${finding.line_number}`;
   }
   return `${finding.file_path}:${finding.line_number}-${finding.end_line}`;
+};
+
+// EXACT TEMPLATE COMPONENT - Copied from template page
+const getSeverityStyles = (severity: string) => {
+  switch (severity) {
+    case 'Critical':
+      return {
+        icon: <ShieldAlert className="h-5 w-5 text-red-500" />,
+        borderColor: 'border-red-500/50',
+        bgColor: 'bg-red-500/10',
+        textColor: 'text-red-500',
+      };
+    case 'High':
+      return {
+        icon: <AlertTriangle className="h-5 w-5 text-orange-500" />,
+        borderColor: 'border-orange-500/50',
+        bgColor: 'bg-orange-500/10',
+        textColor: 'text-orange-500',
+      };
+    case 'Medium':
+      return {
+        icon: <Info className="h-5 w-5 text-yellow-500" />,
+        borderColor: 'border-yellow-500/50',
+        bgColor: 'bg-yellow-500/10',
+        textColor: 'text-yellow-500',
+      };
+    default:
+      return {
+        icon: <CheckCircle className="h-5 w-5 text-green-500" />,
+        borderColor: 'border-gray-500/50',
+        bgColor: 'bg-green-500/10',
+        textColor: 'text-green-500',
+      };
+  }
+};
+
+const AuditReportTemplate = ({ results, masterRemediation }: { 
+  results: {
+    repoName: string;
+    summary: {
+      totalIssues: number;
+      critical: number;
+      high: number;
+      medium: number;
+      low: number;
+    };
+    vulnerabilities: Array<{
+      id: string;
+      title: string;
+      severity: string;
+      file: string;
+      line: number;
+      description: string;
+      remediation: string;
+    }>;
+  };
+  masterRemediation: string;
+}) => {
+  const healthScore = useMemo(() => {
+    if (!results.summary.totalIssues) return 100;
+    const weightedScore = (results.summary.critical * 10) + (results.summary.high * 5) + (results.summary.medium * 2) + (results.summary.low * 1);
+    const maxScore = results.summary.totalIssues * 10;
+    return Math.max(0, Math.round((1 - (weightedScore / (maxScore || 1))) * 100));
+  }, [results]);
+  
+  const getHealthColor = (score: number) => {
+    if (score > 85) return 'text-green-500';
+    if (score > 60) return 'text-yellow-500';
+    if (score > 40) return 'text-orange-500';
+    return 'text-red-500';
+  }
+
+  const severityOrder = useMemo(() => ['Critical', 'High', 'Medium', 'Low'], []);
+  const sortedVulnerabilities = useMemo(() => {
+    return results.vulnerabilities.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity)) || [];
+  }, [results, severityOrder]);
+
+  return (
+    <Card className="bg-card/50 border-2 border-primary/20 shadow-2xl shadow-primary/10">
+      <CardHeader>
+        <div className="flex flex-col md:flex-row justify-between items-start mb-6">
+          <div className="mb-4 md:mb-0">
+            <CardTitle className="text-2xl">Audit Report: `{results.repoName}`</CardTitle>
+            <CardDescription>{results.summary.totalIssues} vulnerabilities found. See details below.</CardDescription>
+          </div>
+        </div>
+        <div className="space-y-4 text-center">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
+              <p className="text-4xl font-bold">{results.summary.totalIssues}</p>
+            </div>
+            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
+              <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-red-400">Critical</h4>
+              <p className="text-4xl font-bold text-red-500">{results.summary.critical}</p>
+            </div>
+            <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-orange-400">High</h4>
+              <p className="text-4xl font-bold text-orange-500">{results.summary.high}</p>
+            </div>
+            <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-yellow-400">Medium</h4>
+              <p className="text-4xl font-bold text-yellow-500">{results.summary.medium}</p>
+            </div>
+            <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-green-400">Low</h4>
+              <p className="text-4xl font-bold text-green-500">{results.summary.low}</p>
+            </div>
+          </div>
+          <Accordion type="single" collapsible className="w-full">
+            <AccordionItem value="master-prompt" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
+              <AccordionTrigger className="hover:no-underline px-4 py-3">
+                <div className="flex items-center gap-2 text-foreground">
+                  <Terminal className="mr-2 h-4 w-4" /> View Master Prompt
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="px-4 pb-4">
+                <div className="bg-black/80 rounded-md p-3 text-left">
+                  <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
+                    {`You are an expert security engineer. Given the following list of vulnerabilities, provide the necessary code changes to remediate all of them. For each vulnerability, explain the risk and the fix.
+
+${sortedVulnerabilities.map((v: any, i: number) => `Vulnerability ${i + 1}: ${v.title} in '${v.file}' on line ${v.line}.\nDescription: ${v.description}...`).join('\n\n')}
+
+Provide a git-compatible diff for each required code change.`}
+                  </pre>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="master-remediation" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
+              <AccordionTrigger className="hover:no-underline px-4 py-3">
+                <div className="flex items-center gap-2 text-foreground">
+                  <Code className="mr-2 h-4 w-4" /> View Master Remediation Plan
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="px-4 pb-4">
+                <div className="bg-black/80 rounded-md p-3 text-left">
+                  <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
+                    {masterRemediation || "Master remediation plan will be generated for all findings."}
+                  </pre>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Accordion type="single" collapsible className="w-full">
+          {sortedVulnerabilities.map((vuln: any) => {
+            const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
+            return (
+              <AccordionItem value={vuln.id} key={vuln.id} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
+                <AccordionTrigger className="hover:no-underline">
+                  <div className="flex items-center gap-4 w-full">
+                    {icon}
+                    <div className="flex-grow text-left">
+                      <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm text-muted-foreground font-mono">{vuln.file}:{vuln.line}</p>
+                        {vuln.occurrences > 1 && (
+                          <Badge variant="outline" className="bg-blue-100 text-blue-800 text-xs">
+                            {vuln.occurrences} occurrence{vuln.occurrences > 1 ? 's' : ''}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="pt-2">
+                  <p className="text-sm text-foreground/80 mb-4">{vuln.description}</p>
+                  
+                  {/* Show all file locations if multiple occurrences */}
+                  {vuln.occurrences > 1 && (
+                    <div className="bg-muted p-3 rounded-md mb-4">
+                      <h4 className="font-semibold mb-2 text-sm">All Locations:</h4>
+                      <div className="space-y-1">
+                        {vuln.file.split(', ').map((filePath: string, index: number) => (
+                          <p key={index} className="text-xs font-mono text-muted-foreground">
+                            {filePath}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="bg-card/50 p-4 rounded-md border border-border">
+                    <h4 className="font-semibold mb-2 flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation Prompt</h4>
+                    <div className="bg-black/80 rounded-md p-3">
+                      <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
+                        {`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`}
+                      </pre>
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            );
+          })}
+        </Accordion>
+      </CardContent>
+    </Card>
+  )
 };
 
 export default function SecurityAuditPage() {
@@ -249,246 +457,36 @@ export default function SecurityAuditPage() {
         </CardContent>
       </Card>
 
-      {/* Scan Results */}
+      {/* Scan Results - Using EXACT Template Format */}
       {scanResults && (
-        <div className="space-y-6">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Findings</CardTitle>
-                <Badge variant="outline">{scanResults.summary.total_findings}</Badge>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{scanResults.summary.total_findings}</div>
-                <p className="text-xs text-muted-foreground">
-                  {scanResults.summary.files_scanned} files scanned
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Critical Issues</CardTitle>
-                <Badge className="bg-red-600 text-white">{scanResults.summary.critical_count}</Badge>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-red-600">{scanResults.summary.critical_count}</div>
-                <p className="text-xs text-muted-foreground">Immediate attention required</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">High Issues</CardTitle>
-                <Badge className="bg-orange-600 text-white">{scanResults.summary.high_count}</Badge>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-orange-600">{scanResults.summary.high_count}</div>
-                <p className="text-xs text-muted-foreground">Address soon</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Scan Duration</CardTitle>
-                <Badge variant="outline">{Math.round(scanResults.summary.scan_duration)}s</Badge>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{Math.round(scanResults.summary.scan_duration)}s</div>
-                <p className="text-xs text-muted-foreground">Analysis completed</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Detailed Results */}
-          <Tabs defaultValue="findings" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="findings">Security Findings</TabsTrigger>
-              <TabsTrigger value="condensed">Condensed Issues</TabsTrigger>
-              <TabsTrigger value="remediation">Master Remediation</TabsTrigger>
-              <TabsTrigger value="details">Repository Details</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="findings" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>All Security Findings</CardTitle>
-                  <CardDescription>
-                    Complete list of security vulnerabilities found in your codebase
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {scanResults.findings.map((finding, index) => (
-                      <div key={index} className="border rounded-lg p-4 space-y-3">
-                        <div className="flex items-start justify-between">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <Badge className={getSeverityColor(finding.severity)}>
-                                {finding.severity}
-                              </Badge>
-                              <span className="font-mono text-sm text-muted-foreground">
-                                {finding.rule_id}
-                              </span>
-                            </div>
-                            <h4 className="font-medium">{finding.message}</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {finding.description}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-4 text-sm">
-                            <span className="font-mono">
-                              {renderFileLocation(finding)}
-                            </span>
-                            <span>Impact: {finding.impact}</span>
-                            <span>Likelihood: {finding.likelihood}</span>
-                          </div>
-
-                          {finding.cwe_ids.length > 0 && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">CWE:</span>
-                              {finding.cwe_ids.map((cwe, i) => (
-                                <Badge key={i} variant="outline" className="text-xs">
-                                  {cwe}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-
-                          {finding.owasp_ids.length > 0 && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">OWASP:</span>
-                              {finding.owasp_ids.map((owasp, i) => (
-                                <Badge key={i} variant="outline" className="text-xs">
-                                  {owasp}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-
-                          <div className="bg-muted p-3 rounded-md">
-                            <p className="text-sm font-medium mb-2">Code Snippet:</p>
-                            <code className="text-xs bg-background p-2 rounded block">
-                              {finding.code_snippet}
-                            </code>
-                          </div>
-
-                          <div className="bg-blue-50 p-3 rounded-md border border-blue-200">
-                            <p className="text-sm font-medium mb-2 text-blue-800">Remediation:</p>
-                            <p className="text-sm text-blue-700">{finding.remediation}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="condensed" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Condensed Security Issues</CardTitle>
-                  <CardDescription>
-                    Similar findings grouped together with occurrence counts
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {scanResults.condensed_findings.map((finding, index) => (
-                      <div key={index} className="border rounded-lg p-4 space-y-3">
-                        <div className="flex items-start justify-between">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <Badge className={getSeverityColor(finding.severity)}>
-                                {finding.severity}
-                              </Badge>
-                              <Badge variant="outline" className="bg-blue-100 text-blue-800">
-                                {finding.occurrences} occurrence{finding.occurrences > 1 ? 's' : ''}
-                              </Badge>
-                            </div>
-                            <h4 className="font-medium">{finding.message}</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {finding.description}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-4 text-sm">
-                            <span className="font-mono">
-                              {renderFileLocation(finding)}
-                            </span>
-                            <span>Impact: {finding.impact}</span>
-                            <span>Likelihood: {finding.likelihood}</span>
-                          </div>
-
-                          <div className="bg-blue-50 p-3 rounded-md border border-blue-200">
-                            <p className="text-sm font-medium mb-2 text-blue-800">Remediation:</p>
-                            <p className="text-sm text-blue-700">{finding.remediation}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="remediation" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Master Remediation Plan</CardTitle>
-                    <CardDescription>
-                    Comprehensive plan to fix all security issues in order of priority
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="prose prose-sm max-w-none">
-                    <div className="whitespace-pre-wrap bg-muted p-4 rounded-md">
-                      {scanResults.master_remediation}
-                    </div>
-                </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="details" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Repository Information</CardTitle>
-                  <CardDescription>
-                    Details about the scanned repository
-                  </CardDescription>
-            </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm font-medium">Repository Name</p>
-                      <p className="text-sm text-muted-foreground">{scanResults.repository_info.name}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium">Repository Size</p>
-                      <p className="text-sm text-muted-foreground">{scanResults.repository_info.size}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium">Files Scanned</p>
-                      <p className="text-sm text-muted-foreground">{scanResults.repository_info.file_count}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium">Scan Duration</p>
-                      <p className="text-sm text-muted-foreground">{Math.round(scanResults.scan_duration)} seconds</p>
-                    </div>
-                  </div>
-                </CardContent>
-        </Card>
-            </TabsContent>
-          </Tabs>
-        </div>
+        <AuditReportTemplate 
+          results={{
+            repoName: scanResults.repository_info.name,
+            summary: {
+              totalIssues: scanResults.summary.total_findings,
+              critical: scanResults.summary.critical_count,
+              high: scanResults.summary.high_count,
+              medium: scanResults.summary.medium_count,
+              low: scanResults.summary.low_count
+            },
+            vulnerabilities: scanResults.condensed_findings.map((finding, index) => {
+              // Get the remediation prompt from the worker's condensed_remediations
+              const remediationPrompt = scanResults.condensed_remediations?.[finding.rule_id] || 
+                "Remediation prompt will be generated for this finding type.";
+              
+              return {
+                id: finding.rule_id || `VULN-${index + 1}`,
+                title: finding.message,
+                severity: finding.severity,
+                file: finding.file_path,
+                line: finding.line_number,
+                description: finding.description,
+                remediation: remediationPrompt
+              };
+            })
+          }}
+          masterRemediation={scanResults.master_remediation}
+        />
       )}
     </div>
   );

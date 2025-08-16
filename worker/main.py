@@ -260,7 +260,7 @@ class ChatGPTSecurityScanner:
             {{
                 "findings": [
                     {{
-                        "rule_id": "unique_identifier",
+                        "rule_id": "vulnerability_type_identifier",
                         "severity": "Critical|High|Medium|Low",
                         "message": "Brief vulnerability description",
                         "description": "Detailed explanation",
@@ -276,6 +276,8 @@ class ChatGPTSecurityScanner:
                     }}
                 ]
             }}
+            
+            IMPORTANT: For rule_id, use a descriptive identifier like "xss_vulnerability", "sql_injection", "csrf_missing", etc. NOT generic numbers like "VULN-001".
 
             Be thorough but practical. Focus on real-world risks that indie developers face.
             """
@@ -353,17 +355,50 @@ class ChatGPTSecurityScanner:
         condensed = {}
         
         for finding in findings:
-            # Create a key based on rule_id and severity
-            key = f"{finding.rule_id}_{finding.severity}"
+            # Create a key based on vulnerability TYPE and severity, not specific rule_id
+            # Extract the vulnerability type from the message (e.g., "XSS", "CSRF", "SQL Injection")
+            vulnerability_type = self.extract_vulnerability_type(finding.message)
+            key = f"{vulnerability_type}_{finding.severity}"
             
             if key in condensed:
                 # Increment occurrence count
                 condensed[key].occurrences += 1
+                # Update the file_path to show multiple locations
+                if finding.file_path not in condensed[key].file_path:
+                    condensed[key].file_path += f", {finding.file_path}"
             else:
                 # Add new finding
                 condensed[key] = finding
         
         return list(condensed.values())
+    
+    def extract_vulnerability_type(self, message: str) -> str:
+        """Extract vulnerability type from message for grouping"""
+        message_lower = message.lower()
+        
+        # Define vulnerability type patterns
+        if any(xss_term in message_lower for xss_term in ['xss', 'cross-site scripting', 'script injection']):
+            return 'xss_vulnerability'
+        elif any(csrf_term in message_lower for csrf_term in ['csrf', 'cross-site request forgery']):
+            return 'csrf_vulnerability'
+        elif any(sql_term in message_lower for sql_term in ['sql injection', 'sql injection', 'database injection']):
+            return 'sql_injection'
+        elif any(auth_term in message_lower for auth_term in ['authentication', 'authorization', 'auth bypass']):
+            return 'authentication_vulnerability'
+        elif any(input_term in message_lower for input_term in ['input validation', 'unsanitized input', 'user input']):
+            return 'input_validation_vulnerability'
+        elif any(secret_term in message_lower for secret_term in ['secret', 'api key', 'password', 'token']):
+            return 'secrets_exposure'
+        elif any(dep_term in message_lower for dep_term in ['dependency', 'outdated', 'vulnerable package']):
+            return 'dependency_vulnerability'
+        elif any(target_term in message_lower for target_term in ['target="_blank"', 'tabnabbing']):
+            return 'insecure_target_blank'
+        elif any(error_term in message_lower for error_term in ['error handling', 'information disclosure', 'sensitive information']):
+            return 'information_disclosure'
+        else:
+            # Fallback: use first few words of message
+            words = message.split()
+            return '_'.join(words[:3]).lower().replace('-', '_').replace('(', '').replace(')', '')
     
     def generate_condensed_remediations(self, condensed_findings: List[SecurityFinding], all_findings: List[SecurityFinding]) -> Dict[str, str]:
         """Generate ALL remediation prompts in ONE API call - MASSIVE optimization!"""
@@ -934,7 +969,7 @@ class ChatGPTSecurityScanner:
                     "file_path_1": {{
                         "findings": [
                             {{
-                                "rule_id": "unique_identifier",
+                                "rule_id": "vulnerability_type_identifier",
                                 "severity": "Critical|High|Medium|Low",
                                 "message": "Brief vulnerability description",
                                 "description": "Detailed explanation",
@@ -957,6 +992,8 @@ class ChatGPTSecurityScanner:
             }}
             
             Be thorough but practical. Focus on real-world risks that indie developers face.
+            
+            IMPORTANT: For rule_id, use a descriptive identifier like "xss_vulnerability", "sql_injection", "csrf_missing", etc. NOT generic numbers like "VULN-001".
             """
             
             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
