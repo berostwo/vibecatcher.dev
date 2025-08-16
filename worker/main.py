@@ -423,11 +423,19 @@ class ChatGPTSecurityScanner:
                     result = json.loads(json_content)
                     findings = result.get('findings', [])
                     
-                    # Convert to SecurityFinding objects
+                    # Convert to SecurityFinding objects with UNIQUE rule_ids
                     security_findings = []
-                    for finding in findings:
+                    for i, finding in enumerate(findings):
                         try:
-                            security_findings.append(SecurityFinding(**finding))
+                            # Ensure unique rule_id by adding file identifier and counter
+                            file_id = os.path.basename(file_path).replace('.', '_').replace('-', '_')
+                            unique_rule_id = f"{finding.get('rule_id', 'vulnerability')}_{file_id}_{i+1}"
+                            
+                            # Create finding with unique rule_id
+                            finding_data = finding.copy()
+                            finding_data['rule_id'] = unique_rule_id
+                            
+                            security_findings.append(SecurityFinding(**finding_data))
                         except Exception as e:
                             logger.warning(f"Failed to create SecurityFinding for {file_path}: {e}")
                             continue
@@ -453,6 +461,7 @@ class ChatGPTSecurityScanner:
     def condense_findings(self, findings: List[SecurityFinding]) -> List[SecurityFinding]:
         """Condense multiple similar findings into one with occurrence count"""
         condensed = {}
+        condensed_counter = 1  # Counter for unique condensed finding IDs
         
         for finding in findings:
             # Create a key based on vulnerability TYPE and severity, not specific rule_id
@@ -467,8 +476,25 @@ class ChatGPTSecurityScanner:
                 if finding.file_path not in condensed[key].file_path:
                     condensed[key].file_path += f", {finding.file_path}"
             else:
-                # Add new finding
-                condensed[key] = finding
+                # Create a NEW finding with a unique rule_id for React keys
+                unique_finding = SecurityFinding(
+                    rule_id=f"CONDENSED_{condensed_counter}_{vulnerability_type}",
+                    severity=finding.severity,
+                    message=finding.message,
+                    description=finding.description,
+                    file_path=finding.file_path,
+                    line_number=finding.line_number,
+                    end_line=finding.end_line,
+                    code_snippet=finding.code_snippet,
+                    cwe_ids=finding.cwe_ids,
+                    owasp_ids=finding.owasp_ids,
+                    impact=finding.impact,
+                    likelihood=finding.likelihood,
+                    confidence=finding.confidence,
+                    occurrences=1
+                )
+                condensed[key] = unique_finding
+                condensed_counter += 1
         
         return list(condensed.values())
     
@@ -1180,10 +1206,16 @@ class ChatGPTSecurityScanner:
                     
                     for file_path, file_data in files_data.items():
                         findings = file_data.get('findings', [])
-                        for finding in findings:
+                        for i, finding in enumerate(findings):
                             try:
                                 # Ensure file_path is correct
                                 finding['file_path'] = file_path
+                                
+                                # Ensure unique rule_id by adding file identifier and counter
+                                file_id = os.path.basename(file_path).replace('.', '_').replace('-', '_')
+                                unique_rule_id = f"{finding.get('rule_id', 'vulnerability')}_{file_id}_{i+1}"
+                                finding['rule_id'] = unique_rule_id
+                                
                                 security_finding = SecurityFinding(**finding)
                                 all_findings.append(security_finding)
                             except Exception as e:

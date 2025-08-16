@@ -323,6 +323,13 @@ export default function SecurityAuditPage() {
     current_state: string;
   } | null>(null);
 
+  // DEBUG: Log progress changes
+  useEffect(() => {
+    if (scanProgress) {
+      console.log('📊 Progress state updated:', scanProgress);
+    }
+  }, [scanProgress]);
+
   useEffect(() => {
     if (user) {
       fetchRepositories();
@@ -369,7 +376,7 @@ export default function SecurityAuditPage() {
     setScanResults(null);
     setScanProgress(null); // Reset progress
     
-        // PROGRESS TRACKING: Declare interval variable
+    // PROGRESS TRACKING: Declare interval variable for real-time polling
     let progressInterval: NodeJS.Timeout | undefined;
     
     try {
@@ -383,14 +390,15 @@ export default function SecurityAuditPage() {
 
       const repositoryUrl = `https://github.com/${userGitHubUsername}/${selectedRepository}`;
 
-              // PROGRESS TRACKING: Start with initial progress
-        setScanProgress({
-            step: "Initializing scan...",
-            progress: 0,
-            step_complete: false,
-            current_state: "Initializing scan"
-        });
+      // PROGRESS TRACKING: Start with initial progress
+      setScanProgress({
+        step: "Initializing scan...",
+        progress: 0,
+        step_complete: false,
+        current_state: "Initializing scan"
+      });
 
+      // Start the security scan FIRST
       const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/', {
         method: 'POST',
         headers: {
@@ -406,26 +414,42 @@ export default function SecurityAuditPage() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
+      // PROGRESS TRACKING: Start real-time progress polling AFTER scan request is sent
+      console.log('🚀 Starting progress polling after scan request...');
+      progressInterval = setInterval(async () => {
+        try {
+          console.log('📊 Polling progress endpoint...');
+          const progressResponse = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+          console.log('📊 Progress response status:', progressResponse.status);
+          
+          if (progressResponse.ok) {
+            const progressData = await progressResponse.json();
+            console.log('📊 Progress data received:', progressData);
+            
+            if (progressData.status !== 'no_scan_running') {
+              console.log('📊 Setting progress update:', progressData);
+              setScanProgress({
+                step: progressData.step,
+                progress: progressData.progress,
+                step_complete: progressData.step_complete,
+                current_state: progressData.current_state
+              });
+            } else {
+              console.log('📊 No scan running, status:', progressData.status);
+            }
+          } else {
+            console.warn('📊 Progress response not ok:', progressResponse.status);
+          }
+        } catch (error) {
+          console.error('📊 Progress polling failed:', error);
+        }
+      }, 500); // Poll every 500ms
+
       const data = await response.json();
       
       if (data.error) {
         throw new Error(data.error);
       }
-
-              // PROGRESS TRACKING: Update with real-time progress data
-        if (data.progress_data && data.progress_data.length > 0) {
-            // Set up real-time progress updates
-            data.progress_data.forEach((progressUpdate: any, index: number) => {
-                setTimeout(() => {
-                    setScanProgress({
-                        step: progressUpdate.step,
-                        progress: progressUpdate.progress,
-                        step_complete: progressUpdate.step_complete,
-                        current_state: progressUpdate.current_state
-                    });
-                }, index * 100); // Stagger updates for smooth animation
-            });
-        }
 
       setScanResults(data);
       toast({
@@ -449,7 +473,8 @@ export default function SecurityAuditPage() {
         ...prev,
         step: "Scan complete!",
         progress: 100,
-        overall_progress: 100
+        step_complete: true,
+        current_state: "Scan complete!"
       } : null);
       
       setIsScanning(false);
