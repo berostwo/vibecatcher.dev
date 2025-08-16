@@ -1021,9 +1021,9 @@ class ChatGPTSecurityScanner:
                 logger.error(f"Response content: {content}")
                 return []
             
-                    except Exception as e:
-                logger.error(f"❌ Batch analysis failed: {e}")
-                return []
+        except Exception as e:
+            logger.error(f"❌ Batch analysis failed: {e}")
+            return []
     
     def chunk_file_content(self, content: str, file_path: str, file_type: str) -> List[str]:
         """PHASE 3: Smart content chunking for large files"""
