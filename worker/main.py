@@ -92,32 +92,7 @@ class ChatGPTSecurityScanner:
         self.total_steps = 0
         self.completed_steps = 0
         
-        # PROGRESS TRACKING METHODS
-        def set_progress_callback(self, callback):
-            """Set callback function for progress updates"""
-            self.progress_callback = callback
-        
-        def update_progress(self, step: str, progress: float, step_complete: bool = False):
-            """Update progress and notify frontend"""
-            self.current_step = step
-            self.step_progress = progress
-            
-            if step_complete:
-                self.completed_steps += 1
-            
-            if self.progress_callback:
-                try:
-                    self.progress_callback({
-                        'step': step,
-                        'progress': progress,
-                        'completed_steps': self.completed_steps,
-                        'total_steps': self.total_steps,
-                        'overall_progress': (self.completed_steps + progress) / max(1, self.total_steps) * 100
-                    })
-                except Exception as e:
-                    logger.warning(f"Progress callback failed: {e}")
-            
-            logger.info(f"📊 PROGRESS: {step} - {progress:.1f}% (Overall: {self.completed_steps}/{self.total_steps})")
+        # Security categories for comprehensive coverage
         
         # Security categories for comprehensive coverage
         self.security_categories = [
@@ -166,6 +141,32 @@ class ChatGPTSecurityScanner:
             "Missing access controls",
             "Weak crypto implementations"
         ]
+    
+    def set_progress_callback(self, callback):
+        """Set callback function for progress updates"""
+        self.progress_callback = callback
+    
+    def update_progress(self, step: str, progress: float, step_complete: bool = False):
+        """Update progress and notify frontend"""
+        self.current_step = step
+        self.step_progress = progress
+        
+        if step_complete:
+            self.completed_steps += 1
+        
+        if self.progress_callback:
+            try:
+                self.progress_callback({
+                    'step': step,
+                    'progress': progress,
+                    'completed_steps': self.completed_steps,
+                    'total_steps': self.total_steps,
+                    'overall_progress': (self.completed_steps + progress) / max(1, self.total_steps) * 100
+                })
+            except Exception as e:
+                logger.warning(f"Progress callback failed: {e}")
+        
+        logger.info(f"📊 PROGRESS: {step} - {progress:.1f}% (Overall: {self.completed_steps}/{self.total_steps})")
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
