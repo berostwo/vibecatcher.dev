@@ -1312,7 +1312,7 @@ if __name__ == "__main__":
         logger.info(f"🔒 CORS enabled for all endpoints")
         logger.info(f"⏱️  Scan timeout protection: 900s")
         logger.info(f"🚀 PHASE 1: Smart file filtering + Batch analysis (3-5x faster)")
-        logger.info(f"🚀 PHASE 2: Multi-API key parallel processing ({len(self.api_keys)} keys)")
+        logger.info(f"🚀 PHASE 2: Multi-API key parallel processing (ready for multiple keys)")
         logger.info(f"🚀 PHASE 3: Content chunking + Pattern pre-filtering")
         logger.info(f"🚀 PHASE 4: Caching + ML-based optimization")
         logger.info(f"⚠️  IMPORTANT: Set Cloud Run timeout to 900s (15 minutes) to avoid 504 errors")
