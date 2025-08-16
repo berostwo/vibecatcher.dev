@@ -37,7 +37,6 @@ class SecurityFinding:
     impact: str
     likelihood: str
     confidence: str
-    remediation: str
     occurrences: int = 1
 
 @dataclass
@@ -46,6 +45,7 @@ class SecurityReport:
     summary: Dict[str, Any]
     findings: List[SecurityFinding]
     condensed_findings: List[SecurityFinding]
+    condensed_remediations: Dict[str, str]  # rule_id -> remediation prompt
     master_remediation: str
     scan_duration: float
     timestamp: str
@@ -204,63 +204,62 @@ class ChatGPTSecurityScanner:
         """Analyze a single file with ChatGPT for security vulnerabilities"""
         try:
             # Build comprehensive security analysis prompt
-            prompt = f"""
-            You are an expert security engineer specializing in making indie developer, vibe coder, solopreneur, and microsaas applications absolutely bulletproof.
-
-            Analyze this {file_type} file for security vulnerabilities:
-
-            FILE: {file_path}
-            CONTENT:
-            {file_content}
-
-            Focus on these critical areas for indie developers:
-            - Authentication & authorization bypasses
-            - Input validation & injection attacks
-            - Data exposure & privacy violations
-            - Cryptography & secrets management
-            - Session management issues
-            - File upload security
-            - API security vulnerabilities
-            - Frontend security (XSS, CSRF)
-            - Backend security (SQL injection, etc.)
-            - Infrastructure security
-            - Dependency vulnerabilities
-            - Business logic flaws
-            - Error handling & information disclosure
-            - CORS & security headers
-            - Rate limiting & abuse prevention
-
-            For each finding, provide:
-            1. Severity (Critical/High/Medium/Low)
-            2. Clear description of the vulnerability
-            3. Specific risk to the application
-            4. Exact remediation steps
-            5. CWE and OWASP classifications
-
-            Return findings in this exact JSON format:
-            {{
-                "findings": [
-                    {{
-                        "rule_id": "unique_identifier",
-                        "severity": "Critical|High|Medium|Low",
-                        "message": "Brief vulnerability description",
-                        "description": "Detailed explanation",
-                        "file_path": "{file_path}",
-                        "line_number": 123,
-                        "end_line": 125,
-                        "code_snippet": "vulnerable code here",
-                        "cwe_ids": ["CWE-79", "CWE-89"],
-                        "owasp_ids": ["A01:2021", "A03:2021"],
-                        "impact": "High|Medium|Low",
-                        "likelihood": "High|Medium|Low",
-                        "confidence": "High|Medium|Low",
-                        "remediation": "Step-by-step fix instructions"
-                    }}
-                ]
-            }}
-
-            Be thorough but practical. Focus on real-world risks that indie developers face.
-            """
+                         prompt = f"""
+             You are an expert security engineer specializing in making indie developer, vibe coder, solopreneur, and microsaas applications absolutely bulletproof.
+ 
+             Analyze this {file_type} file for security vulnerabilities:
+ 
+             FILE: {file_path}
+             CONTENT:
+             {file_content}
+ 
+             Focus on these critical areas for indie developers:
+             - Authentication & authorization bypasses
+             - Input validation & injection attacks
+             - Data exposure & privacy violations
+             - Cryptography & secrets management
+             - Session management issues
+             - File upload security
+             - API security vulnerabilities
+             - Frontend security (XSS, CSRF)
+             - Backend security (SQL injection, etc.)
+             - Infrastructure security
+             - Dependency vulnerabilities
+             - Business logic flaws
+             - Error handling & information disclosure
+             - CORS & security headers
+             - Rate limiting & abuse prevention
+ 
+             For each finding, provide:
+             1. Severity (Critical/High/Medium/Low)
+             2. Clear description of the vulnerability
+             3. Specific risk to the application
+             4. CWE and OWASP classifications
+             5. Line numbers where the vulnerability occurs
+ 
+             Return findings in this exact JSON format:
+             {{
+                 "findings": [
+                     {{
+                         "rule_id": "unique_identifier",
+                         "severity": "Critical|High|Medium|Low",
+                         "message": "Brief vulnerability description",
+                         "description": "Detailed explanation",
+                         "file_path": "{file_path}",
+                         "line_number": 123,
+                         "end_line": 125,
+                         "code_snippet": "vulnerable code here",
+                         "cwe_ids": ["CWE-79", "CWE-89"],
+                         "owasp_ids": ["A01:2021", "A03:2021"],
+                         "impact": "High|Medium|Low",
+                         "likelihood": "High|Medium|Low",
+                         "confidence": "High|Medium|Low"
+                     }}
+                 ]
+             }}
+ 
+             Be thorough but practical. Focus on real-world risks that indie developers face.
+             """
 
             # Call ChatGPT API
             client = openai.OpenAI(api_key=self.api_key)
@@ -343,8 +342,70 @@ class ChatGPTSecurityScanner:
         
         return list(condensed.values())
     
+    def generate_condensed_remediations(self, condensed_findings: List[SecurityFinding], all_findings: List[SecurityFinding]) -> Dict[str, str]:
+        """Generate remediation prompts for each condensed finding type"""
+        try:
+            remediations = {}
+            
+            for condensed_finding in condensed_findings:
+                # Get all instances of this finding type
+                instances = [f for f in all_findings if f.rule_id == condensed_finding.rule_id]
+                
+                # Create context-aware prompt
+                prompt = f"""
+                You are an expert security engineer. Create a robust remediation prompt for this security vulnerability.
+                
+                VULNERABILITY TYPE: {condensed_finding.message}
+                SEVERITY: {condensed_finding.severity}
+                DESCRIPTION: {condensed_finding.description}
+                CWE IDs: {', '.join(condensed_finding.cwe_ids)}
+                OWASP IDs: {', '.join(condensed_finding.owasp_ids)}
+                
+                INSTANCES FOUND: {condensed_finding.occurrences} occurrences across multiple files
+                
+                Create a remediation prompt that:
+                1. Clearly explains the security issue
+                2. Provides context about why it's dangerous
+                3. Gives specific, actionable steps to fix it
+                4. Is written for coding assistants (Cursor, GitHub Copilot, etc.)
+                5. Includes code examples where appropriate
+                6. Addresses the root cause, not just symptoms
+                
+                Make the prompt specific enough that a coding assistant can implement the fix robustly.
+                Format as a clear, actionable prompt for developers.
+                """
+                
+                client = openai.OpenAI(api_key=self.api_key)
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert security engineer creating remediation prompts for coding assistants."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=2000,
+                    temperature=0.1
+                )
+                
+                # Track token usage
+                self.api_calls_made += 1
+                if hasattr(response, 'usage') and response.usage:
+                    self.prompt_tokens += response.usage.prompt_tokens
+                    self.completion_tokens += response.usage.completion_tokens
+                    self.total_tokens_used += response.usage.total_tokens
+                    logger.info(f"🔍 Condensed remediation token usage for {condensed_finding.rule_id}: {response.usage.total_tokens} tokens")
+                else:
+                    logger.warning(f"⚠️ No token usage data available for condensed remediation")
+                
+                remediations[condensed_finding.rule_id] = response.choices[0].message.content
+            
+            return remediations
+            
+        except Exception as e:
+            logger.error(f"Error generating condensed remediations: {e}")
+            return {}
+
     def generate_master_remediation(self, condensed_findings: List[SecurityFinding]) -> str:
-        """Generate a master remediation prompt for all findings"""
+        """Generate a master remediation plan with phases for all findings"""
         try:
             # Group findings by severity
             critical = [f for f in condensed_findings if f.severity == "Critical"]
@@ -353,7 +414,7 @@ class ChatGPTSecurityScanner:
             low = [f for f in condensed_findings if f.severity == "Low"]
             
             prompt = f"""
-            You are an expert security engineer. Create a comprehensive remediation plan for this application.
+            You are an expert security engineer. Create a comprehensive, phased remediation plan for this application.
 
             SECURITY FINDINGS SUMMARY:
             - Critical: {len(critical)} findings
@@ -364,25 +425,39 @@ class ChatGPTSecurityScanner:
             DETAILED FINDINGS:
             {json.dumps([asdict(f) for f in condensed_findings], indent=2)}
 
-            Create a master remediation plan that:
-            1. Prioritizes fixes by severity and impact
-            2. Groups related fixes together
-            3. Provides step-by-step implementation order
-            4. Includes testing and validation steps
-            5. Addresses root causes, not just symptoms
-            6. Is practical for indie developers to implement
+            Create a master remediation plan broken down into clear phases:
+            
+            PHASE 1: Critical & High Priority (Immediate Action Required)
+            - List specific fixes for Critical and High severity issues
+            - Include immediate security patches needed
+            
+            PHASE 2: Medium Priority (Short-term Implementation)
+            - Address medium severity issues
+            - Include testing and validation steps
+            
+            PHASE 3: Low Priority & Security Hardening (Long-term)
+            - Address low severity issues
+            - Include security best practices implementation
+            
+            PHASE 4: Testing & Validation
+            - Security testing procedures
+            - Validation steps for each fix
+            
+            PHASE 5: Monitoring & Prevention
+            - Ongoing security measures
+            - Prevention strategies for future issues
 
-            Format the response as a clear, actionable remediation plan.
+            Make each phase actionable and practical for indie developers to implement.
             """
 
             client = openai.OpenAI(api_key=self.api_key)
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are an expert security engineer creating remediation plans."},
+                    {"role": "system", "content": "You are an expert security engineer creating phased remediation plans."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=3000,
+                max_tokens=4000,
                 temperature=0.1
             )
             
@@ -408,8 +483,11 @@ class ChatGPTSecurityScanner:
         logger.info(f"🚀 Starting ChatGPT security scan for: {repo_url}")
         
         try:
-            # Clone repository
-            repo_path = await self.clone_repository(repo_url, github_token)
+            # Clone repository with timeout
+            repo_path = await asyncio.wait_for(
+                self.clone_repository(repo_url, github_token), 
+                timeout=600  # 10 minutes for cloning
+            )
             
             # Get repository info
             repo_info = {
@@ -443,7 +521,16 @@ class ChatGPTSecurityScanner:
             
             logger.info(f"🚀 Processing {total_files} files in {total_batches} batches of {batch_size}")
             
+            # Add overall scan timeout protection
+            scan_start_time = datetime.now()
+            max_scan_time = 900  # 15 minutes max
+            
             for batch_num in range(total_batches):
+                # Check if we're approaching timeout
+                elapsed_time = (datetime.now() - scan_start_time).total_seconds()
+                if elapsed_time > max_scan_time - 60:  # Stop 1 minute before timeout
+                    logger.warning(f"⚠️ Approaching scan timeout ({elapsed_time:.0f}s), stopping early")
+                    break
                 start_idx = batch_num * batch_size
                 end_idx = min(start_idx + batch_size, total_files)
                 batch_files = files_to_analyze[start_idx:end_idx]
@@ -474,7 +561,12 @@ class ChatGPTSecurityScanner:
             condensed_findings = self.condense_findings(all_findings)
             logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
             
-            # Generate master remediation
+            # Generate condensed remediations for each finding type
+            logger.info(f"🔍 Generating condensed remediation prompts...")
+            condensed_remediations = self.generate_condensed_remediations(condensed_findings, all_findings)
+            logger.info(f"✅ Generated {len(condensed_remediations)} condensed remediation prompts")
+            
+            # Generate master remediation plan
             logger.info(f"🔍 Generating master remediation plan...")
             master_remediation = self.generate_master_remediation(condensed_findings)
             logger.info(f"✅ Master remediation generated")
@@ -517,6 +609,7 @@ class ChatGPTSecurityScanner:
                 },
                 findings=all_findings,
                 condensed_findings=condensed_findings,
+                condensed_remediations=condensed_remediations,
                 master_remediation=master_remediation,
                 scan_duration=scan_duration,
                 timestamp=datetime.now().isoformat(),
@@ -550,6 +643,7 @@ class ChatGPTSecurityScanner:
                 logger.error("❌ Report condensed_findings is not a list")
             
             logger.info(f"🎯 Report validation complete")
+            logger.info(f"🚀 Scan completed successfully in {scan_duration:.2f}s")
             
             return asdict(report)
             
@@ -601,16 +695,15 @@ def add_cors_headers(response):
         'http://vibecatcher.dev'
     ]
     
-    # Always set CORS headers for security scan endpoint
-    if request.endpoint == 'security_scan':
-        if origin in allowed_origins:
-            response.headers['Access-Control-Allow-Origin'] = origin
-        else:
-            response.headers['Access-Control-Allow-Origin'] = 'http://localhost:9002'
-        
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        response.headers['Access-Control-Max-Age'] = '86400'  # 24 hours
+    # Set CORS headers for all endpoints
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    else:
+        response.headers['Access-Control-Allow-Origin'] = 'http://localhost:9002'
+    
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Max-Age'] = '86400'  # 24 hours
     
     return response
 
@@ -630,7 +723,10 @@ def health_check():
         'status': 'healthy',
         'service': 'chatgpt-security-scanner',
         'timestamp': datetime.now().isoformat(),
-        'version': '1.0.0'
+        'version': '1.0.0',
+        'cors_enabled': True,
+        'timeout_configured': '900s',
+        'batch_processing': True
     })
 
 @app.route('/', methods=['POST'])
@@ -647,11 +743,27 @@ def security_scan():
         if not repo_url:
             return jsonify({'error': 'repository_url is required'}), 400
         
-        # Run the scan
-        scanner = ChatGPTSecurityScanner()
-        result = asyncio.run(scanner.scan_repository(repo_url, github_token))
+        logger.info(f"🚀 Starting security scan for: {repo_url}")
         
-        return jsonify(result)
+        # Run the scan with timeout protection
+        try:
+            scanner = ChatGPTSecurityScanner()
+            result = asyncio.run(scanner.scan_repository(repo_url, github_token))
+            
+            # Check if scan failed
+            if 'error' in result:
+                logger.error(f"Scan failed: {result['error']}")
+                return jsonify(result), 500
+            
+            logger.info(f"✅ Scan completed successfully")
+            return jsonify(result)
+            
+        except asyncio.TimeoutError:
+            logger.error("Scan timed out")
+            return jsonify({'error': 'Scan timed out - repository too large or complex', 'error_type': 'TimeoutError'}), 408
+        except Exception as scan_error:
+            logger.error(f"Scan execution error: {scan_error}")
+            return jsonify({'error': str(scan_error), 'error_type': type(scan_error).__name__}), 500
         
     except Exception as e:
         logger.error(f"HTTP handler error: {e}")
@@ -662,5 +774,9 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8080))
     logger.info(f"🚀 Starting ChatGPT Security Scanner on port {port}")
     logger.info(f"🔍 Environment: PORT={port}")
+    logger.info(f"🔒 CORS enabled for all endpoints")
+    logger.info(f"⏱️  Scan timeout protection: 900s")
+    logger.info(f"📦 Batch processing: 5 files concurrently")
     logger.info(f"⚠️  IMPORTANT: Set Cloud Run timeout to 900s (15 minutes) to avoid 504 errors")
+    logger.info(f"⚠️  IMPORTANT: Ensure OPENAI_API_KEY is set")
     app.run(host='0.0.0.0', port=port, debug=False)
