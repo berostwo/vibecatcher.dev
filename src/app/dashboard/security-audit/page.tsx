@@ -412,8 +412,8 @@ export default function SecurityAuditPage() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // PROGRESS TRACKING: Start real-time progress polling
-      console.log('🚀 Starting progress polling...');
+      // PROGRESS TRACKING: Start real-time progress polling AFTER scan request is sent
+      console.log('🚀 Starting progress polling AFTER scan request...');
       const pollProgress = async () => {
         try {
           console.log('📊 Polling progress endpoint...');
@@ -424,14 +424,17 @@ export default function SecurityAuditPage() {
             const progressData = await progressResponse.json();
             console.log('📊 Progress data received:', progressData);
             
-            if (progressData.status !== 'no_scan_running') {
+            // Check if we have valid progress data (not just status message)
+            if (progressData.step && typeof progressData.progress === 'number') {
               console.log('📊 Setting progress update:', progressData);
               setScanProgress({
                 step: progressData.step,
                 progress: progressData.progress
               });
-            } else {
+            } else if (progressData.status === 'no_scan_running') {
               console.log('📊 No scan running, status:', progressData.status);
+            } else {
+              console.log('📊 Invalid progress data format:', progressData);
             }
           } else {
             console.warn('📊 Progress response not ok:', progressResponse.status);

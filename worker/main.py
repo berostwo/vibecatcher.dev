@@ -1401,12 +1401,16 @@ def get_progress():
     """Get current scan progress for real-time updates"""
     global current_scan_progress
     
+    logger.info(f"📊 PROGRESS ENDPOINT CALLED: current_scan_progress = {current_scan_progress}")
+    
     if current_scan_progress is None:
+        logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
         return jsonify({
             'status': 'no_scan_running',
             'message': 'No security scan is currently running'
         })
     
+    logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {current_scan_progress}")
     return jsonify(current_scan_progress)
 
 @app.route('/', methods=['POST'])
