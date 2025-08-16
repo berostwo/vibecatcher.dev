@@ -157,6 +157,7 @@ class ChatGPTSecurityScanner:
                     'timestamp': datetime.now().isoformat()
                 }
                 logger.info(f"📊 PROGRESS: {step} - {progress:.1f}%")
+                logger.info(f"📊 CALLING PROGRESS CALLBACK: {progress_data}")
                 self.progress_callback(progress_data)
             except Exception as e:
                 logger.warning(f"Progress callback failed: {e}")
@@ -1443,6 +1444,7 @@ def security_scan():
                 
                 progress_updates.append(progress_data)
                 logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
+                logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
                 
                 # Store current progress globally for real-time access
                 current_scan_progress = {
@@ -1450,6 +1452,8 @@ def security_scan():
                     'progress': progress_data.get('progress', 0),
                     'timestamp': datetime.now().isoformat()
                 }
+                
+                logger.info(f"📊 STORED PROGRESS: {current_scan_progress}")
             
             scanner.set_progress_callback(progress_callback)
             

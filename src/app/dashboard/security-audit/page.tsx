@@ -325,6 +325,8 @@ export default function SecurityAuditPage() {
   useEffect(() => {
     if (scanProgress) {
       console.log('📊 Progress state updated:', scanProgress);
+    } else {
+      console.log('📊 Progress state cleared');
     }
   }, [scanProgress]);
 
@@ -374,7 +376,8 @@ export default function SecurityAuditPage() {
     setScanResults(null);
     setScanProgress(null); // Reset progress
     
-    // PROGRESS TRACKING: Simple progress tracking
+    // PROGRESS TRACKING: Progress polling
+    let progressInterval: NodeJS.Timeout | undefined;
     
     try {
       // Get GitHub token from user service
@@ -409,8 +412,40 @@ export default function SecurityAuditPage() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // PROGRESS TRACKING: Simple progress updates during scan
-      console.log('🚀 Starting security scan...');
+      // PROGRESS TRACKING: Start real-time progress polling
+      console.log('🚀 Starting progress polling...');
+      const pollProgress = async () => {
+        try {
+          console.log('📊 Polling progress endpoint...');
+          const progressResponse = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+          console.log('📊 Progress response status:', progressResponse.status);
+          
+          if (progressResponse.ok) {
+            const progressData = await progressResponse.json();
+            console.log('📊 Progress data received:', progressData);
+            
+            if (progressData.status !== 'no_scan_running') {
+              console.log('📊 Setting progress update:', progressData);
+              setScanProgress({
+                step: progressData.step,
+                progress: progressData.progress
+              });
+            } else {
+              console.log('📊 No scan running, status:', progressData.status);
+            }
+          } else {
+            console.warn('📊 Progress response not ok:', progressResponse.status);
+          }
+        } catch (error) {
+          console.error('📊 Progress polling failed:', error);
+        }
+      };
+      
+      // Poll every 500ms
+      const progressInterval = setInterval(pollProgress, 500);
+      
+      // Initial poll
+      pollProgress();
 
       const data = await response.json();
       
@@ -432,7 +467,11 @@ export default function SecurityAuditPage() {
         variant: 'destructive',
       });
     } finally {
-      // PROGRESS TRACKING: Set final progress
+      // PROGRESS TRACKING: Clean up interval and set final progress
+      if (progressInterval) {
+        clearInterval(progressInterval);
+      }
+      
       setScanProgress(prev => prev ? {
         ...prev,
         step: "Scan complete!",
@@ -495,6 +534,23 @@ export default function SecurityAuditPage() {
               className="min-w-[120px]"
             >
               {isScanning ? 'Scanning...' : 'Run Security Audit'}
+            </Button>
+            <Button 
+              onClick={async () => {
+                try {
+                  const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+                  const data = await response.json();
+                  console.log('🔍 Progress endpoint test:', data);
+                  alert(`Progress endpoint test: ${JSON.stringify(data)}`);
+                } catch (error) {
+                  console.error('🔍 Progress endpoint test failed:', error);
+                  alert(`Progress endpoint test failed: ${error}`);
+                }
+              }}
+              variant="outline"
+              className="min-w-[120px]"
+            >
+              Test Progress
             </Button>
           </div>
           
