@@ -204,62 +204,62 @@ class ChatGPTSecurityScanner:
         """Analyze a single file with ChatGPT for security vulnerabilities"""
         try:
             # Build comprehensive security analysis prompt
-                         prompt = f"""
-             You are an expert security engineer specializing in making indie developer, vibe coder, solopreneur, and microsaas applications absolutely bulletproof.
- 
-             Analyze this {file_type} file for security vulnerabilities:
- 
-             FILE: {file_path}
-             CONTENT:
-             {file_content}
- 
-             Focus on these critical areas for indie developers:
-             - Authentication & authorization bypasses
-             - Input validation & injection attacks
-             - Data exposure & privacy violations
-             - Cryptography & secrets management
-             - Session management issues
-             - File upload security
-             - API security vulnerabilities
-             - Frontend security (XSS, CSRF)
-             - Backend security (SQL injection, etc.)
-             - Infrastructure security
-             - Dependency vulnerabilities
-             - Business logic flaws
-             - Error handling & information disclosure
-             - CORS & security headers
-             - Rate limiting & abuse prevention
- 
-             For each finding, provide:
-             1. Severity (Critical/High/Medium/Low)
-             2. Clear description of the vulnerability
-             3. Specific risk to the application
-             4. CWE and OWASP classifications
-             5. Line numbers where the vulnerability occurs
- 
-             Return findings in this exact JSON format:
-             {{
-                 "findings": [
-                     {{
-                         "rule_id": "unique_identifier",
-                         "severity": "Critical|High|Medium|Low",
-                         "message": "Brief vulnerability description",
-                         "description": "Detailed explanation",
-                         "file_path": "{file_path}",
-                         "line_number": 123,
-                         "end_line": 125,
-                         "code_snippet": "vulnerable code here",
-                         "cwe_ids": ["CWE-79", "CWE-89"],
-                         "owasp_ids": ["A01:2021", "A03:2021"],
-                         "impact": "High|Medium|Low",
-                         "likelihood": "High|Medium|Low",
-                         "confidence": "High|Medium|Low"
-                     }}
-                 ]
-             }}
- 
-             Be thorough but practical. Focus on real-world risks that indie developers face.
-             """
+            prompt = f"""
+            You are an expert security engineer specializing in making indie developer, vibe coder, solopreneur, and microsaas applications absolutely bulletproof.
+
+            Analyze this {file_type} file for security vulnerabilities:
+
+            FILE: {file_path}
+            CONTENT:
+            {file_content}
+
+            Focus on these critical areas for indie developers:
+            - Authentication & authorization bypasses
+            - Input validation & injection attacks
+            - Data exposure & privacy violations
+            - Cryptography & secrets management
+            - Session management issues
+            - File upload security
+            - API security vulnerabilities
+            - Frontend security (XSS, CSRF)
+            - Backend security (SQL injection, etc.)
+            - Infrastructure security
+            - Dependency vulnerabilities
+            - Business logic flaws
+            - Error handling & information disclosure
+            - CORS & security headers
+            - Rate limiting & abuse prevention
+
+            For each finding, provide:
+            1. Severity (Critical/High/Medium/Low)
+            2. Clear description of the vulnerability
+            3. Specific risk to the application
+            4. CWE and OWASP classifications
+            5. Line numbers where the vulnerability occurs
+
+            Return findings in this exact JSON format:
+            {{
+                "findings": [
+                    {{
+                        "rule_id": "unique_identifier",
+                        "severity": "Critical|High|Medium|Low",
+                        "message": "Brief vulnerability description",
+                        "description": "Detailed explanation",
+                        "file_path": "{file_path}",
+                        "line_number": 123,
+                        "end_line": 125,
+                        "code_snippet": "vulnerable code here",
+                        "cwe_ids": ["CWE-79", "CWE-89"],
+                        "owasp_ids": ["A01:2021", "A03:2021"],
+                        "impact": "High|Medium|Low",
+                        "likelihood": "High|Medium|Low",
+                        "confidence": "High|Medium|Low"
+                    }}
+                ]
+            }}
+
+            Be thorough but practical. Focus on real-world risks that indie developers face.
+            """
 
             # Call ChatGPT API
             client = openai.OpenAI(api_key=self.api_key)
@@ -719,6 +719,16 @@ def handle_options():
 def health_check():
     """Health check endpoint"""
     logger.info("🏥 Health check requested")
+    
+    # Check critical dependencies
+    checks = {
+        'openai_api_key': bool(os.environ.get('OPENAI_API_KEY')),
+        'port': int(os.environ.get('PORT', 8080)),
+        'python_version': f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}",
+        'working_directory': os.getcwd(),
+        'files_in_working_dir': len(os.listdir('.'))
+    }
+    
     return jsonify({
         'status': 'healthy',
         'service': 'chatgpt-security-scanner',
@@ -726,7 +736,8 @@ def health_check():
         'version': '1.0.0',
         'cors_enabled': True,
         'timeout_configured': '900s',
-        'batch_processing': True
+        'batch_processing': True,
+        'health_checks': checks
     })
 
 @app.route('/', methods=['POST'])
@@ -770,13 +781,33 @@ def security_scan():
         return jsonify({'error': str(e), 'error_type': type(e).__name__}), 500
 
 if __name__ == "__main__":
-    # Read port from environment variable (Cloud Run requirement)
-    port = int(os.environ.get('PORT', 8080))
-    logger.info(f"🚀 Starting ChatGPT Security Scanner on port {port}")
-    logger.info(f"🔍 Environment: PORT={port}")
-    logger.info(f"🔒 CORS enabled for all endpoints")
-    logger.info(f"⏱️  Scan timeout protection: 900s")
-    logger.info(f"📦 Batch processing: 5 files concurrently")
-    logger.info(f"⚠️  IMPORTANT: Set Cloud Run timeout to 900s (15 minutes) to avoid 504 errors")
-    logger.info(f"⚠️  IMPORTANT: Ensure OPENAI_API_KEY is set")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    try:
+        # Read port from environment variable (Cloud Run requirement)
+        port = int(os.environ.get('PORT', 8080))
+        logger.info(f"🚀 Starting ChatGPT Security Scanner on port {port}")
+        logger.info(f"🔍 Environment: PORT={port}")
+        logger.info(f"🔒 CORS enabled for all endpoints")
+        logger.info(f"⏱️  Scan timeout protection: 900s")
+        logger.info(f"📦 Batch processing: 5 files concurrently")
+        logger.info(f"⚠️  IMPORTANT: Set Cloud Run timeout to 900s (15 minutes) to avoid 504 errors")
+        logger.info(f"⚠️  IMPORTANT: Ensure OPENAI_API_KEY is set")
+        
+        # Test OpenAI API key availability
+        api_key = os.environ.get('OPENAI_API_KEY')
+        if not api_key:
+            logger.error("❌ OPENAI_API_KEY environment variable is not set!")
+            logger.error("❌ Container will not start without this variable")
+            exit(1)
+        else:
+            logger.info(f"✅ OPENAI_API_KEY is configured (length: {len(api_key)})")
+        
+        # Start the Flask app
+        logger.info(f"🚀 Flask app starting on 0.0.0.0:{port}")
+        app.run(host='0.0.0.0', port=port, debug=False)
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to start container: {e}")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        exit(1)
