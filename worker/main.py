@@ -674,10 +674,19 @@ class ChatGPTSecurityScanner:
         try:
             logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call!")
             
-            # Create ONE comprehensive prompt for ALL findings
+            # Create ONE comprehensive prompt for ALL findings with file locations
             all_findings_summary = []
             for finding in condensed_findings:
                 instances = [f for f in all_findings if f.rule_id == finding.rule_id]
+                # Get all file paths and line numbers for this finding
+                file_locations = []
+                for instance in instances:
+                    file_locations.append({
+                        'file_path': instance.file_path,
+                        'line_number': instance.line_number,
+                        'end_line': instance.end_line
+                    })
+                
                 all_findings_summary.append({
                     'rule_id': finding.rule_id,
                     'message': finding.message,
@@ -685,7 +694,8 @@ class ChatGPTSecurityScanner:
                     'description': finding.description,
                     'cwe_ids': finding.cwe_ids,
                     'owasp_ids': finding.owasp_ids,
-                    'occurrences': finding.occurrences
+                    'occurrences': finding.occurrences,
+                    'file_locations': file_locations
                 })
             
             # ONE MASSIVE PROMPT for ALL findings
@@ -695,6 +705,12 @@ class ChatGPTSecurityScanner:
             VULNERABILITIES TO ANALYZE:
             {json.dumps(all_findings_summary, indent=2)}
             
+            **CRITICAL REQUIREMENT**: For each vulnerability, you MUST include:
+            - The exact file path(s) affected
+            - Specific line numbers where the vulnerability exists
+            - Which pages/components are impacted
+            - How many occurrences exist across the codebase
+            
             For EACH vulnerability, create a remediation prompt that:
             1. Clearly explains the security issue
             2. Provides context about why it's dangerous
@@ -702,6 +718,17 @@ class ChatGPTSecurityScanner:
             4. Is written for coding assistants (Cursor, GitHub Copilot, etc.)
             5. Includes code examples where appropriate
             6. Addresses the root cause, not just symptoms
+            7. **ALWAYS mentions the specific files and line numbers affected**
+            
+            Example format for each remediation:
+            ```
+            **Critical: Missing Authorization Checks**
+            - **Files Affected**: `src/app/dashboard/page.tsx` (lines 45-67), `src/components/auth/requireAuth.tsx` (lines 23-45)
+            - **Pages Impacted**: Dashboard page, User settings page
+            - **Occurrences**: Found in 3 files across the codebase
+            - **Fix**: Implement proper role-based access control in the requireAuth function
+            - **Action**: Add authorization checks before accessing sensitive resources
+            ```
             
             Return in this EXACT JSON format:
             {{
@@ -713,6 +740,7 @@ class ChatGPTSecurityScanner:
             }}
             
             Make each prompt specific enough that a coding assistant can implement the fix robustly.
+            **IMPORTANT**: Every remediation must include the exact file paths and line numbers.
             """
             
             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
@@ -788,29 +816,51 @@ class ChatGPTSecurityScanner:
             DETAILED FINDINGS:
             {json.dumps([asdict(f) for f in condensed_findings], indent=2)}
 
-            Create a master remediation plan broken down into clear phases:
+            Create a master remediation plan broken down into clear phases. For each finding, ALWAYS include:
             
+            **CRITICAL REQUIREMENT**: For every security issue mentioned, you MUST specify:
+            - The exact file path(s) affected
+            - The specific page(s) or component(s) impacted
+            - Line numbers where the vulnerability exists
+            - Which users/roles are affected
+            
+            Example format:
+            ```
+            **Critical: Missing Authorization Checks**
+            - **Files Affected**: `src/app/dashboard/page.tsx` (lines 45-67), `src/components/auth/requireAuth.tsx` (lines 23-45)
+            - **Pages Impacted**: Dashboard page, User settings page, Admin panel
+            - **Users Affected**: All authenticated users, especially admin users
+            - **Fix**: Implement proper role-based access control
+            - **Action**: Add authorization checks in requireAuth function
+            ```
+
             PHASE 1: Critical & High Priority (Immediate Action Required)
             - List specific fixes for Critical and High severity issues
+            - Include exact file paths, line numbers, and affected pages
+            - Specify which users/roles are impacted
             - Include immediate security patches needed
             
             PHASE 2: Medium Priority (Short-term Implementation)
-            - Address medium severity issues
+            - Address medium severity issues with specific file locations
+            - Include affected pages and components
             - Include testing and validation steps
             
             PHASE 3: Low Priority & Security Hardening (Long-term)
-            - Address low severity issues
+            - Address low severity issues with file paths
             - Include security best practices implementation
+            - Specify which areas of the codebase need attention
             
             PHASE 4: Testing & Validation
-            - Security testing procedures
+            - Security testing procedures for each specific file
             - Validation steps for each fix
+            - Test the specific pages and components mentioned
             
             PHASE 5: Monitoring & Prevention
             - Ongoing security measures
             - Prevention strategies for future issues
+            - Monitor the specific files and pages mentioned
 
-            Make each phase actionable and practical for indie developers to implement.
+            **IMPORTANT**: Every security finding must include the exact file path, affected pages, and line numbers. This helps developers quickly locate and fix issues.
             """
 
             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection

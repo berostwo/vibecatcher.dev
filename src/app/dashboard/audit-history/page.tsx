@@ -17,7 +17,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
-import { Clock, SquareMenu, ShieldAlert, AlertTriangle, Info, Code, CheckCircle, Loader2 } from "lucide-react"
+import { Clock, SquareMenu, ShieldAlert, AlertTriangle, Info, Code, CheckCircle, Loader2, Download } from "lucide-react"
 import { DashboardPage, DashboardPageHeader } from "@/components/common/dashboard-page"
 
 // This will be replaced with real data from Firebase
@@ -97,6 +97,44 @@ export default function AuditHistoryPage() {
     if (score > 40) return 'text-orange-500';
     return 'text-red-500';
   }
+
+  const downloadAuditAsJSON = (audit: SecurityAudit) => {
+    try {
+      // Create a clean audit object for download
+      const auditData = {
+        id: audit.id,
+        repositoryName: audit.repositoryName,
+        status: audit.status,
+        createdAt: audit.createdAt?.toDate?.() || audit.createdAt,
+        completedAt: audit.completedAt?.toDate?.() || audit.completedAt,
+        scanResults: audit.scanResults,
+        error: audit.error
+      };
+
+      // Convert to JSON string
+      const jsonString = JSON.stringify(auditData, null, 2);
+      
+      // Create blob and download
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      
+      // Create download link
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `security-audit-${audit.repositoryName}-${audit.id}.json`;
+      
+      // Trigger download
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading audit:', error);
+      alert('Failed to download audit. Please try again.');
+    }
+  };
 
 
 
