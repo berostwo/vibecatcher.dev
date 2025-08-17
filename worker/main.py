@@ -20,6 +20,9 @@ from collections import OrderedDict
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Global variable for progress tracking
+current_scan_progress = None
+
 # Configuration
 MAX_REPO_SIZE_MB = 500
 MAX_SCAN_TIME_SECONDS = 300  # 5 minutes
@@ -117,6 +120,7 @@ class ChatGPTSecurityScanner:
         self.progress_callback = None
         self.current_step = "Initializing"
         self.step_progress = 0.0
+        self.progress_updates = []  # Store progress updates for the current scan
         
         # Security categories for comprehensive coverage
         
@@ -172,13 +176,16 @@ class ChatGPTSecurityScanner:
         self.current_step = step
         self.step_progress = progress
         
+        # Store progress update in the instance
+        progress_data = {
+            'step': step,
+            'progress': progress,
+            'timestamp': datetime.now().isoformat()
+        }
+        self.progress_updates.append(progress_data)
+        
         if self.progress_callback:
             try:
-                progress_data = {
-                    'step': step,
-                    'progress': progress,
-                    'timestamp': datetime.now().isoformat()
-                }
                 logger.info(f"📊 PROGRESS: {step} - {progress:.1f}%")
                 logger.info(f"📊 CALLING PROGRESS CALLBACK: {progress_data}")
                 self.progress_callback(progress_data)
@@ -1166,14 +1173,15 @@ class ChatGPTSecurityScanner:
             logger.info(f"🎯 Report validation complete")
             logger.info(f"🚀 Scan completed successfully in {scan_duration:.2f}s")
             
-            # Add progress data to result
-            result['progress_data'] = progress_updates
+            # Add progress data to report
+            report_dict = asdict(report)
+            report_dict['progress_data'] = self.progress_updates
             
             # 🚀 ADD CACHE STATISTICS to scan result
             try:
                 cache_stats = self.get_cache_statistics()
-                result['cache_statistics'] = cache_stats
-                result['cache_benefits'] = {
+                report_dict['cache_statistics'] = cache_stats
+                report_dict['cache_benefits'] = {
                     'cost_savings': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
                     'time_savings': f"{cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes",
                     'hit_rate': f"{cache_stats.get('hit_rate_percent', 0)}%",
@@ -1182,11 +1190,11 @@ class ChatGPTSecurityScanner:
                 logger.info(f"📊 CACHE STATS: Scan completed with {cache_stats.get('hit_rate_percent', 0)}% cache hit rate")
             except Exception as cache_error:
                 logger.warning(f"⚠️ Failed to get cache statistics: {cache_error}")
-                result['cache_statistics'] = {'error': 'Failed to retrieve cache statistics'}
+                report_dict['cache_statistics'] = {'error': 'Failed to retrieve cache statistics'}
             
-            logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
+            logger.info(f"✅ Scan completed successfully in {scan_duration:.1f}s")
             
-            return asdict(report)
+            return report_dict
             
         except Exception as e:
             logger.error(f"❌ Security scan failed: {e}")
@@ -2642,7 +2650,7 @@ def security_scan():
                 return jsonify(result), 500
             
             # Add progress data to result
-            result['progress_data'] = progress_updates
+            # Progress data is already included in the result from scan_repository
             
             logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
             
