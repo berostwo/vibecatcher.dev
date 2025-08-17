@@ -720,6 +720,43 @@ class FrameworkDetector:
         - Verify proper error handling
         """
 
+
+
+# Configuration
+MAX_REPO_SIZE_MB = 500
+MAX_SCAN_TIME_SECONDS = 300  # 5 minutes
+ALLOWED_REPO_DOMAINS = ['github.com', 'gitlab.com', 'bitbucket.org']
+
+@dataclass
+class SecurityFinding:
+    """Represents a security finding with all details"""
+    rule_id: str
+    severity: str  # Critical, High, Medium, Low
+    message: str
+    description: str
+    file_path: str
+    line_number: int
+    end_line: int
+    code_snippet: str
+    cwe_ids: List[str]
+    owasp_ids: List[str]
+    impact: str
+    likelihood: str
+    confidence: str
+    occurrences: int = 1
+
+@dataclass
+class SecurityReport:
+    """Complete security audit report"""
+    summary: Dict[str, Any]
+    findings: List[SecurityFinding]
+    condensed_findings: List[SecurityFinding]
+    condensed_remediations: Dict[str, str]  # rule_id -> remediation prompt
+    master_remediation: str
+    scan_duration: float
+    timestamp: str
+    repository_info: Dict[str, Any]
+
 class FalsePositiveFilter:
     """Filters out false positives based on context and patterns"""
     
@@ -782,7 +819,7 @@ class FalsePositiveFilter:
         return ""
     
     def _is_framework_handled_issue(self, finding: SecurityFinding, framework: str) -> bool:
-        """Check if issue is handled by framework"""
+        """Check if finding is handled by framework"""
         framework_handlers = {
             'nextjs': ['csrf', 'xss', 'authentication'],
             'react': ['xss', 'state_management'],
@@ -797,41 +834,6 @@ class FalsePositiveFilter:
                     return True
         
         return False
-
-# Configuration
-MAX_REPO_SIZE_MB = 500
-MAX_SCAN_TIME_SECONDS = 300  # 5 minutes
-ALLOWED_REPO_DOMAINS = ['github.com', 'gitlab.com', 'bitbucket.org']
-
-@dataclass
-class SecurityFinding:
-    """Represents a security finding with all details"""
-    rule_id: str
-    severity: str  # Critical, High, Medium, Low
-    message: str
-    description: str
-    file_path: str
-    line_number: int
-    end_line: int
-    code_snippet: str
-    cwe_ids: List[str]
-    owasp_ids: List[str]
-    impact: str
-    likelihood: str
-    confidence: str
-    occurrences: int = 1
-
-@dataclass
-class SecurityReport:
-    """Complete security audit report"""
-    summary: Dict[str, Any]
-    findings: List[SecurityFinding]
-    condensed_findings: List[SecurityFinding]
-    condensed_remediations: Dict[str, str]  # rule_id -> remediation prompt
-    master_remediation: str
-    scan_duration: float
-    timestamp: str
-    repository_info: Dict[str, Any]
 
 class ChatGPTSecurityScanner:
     """Ultimate ChatGPT-powered security scanner for indie developers"""
