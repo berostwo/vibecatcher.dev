@@ -346,6 +346,43 @@ export default function SecurityAuditPage() {
         setCurrentAudit(activeAudit);
         
         if (activeAudit.status === 'running') {
+          // Check if worker actually has an active scan
+          try {
+            const progressResponse = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+            if (progressResponse.ok) {
+              const progressData = await progressResponse.json();
+              
+              if (progressData.status === 'no_scan_running') {
+                console.log('🔍 Worker has no active scan, cleaning up stale audit');
+                // Worker has no active scan, but Firebase shows running - clean it up
+                await FirebaseAuditService.updateAuditStatus(
+                  activeAudit.id, 
+                  'failed', 
+                  undefined, 
+                  'Worker lost connection - audit cleanup'
+                );
+                setCurrentAudit(null);
+                setIsScanning(false);
+                setScanProgress(null);
+                return;
+              }
+            }
+          } catch (error) {
+            console.error('Error checking worker status:', error);
+            // If we can't reach worker, assume audit is stale
+            await FirebaseAuditService.updateAuditStatus(
+              activeAudit.id, 
+              'failed', 
+              undefined, 
+              'Cannot reach worker - audit cleanup'
+            );
+            setCurrentAudit(null);
+            setIsScanning(false);
+            setScanProgress(null);
+            return;
+          }
+          
+          // Worker has active scan, resume progress polling
           setIsScanning(true);
           if (activeAudit.progress) {
             setScanProgress({
@@ -393,6 +430,21 @@ export default function SecurityAuditPage() {
             setIsScanning(false);
             setScanProgress(null);
             setCurrentAudit(null);
+            
+            // Also clean up the stale audit in Firebase
+            try {
+              if (currentAudit) {
+                await FirebaseAuditService.updateAuditStatus(
+                  currentAudit.id, 
+                  'failed', 
+                  undefined, 
+                  'Worker reports no scan running - automatic cleanup'
+                );
+              }
+            } catch (error) {
+              console.error('Failed to cleanup stale audit:', error);
+            }
+            
             return true; // Signal to stop polling
           }
         }
@@ -718,6 +770,44 @@ export default function SecurityAuditPage() {
                 Reset Scan
               </Button>
             )}
+            <Button 
+              onClick={async () => {
+                try {
+                  // Clean up any stale audits
+                  if (currentAudit && (currentAudit.status === 'running' || currentAudit.status === 'pending')) {
+                    await FirebaseAuditService.updateAuditStatus(
+                      currentAudit.id, 
+                      'failed', 
+                      undefined, 
+                      'Manual cleanup - user reset'
+                    );
+                    setCurrentAudit(null);
+                    setIsScanning(false);
+                    setScanProgress(null);
+                    toast({
+                      title: 'Cleanup Complete',
+                      description: 'Stale audit has been cleaned up. You can start a new scan.',
+                    });
+                  } else {
+                    toast({
+                      title: 'No Cleanup Needed',
+                      description: 'No stale audits found.',
+                    });
+                  }
+                } catch (error) {
+                  console.error('Cleanup failed:', error);
+                  toast({
+                    title: 'Cleanup Failed',
+                    description: 'Failed to clean up stale audit.',
+                    variant: 'destructive',
+                  });
+                }
+              }}
+              variant="outline"
+              className="min-w-[120px]"
+            >
+              Cleanup Stale
+            </Button>
             <Button 
               onClick={async () => {
                 try {
