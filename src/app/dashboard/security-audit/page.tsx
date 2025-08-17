@@ -248,7 +248,7 @@ const AuditReportTemplate = ({ results, masterRemediation }: {
                                              <div className="flex items-center gap-2">
                          <p className="text-sm text-muted-foreground font-mono">
                            {vuln.occurrences > 1 
-                             ? `${vuln.file}:${vuln.line} (${vuln.occurrences} occurrences)`
+                             ? `${vuln.occurrences} occurrences`
                              : `${vuln.file}:${vuln.line}`
                            }
                          </p>
@@ -529,12 +529,37 @@ export default function SecurityAuditPage() {
     let progressInterval: NodeJS.Timeout | undefined;
     
     try {
+      // Input validation
+      if (!selectedRepository || typeof selectedRepository !== 'string') {
+        throw new Error('Invalid repository selection. Please select a valid repository.');
+      }
+
+      if (!userGitHubUsername || typeof userGitHubUsername !== 'string') {
+        throw new Error('Invalid GitHub username. Please re-authenticate with GitHub.');
+      }
+
+      // Validate repository name format (GitHub username/repo-name)
+      const repoNameRegex = /^[a-zA-Z0-9._-]+$/;
+      if (!repoNameRegex.test(selectedRepository)) {
+        throw new Error('Invalid repository name format. Repository names can only contain letters, numbers, dots, underscores, and hyphens.');
+      }
+
+      // Validate GitHub username format
+      if (!repoNameRegex.test(userGitHubUsername)) {
+        throw new Error('Invalid GitHub username format.');
+      }
+
       // Get GitHub token from user service
       const firebaseUser = await FirebaseUserService.getUserByUid(user!.uid);
       const githubToken = firebaseUser?.githubAccessToken;
 
       if (!githubToken) {
         throw new Error('GitHub token not found. Please re-authenticate with GitHub.');
+      }
+
+      // Validate GitHub token format (basic check)
+      if (!githubToken.startsWith('ghp_') && !githubToken.startsWith('gho_') && !githubToken.startsWith('ghu_')) {
+        throw new Error('Invalid GitHub token format. Please re-authenticate with GitHub.');
       }
 
       const repositoryUrl = `https://github.com/${userGitHubUsername}/${selectedRepository}`;
@@ -585,6 +610,10 @@ export default function SecurityAuditPage() {
       // PROGRESS TRACKING: Start real-time progress polling immediately
       console.log('🚀 Starting progress polling...');
       
+      // Track when we started the scan for grace period
+      const scanStartTime = Date.now();
+      const GRACE_PERIOD_MS = 15000; // 15 seconds grace period
+      
       const pollProgress = async () => {
         try {
           console.log('📊 Polling progress endpoint...');
@@ -594,6 +623,7 @@ export default function SecurityAuditPage() {
           if (progressResponse.ok) {
             const progressData = await progressResponse.json();
             console.log('📊 Progress data received:', progressData);
+            console.log('📊 Time since scan start:', Math.round((Date.now() - scanStartTime) / 1000), 'seconds');
             
             // Check if we have valid progress data (not just status message)
             if (progressData.step && typeof progressData.progress === 'number') {
@@ -626,8 +656,16 @@ export default function SecurityAuditPage() {
               }
             } else if (progressData.status === 'no_scan_running') {
               console.log('📊 No scan running, status:', progressData.status);
-              // If no scan is running, stop polling but don't throw error
-              // This can happen when scan completes and worker resets
+              
+              // Check if we're still in the grace period
+              const timeSinceScanStart = Date.now() - scanStartTime;
+              if (timeSinceScanStart < GRACE_PERIOD_MS) {
+                console.log(`📊 Still in grace period (${Math.round((GRACE_PERIOD_MS - timeSinceScanStart) / 1000)}s remaining) - ignoring 'no_scan_running'`);
+                return false; // Continue polling during grace period
+              }
+              
+              // Grace period expired - stop polling
+              console.log('📊 Grace period expired, stopping progress polling');
               if (progressInterval) {
                 clearInterval(progressInterval);
                 progressInterval = undefined;
@@ -659,6 +697,17 @@ export default function SecurityAuditPage() {
       
       // Initial poll
       pollProgress();
+      
+      // Also add a delayed check to ensure progress polling is working
+      setTimeout(() => {
+        console.log('📊 Delayed progress check - ensuring polling is active');
+        if (progressInterval) {
+          console.log('📊 Progress interval is active, continuing to poll');
+        } else {
+          console.log('📊 Progress interval was cleared, restarting polling');
+          progressInterval = setInterval(pollProgress, 500);
+        }
+      }, 5000); // Check after 5 seconds
 
       // Now wait for the scan to complete
       console.log('🚀 Waiting for scan to complete...');

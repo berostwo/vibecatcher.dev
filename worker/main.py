@@ -260,39 +260,55 @@ class ChatGPTSecurityScanner:
     def analyze_file_with_chatgpt(self, file_path: str, file_content: str, file_type: str) -> List[SecurityFinding]:
         """Analyze a single file with ChatGPT for security vulnerabilities"""
         try:
-            # Build comprehensive security analysis prompt
+            # Get file-specific analysis rules
+            analysis_rules = self.get_file_analysis_rules(file_path)
+            
+            # Build UNIVERSAL context-aware security analysis prompt for ALL tech stacks
             prompt = f"""
-            You are an expert security engineer specializing in making indie developer, vibe coder, solopreneur, and microsaas applications absolutely bulletproof.
-
-            Analyze this {file_type} file for security vulnerabilities:
+            You are an expert security engineer analyzing a {file_type} file in a modern web application.
 
             FILE: {file_path}
             CONTENT:
             {file_content}
 
-            Focus on these critical areas for indie developers:
-            - Authentication & authorization bypasses
-            - Input validation & injection attacks
-            - Data exposure & privacy violations
-            - Cryptography & secrets management
-            - Session management issues
-            - File upload security
-            - API security vulnerabilities
-            - Frontend security (XSS, CSRF)
-            - Backend security (SQL injection, etc.)
-            - Infrastructure security
-            - Dependency vulnerabilities
-            - Business logic flaws
-            - Error handling & information disclosure
-            - CORS & security headers
-            - Rate limiting & abuse prevention
+            APPLICATION CONTEXT:
+            - This is a modern web application (could be Next.js, Nuxt, Vue, React, Svelte, Angular, etc.)
+            - Uses modern authentication (OAuth, JWT, session-based, etc.)
+            - Has a backend (could be Firebase, Supabase, MongoDB, PostgreSQL, MySQL, etc.)
+            - Built for indie developers, solopreneurs, and small teams
 
-            For each finding, provide:
-            1. Severity (Critical/High/Medium/Low)
-            2. Clear description of the vulnerability
-            3. Specific risk to the application
-            4. CWE and OWASP classifications
-            5. Line numbers where the vulnerability occurs
+            CRITICAL: IGNORE THESE FALSE POSITIVES (ALL PLATFORMS):
+            - Environment variables with PUBLIC prefixes (NEXT_PUBLIC_, NUXT_PUBLIC_, VITE_PUBLIC_, etc.)
+            - OAuth client IDs, redirect URIs (PUBLIC by design - not secrets)
+            - Database configuration keys (PUBLIC by design - not secrets)
+            - Build-time environment access patterns
+            - Public API endpoints that are meant to be accessible
+            - Configuration files with intentionally public values
+            - Component props and UI configuration
+            - Package.json dependencies and metadata
+            - Framework configuration files
+
+            FOCUS ON REAL SECURITY VULNERABILITIES:
+            - XSS in user input rendering (dangerouslySetInnerHTML, user input in DOM)
+            - SQL injection in database queries (user input in SQL)
+            - CSRF in state-changing operations (POST/PUT/DELETE without tokens)
+            - Authentication bypasses (missing auth checks, weak validation)
+            - Insecure file upload handling (no file type validation, path traversal)
+            - Exposed sensitive endpoints (admin routes, internal APIs)
+            - Weak password policies (no complexity requirements)
+            - Session fixation attacks (predictable session IDs)
+            - Information disclosure (error messages, stack traces)
+            - Insecure deserialization (user input in eval, JSON.parse)
+            - Dependency vulnerabilities (outdated packages with known CVEs)
+            - Insecure default configurations
+
+            ANALYSIS RULES:
+            1. Only report ACTUAL security vulnerabilities, not configuration patterns
+            2. Focus on code that processes user input or handles sensitive operations
+            3. Look for missing security controls (auth, validation, sanitization)
+            4. Consider the real-world impact on the application
+            5. Be practical - focus on risks that indie developers actually face
+            6. Ignore findings about intentionally public configuration values
 
             Return findings in this exact JSON format:
             {{
@@ -315,9 +331,12 @@ class ChatGPTSecurityScanner:
                 ]
             }}
             
-            IMPORTANT: For rule_id, use a descriptive identifier like "xss_vulnerability", "sql_injection", "csrf_missing", etc. NOT generic numbers like "VULN-001".
-
-            Be thorough but practical. Focus on real-world risks that indie developers face.
+            IMPORTANT: 
+            - For rule_id, use descriptive identifiers like "xss_vulnerability", "sql_injection", "csrf_missing"
+            - Only report findings that represent REAL security risks
+            - If no actual vulnerabilities found, return empty findings array
+            - Be thorough but practical for indie developer applications
+            - This scanner works for ALL modern web frameworks and platforms
             """
 
             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
@@ -398,10 +417,13 @@ class ChatGPTSecurityScanner:
     
     def condense_findings(self, findings: List[SecurityFinding]) -> List[SecurityFinding]:
         """Condense multiple similar findings into one with occurrence count"""
+        # First, filter out false positives
+        filtered_findings = self.filter_false_positives(findings)
+        
         condensed = {}
         condensed_counter = 1  # Counter for unique condensed finding IDs
         
-        for finding in findings:
+        for finding in filtered_findings:
             # Create a key based on vulnerability TYPE and severity, not specific rule_id
             # Extract the vulnerability type from the message (e.g., "XSS", "CSRF", "SQL Injection")
             vulnerability_type = self.extract_vulnerability_type(finding.message)
@@ -435,6 +457,138 @@ class ChatGPTSecurityScanner:
                 condensed_counter += 1
         
         return list(condensed.values())
+
+    def filter_false_positives(self, findings: List[SecurityFinding]) -> List[SecurityFinding]:
+        """Universal false positive filtering system for ALL tech stacks"""
+        if not findings:
+            return []
+        
+        filtered = []
+        false_positive_count = 0
+        
+        # UNIVERSAL false positive patterns for ALL tech stacks
+        universal_false_positive_patterns = [
+            # Environment Variables (ALL platforms)
+            'next_public_', 'nuxt_public_', 'vite_public_', 'svelte_public_',
+            'process.env.public', 'import.meta.env.public', 'window.env.public',
+            'public environment', 'public config', 'public variable',
+            
+            # OAuth & Authentication (ALL platforms)
+            'client id', 'client_id', 'redirect uri', 'redirect_uri',
+            'oauth config', 'auth config', 'public oauth', 'public auth',
+            'github client', 'google client', 'facebook client', 'discord client',
+            
+            # Database Configuration (ALL platforms)
+            'supabase config', 'firebase config', 'mongodb config', 'postgres config',
+            'database config', 'db config', 'connection string', 'connection_string',
+            'public database', 'public connection', 'public endpoint',
+            
+            # Build & Framework Config (ALL platforms)
+            'webpack config', 'vite config', 'rollup config', 'esbuild config',
+            'babel config', 'typescript config', 'tailwind config', 'postcss config',
+            'next config', 'nuxt config', 'svelte config', 'vue config',
+            'angular config', 'react config', 'ember config',
+            
+            # Component & UI (ALL frameworks)
+            'component props', 'component configuration', 'ui config', 'ui configuration',
+            'public props', 'public interface', 'public component', 'public ui',
+            'theme config', 'style config', 'css config', 'design system',
+            
+            # API & Service Configuration (ALL platforms)
+            'api config', 'service config', 'endpoint config', 'route config',
+            'public api', 'public service', 'public endpoint', 'public route',
+            'stripe config', 'paypal config', 'aws config', 'azure config',
+            
+            # General Configuration Files (ALL platforms)
+            'config file', 'configuration file', 'setup file', 'initialization file',
+            'package.json', 'composer.json', 'requirements.txt', 'gemfile',
+            'cargo.toml', 'go.mod', 'pom.xml', 'build.gradle',
+            
+            # Documentation & Build Artifacts
+            'readme', 'changelog', 'license', 'contributing',
+            'build output', 'dist folder', 'out folder', 'coverage report',
+            
+            # Development Tools (ALL platforms)
+            'eslint config', 'prettier config', 'stylelint config', 'husky config',
+            'lint staged', 'commitlint', 'jest config', 'vitest config',
+            'cypress config', 'playwright config', 'storybook config'
+        ]
+        
+        for finding in findings:
+            # Check if finding matches universal false positive patterns
+            finding_text = f"{finding.message.lower()} {finding.description.lower()}"
+            
+            is_false_positive = False
+            for pattern in universal_false_positive_patterns:
+                if pattern in finding_text:
+                    is_false_positive = True
+                    false_positive_count += 1
+                    logger.info(f"🔍 UNIVERSAL FILTER: Filtered false positive: {finding.message[:100]}...")
+                    break
+            
+            if not is_false_positive:
+                filtered.append(finding)
+        
+        logger.info(f"✅ UNIVERSAL False positive filtering: {len(findings)} → {len(filtered)} findings (filtered {false_positive_count})")
+        return filtered
+
+    def is_false_positive_finding(self, finding: SecurityFinding, file_path: str) -> bool:
+        """Universal false positive detection for ALL tech stacks"""
+        file_path_lower = file_path.lower()
+        finding_text = f"{finding.message.lower()} {finding.description.lower()}"
+        
+        # Database & Backend files (ALL platforms) - ignore public config findings
+        if any(term in file_path_lower for term in [
+            'firebase', 'supabase', 'mongodb', 'postgres', 'mysql', 'sqlite',
+            'prisma', 'sequelize', 'typeorm', 'drizzle', 'knex'
+        ]):
+            if any(term in finding_text for term in [
+                'next_public', 'nuxt_public', 'vite_public', 'svelte_public',
+                'database config', 'db config', 'connection string', 'public database'
+            ]):
+                return True
+        
+        # OAuth & Authentication files (ALL platforms) - ignore OAuth config findings
+        elif any(term in file_path_lower for term in [
+            'oauth', 'auth', 'github', 'google', 'facebook', 'discord', 'twitter',
+            'login', 'register', 'signin', 'signup', 'authentication'
+        ]):
+            if any(term in finding_text for term in [
+                'client id', 'client_id', 'oauth config', 'redirect uri', 'public oauth'
+            ]):
+                return True
+        
+        # Configuration & Build files (ALL platforms) - ignore config findings
+        elif any(term in file_path_lower for term in [
+            'config', 'env', 'setup', 'webpack', 'vite', 'rollup', 'esbuild',
+            'babel', 'typescript', 'tailwind', 'postcss', 'eslint', 'prettier'
+        ]):
+            if any(term in finding_text for term in [
+                'environment', 'config file', 'build config', 'framework config'
+            ]):
+                return True
+        
+        # Frontend Component files (ALL frameworks) - ignore UI config findings
+        elif any(term in file_path_lower for term in [
+            'component', 'page', 'ui', 'view', 'screen', 'layout',
+            'react', 'vue', 'svelte', 'angular', 'ember', 'next', 'nuxt'
+        ]):
+            if any(term in finding_text for term in [
+                'component props', 'ui config', 'public props', 'theme config'
+            ]):
+                return True
+        
+        # Package & Dependency files (ALL platforms) - ignore package findings
+        elif any(term in file_path_lower for term in [
+            'package.json', 'composer.json', 'requirements.txt', 'gemfile',
+            'cargo.toml', 'go.mod', 'pom.xml', 'build.gradle', 'yarn.lock'
+        ]):
+            if any(term in finding_text for term in [
+                'dependency list', 'package list', 'version info', 'license info'
+            ]):
+                return True
+        
+        return False
     
     def extract_vulnerability_type(self, message: str) -> str:
         """Extract vulnerability type from message for grouping"""
@@ -1808,6 +1962,162 @@ class ChatGPTSecurityScanner:
             logger.info(f"🎯 PHASE 4 ML: {file_path} marked as LOW RISK (score: {risk_score:.2f}) - Quick analysis only")
             return False
 
+    def get_file_analysis_rules(self, file_path: str) -> Dict[str, Any]:
+        """Universal analysis rules for ALL tech stacks to reduce false positives"""
+        file_path_lower = file_path.lower()
+        
+        # Database & Backend Configuration (ALL platforms)
+        if any(term in file_path_lower for term in [
+            'firebase', 'supabase', 'mongodb', 'postgres', 'mysql', 'sqlite',
+            'prisma', 'sequelize', 'typeorm', 'drizzle', 'knex'
+        ]):
+            return {
+                'ignore_patterns': [
+                    'NEXT_PUBLIC_', 'NUXT_PUBLIC_', 'VITE_PUBLIC_', 'SVELTE_PUBLIC_',
+                    'process.env.public', 'import.meta.env.public', 'window.env.public',
+                    'database config', 'db config', 'connection string', 'connection_string',
+                    'public database', 'public connection', 'public endpoint'
+                ],
+                'focus_on': [
+                    'authentication logic',
+                    'database security rules',
+                    'user permission handling',
+                    'sql injection prevention',
+                    'data validation'
+                ],
+                'skip_checks': [
+                    'environment_variable_exposure',
+                    'config_file_exposure',
+                    'public_key_exposure',
+                    'database_config_exposure'
+                ]
+            }
+        
+        # OAuth & Authentication (ALL platforms)
+        elif any(term in file_path_lower for term in [
+            'oauth', 'auth', 'github', 'google', 'facebook', 'discord', 'twitter',
+            'login', 'register', 'signin', 'signup', 'authentication'
+        ]):
+            return {
+                'ignore_patterns': [
+                    'client id', 'client_id', 'redirect uri', 'redirect_uri',
+                    'oauth config', 'auth config', 'public oauth', 'public auth',
+                    'github client', 'google client', 'facebook client', 'discord client'
+                ],
+                'focus_on': [
+                    'state validation',
+                    'token handling',
+                    'session management',
+                    'authentication bypasses',
+                    'csrf protection',
+                    'password security'
+                ],
+                'skip_checks': [
+                    'oauth_config_exposure',
+                    'client_secret_exposure',
+                    'redirect_uri_exposure'
+                ]
+            }
+        
+        # API & Backend Routes (ALL platforms)
+        elif any(term in file_path_lower for term in [
+            'api/', 'routes/', 'controllers/', 'handlers/', 'endpoints/',
+            'middleware/', 'services/', 'utils/', 'helpers/'
+        ]):
+            return {
+                'ignore_patterns': [],
+                'focus_on': [
+                    'input validation',
+                    'authentication checks',
+                    'authorization logic',
+                    'rate limiting',
+                    'error handling',
+                    'sql injection prevention',
+                    'xss prevention'
+                ],
+                'skip_checks': []
+            }
+        
+        # Frontend Components & Pages (ALL frameworks)
+        elif any(term in file_path_lower for term in [
+            'component', 'page', 'ui', 'view', 'screen', 'layout',
+            'react', 'vue', 'svelte', 'angular', 'ember', 'next', 'nuxt'
+        ]):
+            return {
+                'ignore_patterns': [
+                    'public props', 'component props', 'ui configuration',
+                    'theme config', 'style config', 'css config', 'design system'
+                ],
+                'focus_on': [
+                    'XSS prevention',
+                    'user input handling',
+                    'dangerouslySetInnerHTML usage',
+                    'client-side validation',
+                    'csrf protection',
+                    'secure data handling'
+                ],
+                'skip_checks': [
+                    'component_prop_exposure',
+                    'ui_config_exposure',
+                    'theme_exposure'
+                ]
+            }
+        
+        # Configuration & Build Files (ALL platforms)
+        elif any(term in file_path_lower for term in [
+            'config', 'env', 'setup', 'webpack', 'vite', 'rollup', 'esbuild',
+            'babel', 'typescript', 'tailwind', 'postcss', 'eslint', 'prettier'
+        ]):
+            return {
+                'ignore_patterns': [
+                    'NEXT_PUBLIC_', 'NUXT_PUBLIC_', 'VITE_PUBLIC_', 'SVELTE_PUBLIC_',
+                    'process.env.public', 'import.meta.env.public', 'window.env.public',
+                    'public config', 'build config', 'framework config'
+                ],
+                'focus_on': [
+                    'security settings',
+                    'authentication config',
+                    'CORS configuration',
+                    'security headers',
+                    'build security'
+                ],
+                'skip_checks': [
+                    'config_file_exposure',
+                    'environment_exposure',
+                    'build_config_exposure'
+                ]
+            }
+        
+        # Package & Dependency Files (ALL platforms)
+        elif any(term in file_path_lower for term in [
+            'package.json', 'composer.json', 'requirements.txt', 'gemfile',
+            'cargo.toml', 'go.mod', 'pom.xml', 'build.gradle', 'yarn.lock'
+        ]):
+            return {
+                'ignore_patterns': [
+                    'dependency list', 'package list', 'module list',
+                    'version info', 'license info', 'author info'
+                ],
+                'focus_on': [
+                    'vulnerable dependencies',
+                    'outdated packages',
+                    'security advisories',
+                    'license compliance'
+                ],
+                'skip_checks': [
+                    'package_exposure',
+                    'dependency_exposure',
+                    'version_exposure'
+                ]
+            }
+        
+        # Default rules for other files
+        return {
+            'ignore_patterns': [],
+            'focus_on': ['all'],
+            'skip_checks': []
+        }
+
 # Create Flask app
 app = Flask(__name__)
 
@@ -1904,8 +2214,24 @@ def security_scan():
         repo_url = data.get('repository_url')
         github_token = data.get('github_token')
         
+        # Input validation
         if not repo_url:
             return jsonify({'error': 'repository_url is required'}), 400
+        
+        # Validate repository URL format
+        if not isinstance(repo_url, str):
+            return jsonify({'error': 'repository_url must be a string'}), 400
+        
+        if not repo_url.startswith('https://github.com/'):
+            return jsonify({'error': 'repository_url must be a valid GitHub HTTPS URL'}), 400
+        
+        # Validate GitHub token format if provided
+        if github_token:
+            if not isinstance(github_token, str):
+                return jsonify({'error': 'github_token must be a string'}), 400
+            
+            if not github_token.startswith(('ghp_', 'gho_', 'ghu_')):
+                return jsonify({'error': 'Invalid GitHub token format'}), 400
         
         logger.info(f"🚀 Starting security scan for: {repo_url}")
         

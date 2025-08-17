@@ -228,8 +228,10 @@ export default function AuditHistoryPage() {
                                         <div className="flex-grow text-left">
                                             <p className={`font-semibold ${textColor}`}>{vuln.message}</p>
                                             <p className="text-sm text-muted-foreground font-mono">
-                                              {vuln.file_path}:{vuln.line_number}
-                                              {vuln.occurrences > 1 && ` (${vuln.occurrences} occurrences)`}
+                                              {vuln.occurrences > 1 
+                                                ? `${vuln.occurrences} occurrences`
+                                                : `${vuln.file_path}:${vuln.line_number}`
+                                              }
                                             </p>
                                         </div>
                                     </div>

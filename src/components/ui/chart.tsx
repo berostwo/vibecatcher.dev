@@ -76,25 +76,32 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
     return null
   }
 
+  // Sanitize and escape CSS content to prevent XSS
+  const sanitizedCSS = Object.entries(THEMES)
+    .map(([theme, prefix]) => {
+      const sanitizedTheme = theme.replace(/[^a-zA-Z0-9-_]/g, '');
+      const sanitizedPrefix = prefix.replace(/[^a-zA-Z0-9-_[\]]/g, '');
+      
+      return `${sanitizedPrefix} [data-chart="${id}"] {
+${colorConfig
+  .map(([key, itemConfig]) => {
+    const sanitizedKey = key.replace(/[^a-zA-Z0-9-_]/g, '');
+    const color =
+      itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
+      itemConfig.color;
+    return color ? `  --color-${sanitizedKey}: ${color};` : null;
+  })
+  .filter(Boolean)
+  .join("\n")}
+}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
   return (
     <style
       dangerouslySetInnerHTML={{
-        __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
-${colorConfig
-  .map(([key, itemConfig]) => {
-    const color =
-      itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
-      itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
-  })
-  .join("\n")}
-}
-`
-          )
-          .join("\n"),
+        __html: sanitizedCSS
       }}
     />
   )
