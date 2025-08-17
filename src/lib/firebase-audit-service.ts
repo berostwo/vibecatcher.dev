@@ -9,7 +9,6 @@ import {
   where,
   getDocs,
   orderBy,
-  limit,
   deleteDoc
 } from 'firebase/firestore';
 import { db } from './firebase';
@@ -65,14 +64,28 @@ export class FirebaseAuditService {
    */
   static async hasActiveAudit(userId: string): Promise<boolean> {
     try {
-      const q = query(
+      // Query for pending audits
+      const pendingQuery = query(
         collection(db, this.COLLECTION_NAME),
         where('userId', '==', userId),
-        where('status', 'in', ['pending', 'running'])
+        where('status', '==', 'pending')
       );
       
-      const querySnapshot = await getDocs(q);
-      return !querySnapshot.empty;
+      // Query for running audits
+      const runningQuery = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('status', '==', 'running')
+      );
+      
+      // Execute both queries in parallel
+      const [pendingSnapshot, runningSnapshot] = await Promise.all([
+        getDocs(pendingQuery),
+        getDocs(runningQuery)
+      ]);
+      
+      // Return true if either query has results
+      return !pendingSnapshot.empty || !runningSnapshot.empty;
     } catch (error) {
       console.error('Error checking active audit:', error);
       return false;
@@ -84,19 +97,44 @@ export class FirebaseAuditService {
    */
   static async getActiveAudit(userId: string): Promise<SecurityAudit | null> {
     try {
-      const q = query(
+      // Query for pending audits
+      const pendingQuery = query(
         collection(db, this.COLLECTION_NAME),
         where('userId', '==', userId),
-        where('status', 'in', ['pending', 'running']),
-        orderBy('createdAt', 'desc'),
-        limit(1)
+        where('status', '==', 'pending'),
+        orderBy('createdAt', 'desc')
       );
       
-      const querySnapshot = await getDocs(q);
-      if (querySnapshot.empty) return null;
+      // Query for running audits
+      const runningQuery = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('status', '==', 'running'),
+        orderBy('createdAt', 'desc')
+      );
       
-      const doc = querySnapshot.docs[0];
-      return { id: doc.id, ...doc.data() } as SecurityAudit;
+      // Execute both queries in parallel
+      const [pendingSnapshot, runningSnapshot] = await Promise.all([
+        getDocs(pendingQuery),
+        getDocs(runningQuery)
+      ]);
+      
+      // Combine results
+      const pendingAudits = pendingSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      const runningAudits = runningSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      
+      const allActiveAudits = [...pendingAudits, ...runningAudits];
+      
+      if (allActiveAudits.length === 0) return null;
+      
+      // Sort by createdAt descending and return the most recent
+      allActiveAudits.sort((a, b) => {
+        const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
+        const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
+        return bTime.getTime() - aTime.getTime();
+      });
+      
+      return allActiveAudits[0];
     } catch (error) {
       console.error('Error getting active audit:', error);
       return null;
@@ -179,18 +217,45 @@ export class FirebaseAuditService {
   /**
    * Get audit history for a user
    */
-  static async getAuditHistory(userId: string, limit: number = 50): Promise<SecurityAudit[]> {
+  static async getAuditHistory(userId: string, limitCount: number = 50): Promise<SecurityAudit[]> {
     try {
-      const q = query(
+      // Query for completed audits
+      const completedQuery = query(
         collection(db, this.COLLECTION_NAME),
         where('userId', '==', userId),
-        where('status', 'in', ['completed', 'failed']),
-        orderBy('completedAt', 'desc'),
-        limit(limit)
+        where('status', '==', 'completed'),
+        orderBy('completedAt', 'desc')
       );
       
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      // Query for failed audits
+      const failedQuery = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('status', '==', 'failed'),
+        orderBy('completedAt', 'desc')
+      );
+      
+      // Execute both queries in parallel
+      const [completedSnapshot, failedSnapshot] = await Promise.all([
+        getDocs(completedQuery),
+        getDocs(failedQuery)
+      ]);
+      
+      // Combine and sort results
+      const completedAudits = completedSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      const failedAudits = failedSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      
+      const allAudits = [...completedAudits, ...failedAudits];
+      
+      // Sort by completedAt descending (most recent first)
+      allAudits.sort((a, b) => {
+        const aTime = a.completedAt?.toDate?.() || a.completedAt || new Date(0);
+        const bTime = b.completedAt?.toDate?.() || b.completedAt || new Date(0);
+        return bTime.getTime() - aTime.getTime();
+      });
+      
+      // Apply limit manually
+      return allAudits.slice(0, limitCount);
     } catch (error) {
       console.error('Error getting audit history:', error);
       return [];

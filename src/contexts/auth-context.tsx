@@ -91,6 +91,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setGitHubToken(null);
       }
       
+      // Clear all OAuth-related state using the service
+      GitHubOAuthService.clearOAuthState();
+      
       // Sign out from Firebase
       await auth.signOut();
     } catch (error) {

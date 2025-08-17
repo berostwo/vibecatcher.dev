@@ -1,6 +1,13 @@
 // GitHub OAuth Configuration
 // SECURITY: GitHub tokens are NEVER stored in localStorage or sessionStorage
 // They are only stored on the server and temporarily in memory for the current session
+// 
+// OAuth Parameters:
+// - prompt: 'login' - Forces GitHub to always show login form (prevents auto-login)
+// - allow_signup: 'false' - Prevents new account creation during OAuth flow
+// - force_login: 'true' - Forces fresh login every time (no cached credentials)
+// - timestamp: Date.now() - Makes each request unique to prevent caching
+// - random: Math.random() - Additional randomness to ensure fresh authentication
 const GITHUB_CLIENT_ID = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID;
 
 // Helper function to get redirect URI safely
@@ -17,6 +24,25 @@ const GITHUB_SCOPES = ['read:user', 'user:email', 'repo'];
 export class GitHubOAuthService {
   // Flag to prevent multiple OAuth flows
   private static isOAuthInProgress = false;
+
+  /**
+   * Clear all OAuth state and force fresh authentication
+   */
+  static clearOAuthState(): void {
+    try {
+      // Clear all OAuth-related storage
+      sessionStorage.removeItem('github_oauth_state');
+      sessionStorage.removeItem('github_oauth_return_url');
+      localStorage.removeItem('github_oauth_cache');
+      
+      // Reset OAuth progress flag
+      this.isOAuthInProgress = false;
+      
+      console.log('🧹 Cleared all OAuth state - fresh authentication will be required');
+    } catch (error) {
+      console.error('Error clearing OAuth state:', error);
+    }
+  }
 
   /**
    * Initiate GitHub OAuth flow with popup
@@ -56,13 +82,18 @@ export class GitHubOAuthService {
       sessionStorage.setItem('github_oauth_state', JSON.stringify(stateData));
       console.log('Stored OAuth state:', stateData);
       
-      // Build GitHub OAuth URL
+      // Build GitHub OAuth URL with aggressive parameters to force fresh login
       const params = new URLSearchParams({
         client_id: GITHUB_CLIENT_ID,
         redirect_uri: getRedirectUri(),
         scope: GITHUB_SCOPES.join(' '),
         state: state,
-        response_type: 'code'
+        response_type: 'code',
+        prompt: 'login',  // Force GitHub to always show login form
+        allow_signup: 'false',  // Prevent new account creation during OAuth
+        force_login: 'true',  // Force fresh login every time
+        timestamp: Date.now().toString(),  // Make each request unique
+        random: Math.random().toString(36).substring(7)  // Additional randomness
       });
 
       const githubOAuthUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
@@ -187,13 +218,18 @@ export class GitHubOAuthService {
     sessionStorage.setItem('github_oauth_state', JSON.stringify(stateData));
     console.log('Stored OAuth state for redirect:', stateData);
     
-    // Build GitHub OAuth URL
+    // Build GitHub OAuth URL with aggressive parameters to force fresh login
     const params = new URLSearchParams({
       client_id: GITHUB_CLIENT_ID,
       redirect_uri: getRedirectUri(),
       scope: GITHUB_SCOPES.join(' '),
       state: state,
-      response_type: 'code'
+      response_type: 'code',
+      prompt: 'login',  // Force GitHub to always show login form
+      allow_signup: 'false',  // Prevent new account creation during OAuth
+      force_login: 'true',  // Force fresh login every time
+      timestamp: Date.now().toString(),  // Make each request unique
+      random: Math.random().toString(36).substring(7)  // Additional randomness
     });
 
     const githubOAuthUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;

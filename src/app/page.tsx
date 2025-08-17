@@ -360,36 +360,7 @@ export default function Home() {
                                 <p className="text-4xl font-bold text-green-500">0</p>
                             </div>
                         </div>
-                        <Accordion type="single" collapsible className="w-full">
-                            <AccordionItem value="master-prompt" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
-                                <AccordionTrigger className="hover:no-underline px-4 py-3">
-                                    <div className="flex items-center gap-2 text-foreground">
-                                       <Terminal className="mr-2 h-4 w-4"/> View Master Prompt
-                                    </div>
-                                </AccordionTrigger>
-                                <AccordionContent className="px-4 pb-4">
-                                   <div className="bg-black/80 rounded-md p-3 text-left">
-                                        <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
-                                            {`You are an expert security engineer. Given the following list of vulnerabilities, provide the necessary code changes to remediate all of them. For each vulnerability, explain the risk and the fix.
-
-Vulnerability 1: Cross-Site Scripting (XSS) in 'src/views/Profile.js' on line 78.
-Description: A reflected XSS vulnerability was discovered...
-...
-
-Vulnerability 2: Outdated Dependency: 'lodash' in 'package.json'.
-Description: The version of 'lodash' has a known high-severity vulnerability...
-...
-
-Vulnerability 3: Insecure 'target=_blank' usage in 'src/components/ExternalLink.jsx'.
-Description: Links using 'target=_blank' without 'rel=noopener noreferrer' are a security risk...
-...
-
-Provide a git-compatible diff for each required code change.`}
-                                        </pre>
-                                    </div>
-                                </AccordionContent>
-                            </AccordionItem>
-                        </Accordion>
+                        {/* Master Prompt section removed to reduce API usage */}
                     </div>
                 </CardHeader>
                 <CardContent>

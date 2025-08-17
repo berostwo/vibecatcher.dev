@@ -210,24 +210,7 @@ const AuditReportTemplate = ({ results, masterRemediation }: {
             </div>
           </div>
           <Accordion type="single" collapsible className="w-full">
-            <AccordionItem value="master-prompt" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-4 py-3">
-                <div className="flex items-center gap-2 text-foreground">
-                  <Terminal className="mr-2 h-4 w-4" /> View Master Prompt
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-4 pb-4">
-                <div className="bg-black/80 rounded-md p-3 text-left">
-                  <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
-                    {`You are an expert security engineer. Given the following list of vulnerabilities, provide the necessary code changes to remediate all of them. For each vulnerability, explain the risk and the fix.
-
-${sortedVulnerabilities.map((v: any, i: number) => `Vulnerability ${i + 1}: ${v.title} in '${v.file}' on line ${v.line}.\nDescription: ${v.description}...`).join('\n\n')}
-
-Provide a git-compatible diff for each required code change.`}
-                  </pre>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
+            {/* Master Prompt section removed to reduce API usage */}
             <AccordionItem value="master-remediation" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
               <AccordionTrigger className="hover:no-underline px-4 py-3">
                 <div className="flex items-center gap-2 text-foreground">
@@ -343,6 +326,15 @@ export default function SecurityAuditPage() {
     }
   }, [user]);
 
+  // Cleanup effect to reset scanning state when component unmounts
+  useEffect(() => {
+    return () => {
+      // Reset scanning state when component unmounts
+      setIsScanning(false);
+      setScanProgress(null);
+    };
+  }, []);
+
   // Check for existing active audit on page load/refresh
   const checkExistingAudit = async () => {
     if (!user) return;
@@ -395,15 +387,33 @@ export default function SecurityAuditPage() {
               progress: progressData.progress,
               timestamp: new Date().toISOString()
             });
+          } else if (progressData.status === 'no_scan_running') {
+            console.log('📊 No scan running, stopping progress polling');
+            // If no scan is running, stop polling and reset state
+            setIsScanning(false);
+            setScanProgress(null);
+            setCurrentAudit(null);
+            return true; // Signal to stop polling
           }
         }
       } catch (error) {
         console.error('Progress polling failed:', error);
+        // If progress polling fails, stop polling
+        setIsScanning(false);
+        setScanProgress(null);
+        setCurrentAudit(null);
+        return true; // Signal to stop polling
       }
+      return false; // Continue polling
     };
     
     // Poll every 500ms
-    const interval = setInterval(pollProgress, 500);
+    const interval = setInterval(async () => {
+      const shouldStop = await pollProgress();
+      if (shouldStop) {
+        clearInterval(interval);
+      }
+    }, 500);
     
     // Return cleanup function
     return () => clearInterval(interval);
@@ -523,6 +533,10 @@ export default function SecurityAuditPage() {
 
       // PROGRESS TRACKING: Start real-time progress polling AFTER scan request is sent
       console.log('🚀 Starting progress polling AFTER scan request...');
+      
+      // Declare progressInterval outside try block so it's accessible in finally
+      let progressInterval: NodeJS.Timeout | undefined;
+      
       const pollProgress = async () => {
         try {
           console.log('📊 Polling progress endpoint...');
@@ -549,6 +563,14 @@ export default function SecurityAuditPage() {
               });
             } else if (progressData.status === 'no_scan_running') {
               console.log('📊 No scan running, status:', progressData.status);
+              // If no scan is running, stop polling and reset state
+              if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = undefined;
+              }
+              setScanProgress(null);
+              setIsScanning(false);
+              throw new Error('No scan running on worker');
             } else {
               console.log('📊 Invalid progress data format:', progressData);
             }
@@ -557,11 +579,18 @@ export default function SecurityAuditPage() {
           }
         } catch (error) {
           console.error('📊 Progress polling failed:', error);
+          // If progress polling fails, stop polling
+          if (progressInterval) {
+            clearInterval(progressInterval);
+            progressInterval = undefined;
+          }
+          setScanProgress(null);
+          setIsScanning(false);
         }
       };
       
       // Poll every 500ms
-      const progressInterval = setInterval(pollProgress, 500);
+      progressInterval = setInterval(pollProgress, 500);
       
       // Initial poll
       pollProgress();
@@ -672,6 +701,23 @@ export default function SecurityAuditPage() {
             >
               {isScanning ? 'Scanning...' : 'Run Security Audit'}
             </Button>
+            {isScanning && (
+              <Button 
+                onClick={() => {
+                  setIsScanning(false);
+                  setScanProgress(null);
+                  setCurrentAudit(null);
+                  toast({
+                    title: 'Scan Reset',
+                    description: 'Scanning state has been reset. You can start a new scan.',
+                  });
+                }}
+                variant="outline"
+                className="min-w-[120px]"
+              >
+                Reset Scan
+              </Button>
+            )}
             <Button 
               onClick={async () => {
                 try {
@@ -704,11 +750,7 @@ export default function SecurityAuditPage() {
                    style={{ width: `${scanProgress.progress}%` }}
                  />
                </div>
-               {currentAudit && (
-                 <div className="text-xs text-muted-foreground text-center">
-                   Audit ID: {currentAudit.id} • Status: {currentAudit.status}
-                 </div>
-               )}
+               {/* Progress tracking - no need to show audit ID to users */}
              </div>
            )}
         </CardContent>

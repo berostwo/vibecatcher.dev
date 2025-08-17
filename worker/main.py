@@ -5,6 +5,7 @@ import aiohttp
 import tempfile
 import shutil
 import subprocess
+import threading
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import logging
@@ -639,7 +640,7 @@ class ChatGPTSecurityScanner:
             return "Failed to generate master remediation plan."
     
     def calculate_codebase_health(self, condensed_findings: List[SecurityFinding], all_findings: List[SecurityFinding], repo_info: Dict[str, Any]) -> int:
-         """Calculate accurate codebase health percentage using ChatGPT analysis"""
+         """Calculate accurate codebase health percentage using reliable algorithm"""
          try:
              logger.info(f"🔍 Calculating codebase health for {len(condensed_findings)} condensed findings")
              
@@ -649,101 +650,19 @@ class ChatGPTSecurityScanner:
              medium = [f for f in condensed_findings if f.severity == "Medium"]
              low = [f for f in condensed_findings if f.severity == "Low"]
              
-             # Create comprehensive health analysis prompt
-             prompt = f"""
-             You are an expert security engineer evaluating codebase health. Analyze this security scan and provide an accurate health percentage.
+             # Use the reliable fallback calculation instead of ChatGPT
+             # This ensures consistent, accurate results without API failures
+             health = self.calculate_fallback_health(critical, high, medium, low)
              
-             REPOSITORY INFO:
-             - Name: {repo_info.get('name', 'Unknown')}
-             - Files scanned: {repo_info.get('file_count', 0)}
-             - Repository size: {repo_info.get('size', 'Unknown')}
+             logger.info(f"✅ Calculated health percentage: {health}%")
+             logger.info(f"📊 Health breakdown: Critical={len(critical)}, High={len(high)}, Medium={len(medium)}, Low={len(low)}")
              
-             SECURITY FINDINGS:
-             - Total findings: {len(all_findings)}
-             - Condensed findings: {len(condensed_findings)}
-             - Critical: {len(critical)} findings
-             - High: {len(high)} findings
-             - Medium: {len(medium)} findings
-             - Low: {len(low)} findings
-             
-             CRITICAL FINDINGS DETAILS:
-             {json.dumps([{'message': f.message, 'description': f.description} for f in critical[:5]], indent=2)}
-             
-             HIGH FINDINGS DETAILS:
-             {json.dumps([{'message': f.message, 'description': f.description} for f in high[:5]], indent=2)}
-             
-             HEALTH CALCULATION RULES:
-             - Start with 100% (perfect security)
-             - Critical findings: -15% each (major security risks)
-             - High findings: -8% each (significant security risks)
-             - Medium findings: -4% each (moderate security risks)
-             - Low findings: -1% each (minor security risks)
-             - Bonus points for good practices (if any found)
-             - Minimum health: 0% (completely compromised)
-             
-             Return ONLY a single integer percentage (0-100) representing the codebase health.
-             
-             Example: If there are 2 Critical, 3 High, 5 Medium, and 10 Low findings:
-             - Critical: 2 × -15% = -30%
-             - High: 3 × -8% = -24%
-             - Medium: 5 × -4% = -20%
-             - Low: 10 × -1% = -10%
-             - Total: 100% - 84% = 16%
-             
-             Calculate the health percentage now:
-             """
-             
-             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
-             api_key_index = self.api_calls_made % len(self.api_keys)
-             selected_api_key = self.api_keys[api_key_index]
-             
-             # Call ChatGPT for health calculation
-             client = openai.OpenAI(api_key=selected_api_key)
-             response = client.chat.completions.create(
-                 model="gpt-4o-mini",
-                 messages=[
-                     {"role": "system", "content": "You are an expert security engineer calculating codebase health percentages. Return only the number."},
-                     {"role": "user", "content": prompt}
-                 ],
-                 max_tokens=100,  # Very short response needed
-                 temperature=0.1
-             )
-             
-             # Track token usage
-             self.api_calls_made += 1
-             if hasattr(response, 'usage') and response.usage:
-                 self.prompt_tokens += response.usage.prompt_tokens
-                 self.completion_tokens += response.usage.completion_tokens
-                 self.total_tokens_used += response.usage.total_tokens
-                 logger.info(f"🔍 Health calculation token usage: {response.usage.total_tokens} tokens")
-             
-             # Parse the health percentage
-             content = response.choices[0].message.content.strip()
-             logger.info(f"🔍 ChatGPT health response: {content}")
-             
-             try:
-                 # Extract the percentage number
-                 import re
-                 health_match = re.search(r'(\d+)', content)
-                 if health_match:
-                     health_percentage = int(health_match.group(1))
-                     # Ensure it's within valid range
-                     health_percentage = max(0, min(100, health_percentage))
-                     logger.info(f"✅ Parsed health percentage: {health_percentage}%")
-                     return health_percentage
-                 else:
-                     logger.warning(f"⚠️ No percentage found in health response, using fallback calculation")
-                     return self.calculate_fallback_health(critical, high, medium, low)
-                     
-             except Exception as e:
-                 logger.error(f"❌ Failed to parse health percentage: {e}")
-                 logger.warning(f"⚠️ Using fallback health calculation")
-                 return self.calculate_fallback_health(critical, high, medium, low)
+             return health
              
          except Exception as e:
              logger.error(f"❌ Health calculation failed: {e}")
-             logger.warning(f"⚠️ Using fallback health calculation")
-             return self.calculate_fallback_health(critical, high, medium, low)
+             logger.warning(f"⚠️ Using emergency fallback health calculation")
+             return 50  # Emergency fallback
     
     def calculate_fallback_health(self, critical: List[SecurityFinding], high: List[SecurityFinding], medium: List[SecurityFinding], low: List[SecurityFinding]) -> int:
          """Fallback health calculation if ChatGPT fails"""
@@ -1960,7 +1879,6 @@ def get_progress():
     global current_scan_progress
     
     # CRITICAL DEBUGGING: Check if we're in the right context
-    import threading
     current_thread = threading.current_thread()
     logger.info(f"📊 PROGRESS ENDPOINT CALLED: Thread={current_thread.name}, current_scan_progress = {current_scan_progress}")
     logger.info(f"📊 PROGRESS ENDPOINT: Global variable ID = {id(current_scan_progress)}")
