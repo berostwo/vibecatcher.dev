@@ -525,7 +525,7 @@ export default function SecurityAuditPage() {
     setScanResults(null);
     setScanProgress(null); // Reset progress
     
-    // PROGRESS TRACKING: Progress polling
+    // Declare progressInterval at function scope so it's accessible in finally block
     let progressInterval: NodeJS.Timeout | undefined;
     
     try {
@@ -567,8 +567,11 @@ export default function SecurityAuditPage() {
         progress: 0
       });
 
-      // Start the security scan FIRST
-      const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/', {
+      // Start the security scan asynchronously
+      console.log('🚀 Starting security scan...');
+      
+      // Start the scan request (don't await the response yet)
+      const scanPromise = fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -579,15 +582,8 @@ export default function SecurityAuditPage() {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      // PROGRESS TRACKING: Start real-time progress polling AFTER scan request is sent
-      console.log('🚀 Starting progress polling AFTER scan request...');
-      
-      // Declare progressInterval outside try block so it's accessible in finally
-      let progressInterval: NodeJS.Timeout | undefined;
+      // PROGRESS TRACKING: Start real-time progress polling immediately
+      console.log('🚀 Starting progress polling...');
       
       const pollProgress = async () => {
         try {
@@ -602,27 +598,44 @@ export default function SecurityAuditPage() {
             // Check if we have valid progress data (not just status message)
             if (progressData.step && typeof progressData.progress === 'number') {
               console.log('📊 Setting progress update:', progressData);
-              setScanProgress({
-                step: progressData.step,
-                progress: progressData.progress
+              
+              // Get current progress to prevent going backwards
+              setScanProgress(prev => {
+                const currentProgress = prev?.progress || 0;
+                const newProgress = Math.max(currentProgress, progressData.progress);
+                
+                return {
+                  step: progressData.step,
+                  progress: newProgress
+                };
               });
               
-              // Update Firebase with progress
+              // Update Firebase with progress (use the higher value)
+              const currentProgress = scanProgress?.progress || 0;
+              const newProgress = Math.max(currentProgress, progressData.progress);
+              
               await FirebaseAuditService.updateAuditProgress(auditId, {
                 step: progressData.step,
-                progress: progressData.progress,
+                progress: newProgress,
                 timestamp: new Date().toISOString()
               });
+              
+              // Check if progress is at 100% (scan complete)
+              if (newProgress >= 100) {
+                console.log('📊 Progress reached 100%, scan should be complete');
+              }
             } else if (progressData.status === 'no_scan_running') {
               console.log('📊 No scan running, status:', progressData.status);
-              // If no scan is running, stop polling and reset state
+              // If no scan is running, stop polling but don't throw error
+              // This can happen when scan completes and worker resets
               if (progressInterval) {
                 clearInterval(progressInterval);
                 progressInterval = undefined;
               }
-              setScanProgress(null);
-              setIsScanning(false);
-              throw new Error('No scan running on worker');
+              
+              // Don't reset state here - let the main scan completion handle it
+              console.log('📊 Progress polling stopped - scan may be complete');
+              return false; // Continue polling until main scan completes
             } else {
               console.log('📊 Invalid progress data format:', progressData);
             }
@@ -647,18 +660,42 @@ export default function SecurityAuditPage() {
       // Initial poll
       pollProgress();
 
+      // Now wait for the scan to complete
+      console.log('🚀 Waiting for scan to complete...');
+      
+      const response = await scanPromise;
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      // Get the scan results
       const data = await response.json();
       
       if (data.error) {
         throw new Error(data.error);
       }
 
+      console.log('🎉 Scan completed with results!', data);
+      
+      // Stop progress polling since scan is complete
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = undefined;
+      }
+      
       // Save completed audit results to Firebase
       await FirebaseAuditService.updateAuditStatus(auditId, 'completed', data);
       
-      // Update local state
+      // Update local state - CRITICAL: This shows results on the page!
       setScanResults(data);
       setCurrentAudit(prev => prev ? { ...prev, status: 'completed', scanResults: data } : null);
+      
+      // Set final progress state
+      setScanProgress(prev => prev ? {
+        ...prev,
+        step: "Scan complete!",
+        progress: 100
+      } : null);
       
       toast({
         title: 'Success',

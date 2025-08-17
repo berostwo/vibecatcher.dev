@@ -67,15 +67,15 @@ export class FirebaseAuditService {
       // Query for pending audits
       const pendingQuery = query(
         collection(db, this.COLLECTION_NAME),
-        where('userId', '==', userId),
-        where('status', '==', 'pending')
+        where('status', '==', 'pending'),
+        where('userId', '==', userId)
       );
       
       // Query for running audits
       const runningQuery = query(
         collection(db, this.COLLECTION_NAME),
-        where('userId', '==', userId),
-        where('status', '==', 'running')
+        where('status', '==', 'running'),
+        where('userId', '==', userId)
       );
       
       // Execute both queries in parallel
@@ -100,16 +100,16 @@ export class FirebaseAuditService {
       // Query for pending audits
       const pendingQuery = query(
         collection(db, this.COLLECTION_NAME),
-        where('userId', '==', userId),
         where('status', '==', 'pending'),
+        where('userId', '==', userId),
         orderBy('createdAt', 'desc')
       );
       
       // Query for running audits
       const runningQuery = query(
         collection(db, this.COLLECTION_NAME),
-        where('userId', '==', userId),
         where('status', '==', 'running'),
+        where('userId', '==', userId),
         orderBy('createdAt', 'desc')
       );
       
@@ -222,16 +222,16 @@ export class FirebaseAuditService {
       // Query for completed audits
       const completedQuery = query(
         collection(db, this.COLLECTION_NAME),
-        where('userId', '==', userId),
         where('status', '==', 'completed'),
+        where('userId', '==', userId),
         orderBy('completedAt', 'desc')
       );
       
       // Query for failed audits
       const failedQuery = query(
         collection(db, this.COLLECTION_NAME),
-        where('userId', '==', userId),
         where('status', '==', 'failed'),
+        where('userId', '==', userId),
         orderBy('completedAt', 'desc')
       );
       
