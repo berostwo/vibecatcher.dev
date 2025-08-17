@@ -206,32 +206,28 @@ export default function AuditHistoryPage() {
             key={audit.id}
             className="rounded-lg border-2 border-primary/20 bg-card/50 shadow-sm px-4"
           >
-            <AccordionTrigger className="hover:no-underline">
-              <div className="flex justify-between items-center w-full">
+            <div className="flex items-center justify-between w-full">
+              <AccordionTrigger className="hover:no-underline flex-1">
                 <div className="flex items-center gap-4">
                     <SquareMenu className="h-4 w-4 text-primary" />
                     <span className="font-medium">{audit.repositoryName}</span>
                 </div>
-                <div className="flex items-center gap-4">
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        downloadAuditAsJSON(audit);
-                      }}
-                      className="flex items-center gap-2 px-3 py-1.5 text-xs bg-primary/10 text-primary hover:bg-primary/20 rounded-md transition-colors"
-                      title="Download audit as JSON"
-                    >
-                      <Download className="h-3 w-3" />
-                      Download
-                    </button>
-                    <div className="hidden sm:flex items-center gap-2 text-muted-foreground">
-                        <Clock className="h-4 w-4" />
-                        <span>{audit.completedAt ? new Date(audit.completedAt.toDate()).toLocaleDateString() : 'Unknown'}</span>
-                    </div>
+              </AccordionTrigger>
+              <div className="flex items-center gap-4 ml-4">
+                <button
+                  onClick={() => downloadAuditAsJSON(audit)}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs bg-primary/10 text-primary hover:bg-primary/20 rounded-md transition-colors"
+                  title="Download audit as JSON"
+                >
+                  <Download className="h-3 w-3" />
+                  Download
+                </button>
+                <div className="hidden sm:flex items-center gap-2 text-muted-foreground">
+                    <Clock className="h-4 w-4" />
+                    <span>{audit.completedAt ? new Date(audit.completedAt.toDate()).toLocaleDateString() : 'Unknown'}</span>
                 </div>
               </div>
-            </AccordionTrigger>
+            </div>
             <AccordionContent className="pt-2 pb-4">
               {summary.total_findings > 0 ? (
                 <div className="space-y-4">
