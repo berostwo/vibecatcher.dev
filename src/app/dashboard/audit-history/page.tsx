@@ -212,7 +212,19 @@ export default function AuditHistoryPage() {
                     <SquareMenu className="h-4 w-4 text-primary" />
                     <span className="font-medium">{audit.repositoryName}</span>
                 </div>
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-4">
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        downloadAuditAsJSON(audit);
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 text-xs bg-primary/10 text-primary hover:bg-primary/20 rounded-md transition-colors"
+                      title="Download audit as JSON"
+                    >
+                      <Download className="h-3 w-3" />
+                      Download
+                    </button>
                     <div className="hidden sm:flex items-center gap-2 text-muted-foreground">
                         <Clock className="h-4 w-4" />
                         <span>{audit.completedAt ? new Date(audit.completedAt.toDate()).toLocaleDateString() : 'Unknown'}</span>
