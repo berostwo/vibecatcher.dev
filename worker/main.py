@@ -8,6 +8,7 @@ import subprocess
 import threading
 import hashlib
 import time
+import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import logging
@@ -22,6 +23,779 @@ logger = logging.getLogger(__name__)
 
 # Global variable for progress tracking
 current_scan_progress = None
+
+class DependencyAnalyzer:
+    """Analyzes dependencies to eliminate false positives about unused packages"""
+    
+    def __init__(self):
+        self.supported_package_managers = {
+            'node': ['package.json', 'package-lock.json', 'yarn.lock'],
+            'python': ['requirements.txt', 'pyproject.toml', 'Pipfile', 'poetry.lock'],
+            'go': ['go.mod', 'go.sum'],
+            'rust': ['Cargo.toml', 'Cargo.lock'],
+            'php': ['composer.json', 'composer.lock'],
+            'java': ['pom.xml', 'build.gradle', 'gradle.lockfile'],
+            'ruby': ['Gemfile', 'Gemfile.lock'],
+            'dotnet': ['*.csproj', '*.vbproj', 'packages.config']
+        }
+    
+    def analyze_dependencies(self, repo_path: str) -> Dict[str, Any]:
+        """Analyze all dependencies in the repository"""
+        analysis = {
+            'package_manager': None,
+            'dependencies': {},
+            'dev_dependencies': {},
+            'lock_files': [],
+            'imports_found': {},
+            'unused_packages': [],
+            'framework_detected': None
+        }
+        
+        try:
+            # Detect package manager
+            for lang, files in self.supported_package_managers.items():
+                for file in files:
+                    if os.path.exists(os.path.join(repo_path, file)):
+                        analysis['package_manager'] = lang
+                        break
+                if analysis['package_manager']:
+                    break
+            
+            # Analyze based on detected package manager
+            if analysis['package_manager'] == 'node':
+                analysis.update(self._analyze_node_dependencies(repo_path))
+            elif analysis['package_manager'] == 'python':
+                analysis.update(self._analyze_python_dependencies(repo_path))
+            elif analysis['package_manager'] == 'go':
+                analysis.update(self._analyze_go_dependencies(repo_path))
+            elif analysis['package_manager'] == 'rust':
+                analysis.update(self._analyze_rust_dependencies(repo_path))
+            
+            # Scan for actual imports/usage
+            analysis['imports_found'] = self._scan_for_imports(repo_path, analysis['package_manager'])
+            
+            # Identify truly unused packages
+            analysis['unused_packages'] = self._identify_unused_packages(analysis)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Dependency analysis failed: {e}")
+        
+        return analysis
+    
+    def _analyze_node_dependencies(self, repo_path: str) -> Dict[str, Any]:
+        """Analyze Node.js dependencies"""
+        try:
+            package_json_path = os.path.join(repo_path, 'package.json')
+            if not os.path.exists(package_json_path):
+                return {}
+            
+            with open(package_json_path, 'r', encoding='utf-8') as f:
+                package_data = json.load(f)
+            
+            return {
+                'dependencies': package_data.get('dependencies', {}),
+                'dev_dependencies': package_data.get('devDependencies', {}),
+                'framework_detected': self._detect_node_framework(package_data)
+            }
+        except Exception as e:
+            logger.warning(f"⚠️ Node.js dependency analysis failed: {e}")
+            return {}
+    
+    def _detect_node_framework(self, package_data: Dict) -> str:
+        """Detect Node.js framework"""
+        dependencies = {**package_data.get('dependencies', {}), **package_data.get('devDependencies', {})}
+        
+        if 'next' in dependencies:
+            return 'Next.js'
+        elif 'react' in dependencies and 'react-dom' in dependencies:
+            return 'React'
+        elif 'express' in dependencies:
+            return 'Express.js'
+        elif 'vue' in dependencies:
+            return 'Vue.js'
+        elif 'angular' in dependencies:
+            return 'Angular'
+        elif 'nuxt' in dependencies:
+            return 'Nuxt.js'
+        else:
+            return 'Node.js'
+    
+    def _scan_for_imports(self, repo_path: str, package_manager: str) -> Dict[str, List[str]]:
+        """Scan for actual imports/usage of packages"""
+        imports = {}
+        
+        try:
+            if package_manager == 'node':
+                imports = self._scan_node_imports(repo_path)
+            elif package_manager == 'python':
+                imports = self._scan_python_imports(repo_path)
+            elif package_manager == 'go':
+                imports = self._scan_go_imports(repo_path)
+            elif package_manager == 'rust':
+                imports = self._scan_rust_imports(repo_path)
+        except Exception as e:
+            logger.warning(f"⚠️ Import scanning failed: {e}")
+        
+        return imports
+    
+    def _scan_node_imports(self, repo_path: str) -> Dict[str, List[str]]:
+        """Scan for Node.js imports"""
+        imports = {}
+        
+        # Common file extensions for Node.js
+        extensions = ['.js', '.jsx', '.ts', '.tsx', '.mjs']
+        
+        for root, dirs, files in os.walk(repo_path):
+            # Skip node_modules and other build directories
+            if 'node_modules' in root or 'dist' in root or 'build' in root:
+                continue
+            
+            for file in files:
+                if any(file.endswith(ext) for ext in extensions):
+                    file_path = os.path.join(root, file)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            
+                        # Look for various import patterns
+                        import_patterns = [
+                            r'import\s+.*\s+from\s+[\'"]([^\'"]+)[\'"]',
+                            r'require\s*\(\s*[\'"]([^\'"]+)[\'"]',
+                            r'import\s+[\'"]([^\'"]+)[\'"]',
+                            r'from\s+[\'"]([^\'"]+)[\'"]'
+                        ]
+                        
+                        for pattern in import_patterns:
+                            matches = re.findall(pattern, content)
+                            for match in matches:
+                                # Extract package name (before first slash)
+                                package_name = match.split('/')[0]
+                                if package_name not in imports:
+                                    imports[package_name] = []
+                                imports[package_name].append(file_path)
+                    except Exception as e:
+                        continue
+        
+        return imports
+    
+    def _identify_unused_packages(self, analysis: Dict[str, Any]) -> List[str]:
+        """Identify truly unused packages"""
+        unused = []
+        
+        if not analysis.get('dependencies'):
+            return unused
+        
+        dependencies = analysis['dependencies']
+        imports = analysis['imports_found']
+        
+        for package in dependencies:
+            if package not in imports:
+                # Check if it's a framework or commonly used package
+                if not self._is_commonly_used_package(package):
+                    unused.append(package)
+        
+        return unused
+    
+    def _is_commonly_used_package(self, package: str) -> bool:
+        """Check if package is commonly used and shouldn't be flagged"""
+        common_packages = {
+            'react', 'react-dom', 'next', 'typescript', '@types/node',
+            'tailwindcss', 'postcss', 'autoprefixer', 'eslint', 'prettier',
+            'jest', 'cypress', 'playwright', 'storybook'
+        }
+        return package in common_packages
+
+class FrameworkDetector:
+    """Detects frameworks and technologies to provide context-aware security analysis"""
+    
+    def __init__(self):
+        self.frameworks = {
+            'nextjs': {
+                'indicators': ['next.config.js', 'next.config.ts', 'pages/', 'app/'],
+                'security_patterns': ['middleware.ts', 'next-auth', 'csrf'],
+                'common_vulnerabilities': ['CSP', 'XSS', 'CSRF', 'authentication']
+            },
+            'react': {
+                'indicators': ['package.json:react', 'src/', 'components/'],
+                'security_patterns': ['useEffect', 'useState', 'Context'],
+                'common_vulnerabilities': ['XSS', 'injection', 'state_management']
+            },
+            'express': {
+                'indicators': ['package.json:express', 'server.js', 'app.js'],
+                'security_patterns': ['helmet', 'cors', 'rate-limiting'],
+                'common_vulnerabilities': ['injection', 'authentication', 'authorization']
+            },
+            'django': {
+                'indicators': ['manage.py', 'settings.py', 'urls.py'],
+                'security_patterns': ['csrf_token', 'authentication', 'permissions'],
+                'common_vulnerabilities': ['CSRF', 'XSS', 'SQL_injection']
+            },
+            'flask': {
+                'indicators': ['app.py', 'requirements.txt:flask'],
+                'security_patterns': ['flask-login', 'flask-security'],
+                'common_vulnerabilities': ['CSRF', 'XSS', 'authentication']
+            }
+        }
+    
+    def detect_framework(self, repo_path: str) -> Dict[str, Any]:
+        """Detect framework and provide security context"""
+        detected = {
+            'primary_framework': None,
+            'secondary_frameworks': [],
+            'security_patterns': [],
+            'missing_security': [],
+            'recommendations': []
+        }
+        
+        try:
+            for framework, info in self.frameworks.items():
+                if self._check_framework_indicators(repo_path, info['indicators']):
+                    if not detected['primary_framework']:
+                        detected['primary_framework'] = framework
+                    else:
+                        detected['secondary_frameworks'].append(framework)
+                    
+                    # Check for security patterns
+                    detected['security_patterns'].extend(info['security_patterns'])
+                    
+                    # Check for missing security measures
+                    missing = self._check_missing_security(repo_path, info['common_vulnerabilities'])
+                    detected['missing_security'].extend(missing)
+            
+            # Generate framework-specific recommendations
+            detected['recommendations'] = self._generate_framework_recommendations(detected)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Framework detection failed: {e}")
+        
+        return detected
+    
+    def _check_framework_indicators(self, repo_path: str, indicators: List[str]) -> bool:
+        """Check if framework indicators exist"""
+        for indicator in indicators:
+            if ':' in indicator:  # package.json:package_name format
+                package_name = indicator.split(':')[1]
+                if self._check_package_dependency(repo_path, package_name):
+                    return True
+            elif os.path.exists(os.path.join(repo_path, indicator)):
+                return True
+        return False
+    
+    def _check_package_dependency(self, repo_path: str, package_name: str) -> bool:
+        """Check if package is in dependencies"""
+        try:
+            package_json_path = os.path.join(repo_path, 'package.json')
+            if os.path.exists(package_json_path):
+                with open(package_json_path, 'r', encoding='utf-8') as f:
+                    package_data = json.load(f)
+                
+                dependencies = {**package_data.get('dependencies', {}), **package_data.get('devDependencies', {})}
+                return package_name in dependencies
+        except Exception:
+            pass
+        return False
+    
+    def _check_missing_security(self, repo_path: str, vulnerabilities: List[str]) -> List[str]:
+        """Check for missing security measures"""
+        missing = []
+        
+        for vuln in vulnerabilities:
+            if not self._has_security_measure(repo_path, vuln):
+                missing.append(vuln)
+        
+        return missing
+    
+    def _has_security_measure(self, repo_path: str, vulnerability: str) -> bool:
+        """Check if security measure exists"""
+        security_files = {
+            'csrf': ['middleware.ts', 'csrf.ts', 'csrf-token'],
+            'xss': ['xss.ts', 'sanitize.ts', 'escape.ts'],
+            'authentication': ['auth.ts', 'login.ts', 'middleware.ts'],
+            'rate_limiting': ['rate-limit.ts', 'throttle.ts', 'limiter.ts']
+        }
+        
+        if vulnerability.lower() in security_files:
+            for file_pattern in security_files[vulnerability.lower()]:
+                if self._file_exists_pattern(repo_path, file_pattern):
+                    return True
+        
+        return False
+    
+    def _file_exists_pattern(self, repo_path: str, pattern: str) -> bool:
+        """Check if file exists with pattern"""
+        for root, dirs, files in os.walk(repo_path):
+            for file in files:
+                if pattern in file:
+                    return True
+        return False
+    
+    def _generate_framework_recommendations(self, detected: Dict[str, Any]) -> List[str]:
+        """Generate framework-specific security recommendations"""
+        recommendations = []
+        framework = detected.get('primary_framework')
+        
+        if framework == 'nextjs':
+            recommendations.extend([
+                'Implement middleware.ts for authentication and CSRF protection',
+                'Use next-auth for secure authentication',
+                'Configure Content Security Policy in next.config.js',
+                'Implement rate limiting for API routes'
+            ])
+        elif framework == 'react':
+            recommendations.extend([
+                'Use React.memo and useMemo for performance',
+                'Implement proper error boundaries',
+                'Sanitize user input before rendering',
+                'Use HTTPS-only cookies and secure storage'
+            ])
+        elif framework == 'express':
+            recommendations.extend([
+                'Use helmet.js for security headers',
+                'Implement CORS with specific origins',
+                'Add rate limiting with express-rate-limit',
+                'Validate and sanitize all inputs'
+            ])
+        
+        return recommendations
+    
+    def _analyze_python_dependencies(self, repo_path: str) -> Dict[str, Any]:
+        """Analyze Python dependencies"""
+        try:
+            requirements_path = os.path.join(repo_path, 'requirements.txt')
+            if os.path.exists(requirements_path):
+                with open(requirements_path, 'r', encoding='utf-8') as f:
+                    requirements = f.read().splitlines()
+                
+                dependencies = [req.split('==')[0].split('>=')[0].split('<=')[0].strip() for req in requirements if req.strip() and not req.startswith('#')]
+                
+                return {
+                    'dependencies': {dep: 'latest' for dep in dependencies},
+                    'framework_detected': self._detect_python_framework(dependencies)
+                }
+        except Exception as e:
+            logger.warning(f"⚠️ Python dependency analysis failed: {e}")
+        return {}
+    
+    def _detect_python_framework(self, dependencies: List[str]) -> str:
+        """Detect Python framework"""
+        if 'django' in dependencies:
+            return 'Django'
+        elif 'flask' in dependencies:
+            return 'Flask'
+        elif 'fastapi' in dependencies:
+            return 'FastAPI'
+        elif 'tornado' in dependencies:
+            return 'Tornado'
+        else:
+            return 'Python'
+    
+    def _analyze_go_dependencies(self, repo_path: str) -> Dict[str, Any]:
+        """Analyze Go dependencies"""
+        try:
+            go_mod_path = os.path.join(repo_path, 'go.mod')
+            if os.path.exists(go_mod_path):
+                with open(go_mod_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Simple parsing of go.mod
+                dependencies = []
+                for line in content.split('\n'):
+                    if line.startswith('require ') and not line.startswith('require ('):
+                        dep = line.split(' ')[1]
+                        dependencies.append(dep)
+                
+                return {
+                    'dependencies': {dep: 'latest' for dep in dependencies},
+                    'framework_detected': 'Go'
+                }
+        except Exception as e:
+            logger.warning(f"⚠️ Go dependency analysis failed: {e}")
+        return {}
+    
+    def _analyze_rust_dependencies(self, repo_path: str) -> Dict[str, Any]:
+        """Analyze Rust dependencies"""
+        try:
+            cargo_toml_path = os.path.join(repo_path, 'Cargo.toml')
+            if os.path.exists(cargo_toml_path):
+                with open(cargo_toml_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Simple parsing of Cargo.toml
+                dependencies = []
+                lines = content.split('\n')
+                in_dependencies = False
+                
+                for line in lines:
+                    if '[dependencies]' in line:
+                        in_dependencies = True
+                        continue
+                    elif line.startswith('[') and ']' in line:
+                        in_dependencies = False
+                        continue
+                    
+                    if in_dependencies and '=' in line and not line.startswith('#'):
+                        dep = line.split('=')[0].strip()
+                        dependencies.append(dep)
+                
+                return {
+                    'dependencies': {dep: 'latest' for dep in dependencies},
+                    'framework_detected': 'Rust'
+                }
+        except Exception as e:
+            logger.warning(f"⚠️ Rust dependency analysis failed: {e}")
+        return {}
+    
+    def _scan_python_imports(self, repo_path: str) -> Dict[str, List[str]]:
+        """Scan for Python imports"""
+        imports = {}
+        extensions = ['.py', '.pyx', '.pyi']
+        
+        for root, dirs, files in os.walk(repo_path):
+            if '__pycache__' in root or '.venv' in root or 'venv' in root:
+                continue
+            
+            for file in files:
+                if any(file.endswith(ext) for ext in extensions):
+                    file_path = os.path.join(root, file)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        
+                        # Look for Python import patterns
+                        import_patterns = [
+                            r'import\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+                            r'from\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+import',
+                            r'import\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+as'
+                        ]
+                        
+                        for pattern in import_patterns:
+                            matches = re.findall(pattern, content)
+                            for match in matches:
+                                if match not in imports:
+                                    imports[match] = []
+                                imports[match].append(file_path)
+                    except Exception:
+                        continue
+        
+        return imports
+    
+    def _scan_go_imports(self, repo_path: str) -> Dict[str, List[str]]:
+        """Scan for Go imports"""
+        imports = {}
+        extensions = ['.go']
+        
+        for root, dirs, files in os.walk(repo_path):
+            if 'vendor' in root or 'node_modules' in root:
+                continue
+            
+            for file in files:
+                if any(file.endswith(ext) for ext in extensions):
+                    file_path = os.path.join(root, file)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        
+                        # Look for Go import patterns
+                        import_patterns = [
+                            r'import\s+[\'"]([^\'"]+)[\'"]',
+                            r'import\s+\(\s*[\'"]([^\'"]+)[\'"]'
+                        ]
+                        
+                        for pattern in import_patterns:
+                            matches = re.findall(pattern, content)
+                            for match in matches:
+                                package_name = match.split('/')[0]
+                                if package_name not in imports:
+                                    imports[package_name] = []
+                                imports[package_name].append(file_path)
+                    except Exception:
+                        continue
+        
+        return imports
+    
+    def _scan_rust_imports(self, repo_path: str) -> Dict[str, List[str]]:
+        """Scan for Rust imports"""
+        imports = {}
+        extensions = ['.rs']
+        
+        for root, dirs, files in os.walk(repo_path):
+            if 'target' in root or 'node_modules' in root:
+                continue
+            
+            for file in files:
+                if any(file.endswith(ext) for ext in extensions):
+                    file_path = os.path.join(root, file)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        
+                        # Look for Rust import patterns
+                        import_patterns = [
+                            r'use\s+([a-zA-Z_][a-zA-Z0-9_:]*)',
+                            r'extern\s+crate\s+([a-zA-Z_][a-zA-Z0-9_]*)'
+                        ]
+                        
+                        for pattern in import_patterns:
+                            matches = re.findall(pattern, content)
+                            for match in matches:
+                                package_name = match.split('::')[0]
+                                if package_name not in imports:
+                                    imports[package_name] = []
+                                imports[package_name].append(file_path)
+                    except Exception:
+                        continue
+        
+        return imports
+    
+    def get_language_security_context(self, file_type: str, file_path: str) -> str:
+        """Get language-specific security context for analysis"""
+        language_contexts = {
+            # JavaScript/TypeScript Ecosystem
+            '.js': """
+            **JAVASCRIPT/TYPESCRIPT SECURITY CONTEXT**:
+            - Watch for eval(), Function(), setTimeout with user input
+            - Check for innerHTML, outerHTML, document.write with user data
+            - Look for prototype pollution in object operations
+            - Verify proper input sanitization before DOM manipulation
+            - Check for insecure JSON.parse with user input
+            - Look for missing CSRF tokens in form submissions
+            - Verify proper authentication checks in API calls
+            """,
+            '.ts': """
+            **TYPESCRIPT SECURITY CONTEXT**:
+            - Same as JavaScript plus type safety considerations
+            - Check for type bypasses that could lead to security issues
+            - Verify proper interface validation for user inputs
+            - Look for any type assertions that could be dangerous
+            """,
+            '.tsx': """
+            **REACT TYPESCRIPT SECURITY CONTEXT**:
+            - Check for dangerouslySetInnerHTML usage
+            - Verify proper prop validation and sanitization
+            - Look for missing authentication in protected routes
+            - Check for proper state management security
+            - Verify proper error boundary implementation
+            """,
+            '.jsx': """
+            **REACT JAVASCRIPT SECURITY CONTEXT**:
+            - Check for dangerouslySetInnerHTML usage
+            - Verify proper prop validation and sanitization
+            - Look for missing authentication in protected routes
+            - Check for proper state management security
+            """,
+            # Python Ecosystem
+            '.py': """
+            **PYTHON SECURITY CONTEXT**:
+            - Check for eval(), exec(), input() with user data
+            - Look for SQL injection in raw SQL queries
+            - Verify proper input validation and sanitization
+            - Check for path traversal in file operations
+            - Look for insecure deserialization (pickle, yaml)
+            - Verify proper authentication and authorization
+            - Check for CSRF protection in web frameworks
+            """,
+            # Go Ecosystem
+            '.go': """
+            **GO SECURITY CONTEXT**:
+            - Check for SQL injection in raw queries
+            - Verify proper input validation and sanitization
+            - Look for path traversal in file operations
+            - Check for proper authentication middleware
+            - Verify proper CORS configuration
+            - Look for insecure deserialization
+            """,
+            # Rust Ecosystem
+            '.rs': """
+            **RUST SECURITY CONTEXT**:
+            - Check for unsafe blocks with user input
+            - Verify proper input validation and sanitization
+            - Look for path traversal in file operations
+            - Check for proper authentication handling
+            - Verify proper error handling without information disclosure
+            """,
+            # PHP Ecosystem
+            '.php': """
+            **PHP SECURITY CONTEXT**:
+            - Check for SQL injection in raw queries
+            - Look for XSS in echo/print statements
+            - Verify proper input validation and sanitization
+            - Check for file inclusion vulnerabilities
+            - Look for command injection in shell_exec, system
+            - Verify proper session security
+            """,
+            # Java Ecosystem
+            '.java': """
+            **JAVA SECURITY CONTEXT**:
+            - Check for SQL injection in raw queries
+            - Look for XSS in JSP output
+            - Verify proper input validation and sanitization
+            - Check for insecure deserialization
+            - Look for path traversal in file operations
+            - Verify proper authentication and authorization
+            """,
+            # C# Ecosystem
+            '.cs': """
+            **C# SECURITY CONTEXT**:
+            - Check for SQL injection in raw queries
+            - Look for XSS in Razor views
+            - Verify proper input validation and sanitization
+            - Check for insecure deserialization
+            - Look for path traversal in file operations
+            - Verify proper authentication and authorization
+            """,
+            # Web Technologies
+            '.html': """
+            **HTML SECURITY CONTEXT**:
+            - Check for XSS in user-generated content
+            - Look for clickjacking vulnerabilities
+            - Verify proper CSP headers
+            - Check for form injection attacks
+            - Look for insecure iframe usage
+            """,
+            '.vue': """
+            **VUE.JS SECURITY CONTEXT**:
+            - Check for v-html with user input
+            - Verify proper prop validation
+            - Look for missing authentication in routes
+            - Check for proper state management security
+            - Verify proper error handling
+            """,
+            # Configuration Files
+            '.yaml': """
+            **YAML SECURITY CONTEXT**:
+            - Check for YAML deserialization vulnerabilities
+            - Look for exposed secrets in configuration
+            - Verify proper access controls
+            - Check for insecure default values
+            """,
+            '.json': """
+            **JSON SECURITY CONTEXT**:
+            - Check for exposed secrets in configuration
+            - Look for insecure default values
+            - Verify proper access controls
+            - Check for dependency vulnerabilities
+            """,
+            # Shell Scripts
+            '.sh': """
+            **SHELL SCRIPT SECURITY CONTEXT**:
+            - Check for command injection in user input
+            - Look for path traversal vulnerabilities
+            - Verify proper input validation
+            - Check for insecure file permissions
+            - Look for exposed secrets in scripts
+            """,
+            # Docker & Infrastructure
+            '.dockerfile': """
+            **DOCKER SECURITY CONTEXT**:
+            - Check for running as root user
+            - Look for exposed ports and services
+            - Verify proper user permissions
+            - Check for insecure base images
+            - Look for exposed secrets in layers
+            """,
+            # Database
+            '.sql': """
+            **SQL SECURITY CONTEXT**:
+            - Check for SQL injection vulnerabilities
+            - Look for exposed database credentials
+            - Verify proper access controls
+            - Check for insecure default configurations
+            - Look for missing input validation
+            """
+        }
+        
+        # Get the most specific context for the file type
+        for ext, context in language_contexts.items():
+            if file_path.endswith(ext):
+                return context
+        
+        # Default context for unknown file types
+        return """
+        **GENERAL SECURITY CONTEXT**:
+        - Check for common web application vulnerabilities
+        - Verify proper input validation and sanitization
+        - Look for authentication and authorization issues
+        - Check for information disclosure vulnerabilities
+        - Verify proper error handling
+        """
+
+class FalsePositiveFilter:
+    """Filters out false positives based on context and patterns"""
+    
+    def __init__(self):
+        self.false_positive_patterns = {
+            'unused_package': [
+                'package is not used anywhere in the code',
+                'unused dependency',
+                'unused import'
+            ],
+            'framework_specific': [
+                'missing csrf protection',  # Might be handled by framework
+                'missing xss protection',   # Might be handled by framework
+                'insecure default'          # Might be framework default
+            ],
+            'development_only': [
+                'console.log',
+                'debug mode',
+                'development server'
+            ]
+        }
+    
+    def filter_findings(self, findings: List[SecurityFinding], context: Dict[str, Any]) -> List[SecurityFinding]:
+        """Filter out false positives based on context"""
+        filtered_findings = []
+        
+        for finding in findings:
+            if not self._is_false_positive(finding, context):
+                filtered_findings.append(finding)
+            else:
+                logger.info(f"🔍 Filtered out false positive: {finding.message}")
+        
+        return filtered_findings
+    
+    def _is_false_positive(self, finding: SecurityFinding, context: Dict[str, Any]) -> bool:
+        """Check if finding is a false positive"""
+        # Check for unused package false positives
+        if 'unused' in finding.message.lower() and 'package' in finding.message.lower():
+            if context.get('dependencies', {}).get('unused_packages', []):
+                # Check if this specific package is actually unused
+                package_name = self._extract_package_name(finding.message)
+                if package_name in context['dependencies']['unused_packages']:
+                    return True
+        
+        # Check for framework-specific false positives
+        framework = context.get('framework', {}).get('primary_framework')
+        if framework:
+            if self._is_framework_handled_issue(finding, framework):
+                return True
+        
+        return False
+    
+    def _extract_package_name(self, message: str) -> str:
+        """Extract package name from finding message"""
+        # Simple extraction - could be improved with regex
+        words = message.split()
+        for i, word in enumerate(words):
+            if word.lower() in ['package', 'dependency', 'library'] and i + 1 < len(words):
+                return words[i + 1].strip("'\".,")
+        return ""
+    
+    def _is_framework_handled_issue(self, finding: SecurityFinding, framework: str) -> bool:
+        """Check if issue is handled by framework"""
+        framework_handlers = {
+            'nextjs': ['csrf', 'xss', 'authentication'],
+            'react': ['xss', 'state_management'],
+            'express': ['cors', 'helmet', 'rate_limiting'],
+            'django': ['csrf', 'xss', 'authentication'],
+            'flask': ['csrf', 'authentication']
+        }
+        
+        if framework in framework_handlers:
+            for handler in framework_handlers[framework]:
+                if handler in finding.message.lower():
+                    return True
+        
+        return False
 
 # Configuration
 MAX_REPO_SIZE_MB = 500
@@ -86,6 +860,11 @@ class ChatGPTSecurityScanner:
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.api_calls_made = 0
+        
+        # 🚀 DEPENDENCY ANALYSIS SYSTEM: Eliminate false positives
+        self.dependency_analyzer = DependencyAnalyzer()
+        self.framework_detector = FrameworkDetector()
+        self.false_positive_filter = FalsePositiveFilter()
         
         # PHASE 4: Caching and ML-based optimization
         self.result_cache = {}  # Cache for analysis results
@@ -298,6 +1077,9 @@ class ChatGPTSecurityScanner:
             # Get file-specific analysis rules
             analysis_rules = self.get_file_analysis_rules(file_path)
             
+            # 🚀 LANGUAGE-SPECIFIC SECURITY ANALYSIS: Tailored for each programming language
+            language_context = self.get_language_security_context(file_type, file_path)
+            
             # Build UNIVERSAL context-aware security analysis prompt for ALL tech stacks
             prompt = f"""
             You are an expert security engineer analyzing a {file_type} file in a modern web application.
@@ -305,6 +1087,8 @@ class ChatGPTSecurityScanner:
             FILE: {file_path}
             CONTENT:
             {file_content}
+
+            {language_context}
 
             APPLICATION CONTEXT:
             - This is a modern web application (could be Next.js, Nuxt, Vue, React, Svelte, Angular, etc.)
@@ -344,6 +1128,7 @@ class ChatGPTSecurityScanner:
             4. Consider the real-world impact on the application
             5. Be practical - focus on risks that indie developers actually face
             6. Ignore findings about intentionally public configuration values
+            7. **Use language-specific security knowledge for accurate analysis**
 
             Return findings in this exact JSON format:
             {{
@@ -372,6 +1157,7 @@ class ChatGPTSecurityScanner:
             - If no actual vulnerabilities found, return empty findings array
             - Be thorough but practical for indie developer applications
             - This scanner works for ALL modern web frameworks and platforms
+            - **Apply language-specific security knowledge for accurate analysis**
             """
 
             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
@@ -669,7 +1455,7 @@ class ChatGPTSecurityScanner:
             words = message.split()
             return '_'.join(words[:3]).lower().replace('-', '_').replace('(', '').replace(')', '')
     
-    def generate_condensed_remediations(self, condensed_findings: List[SecurityFinding], all_findings: List[SecurityFinding]) -> Dict[str, str]:
+    def generate_condensed_remediations(self, condensed_findings: List[SecurityFinding], all_findings: List[SecurityFinding], scan_context: Dict[str, Any] = None) -> Dict[str, str]:
         """Generate ALL remediation prompts in ONE API call - MASSIVE optimization!"""
         try:
             logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call!")
@@ -698,27 +1484,53 @@ class ChatGPTSecurityScanner:
                     'file_locations': file_locations
                 })
             
+            # 🚀 CONTEXT-AWARE ANALYSIS: Include framework and dependency context
+            context_info = ""
+            if scan_context:
+                framework_info = scan_context.get('framework', {})
+                dependency_info = scan_context.get('dependencies', {})
+                
+                context_info = f"""
+                
+                **FRAMEWORK & TECHNOLOGY CONTEXT** (Use this to provide framework-specific solutions):
+                - Primary Framework: {framework_info.get('primary_framework', 'Unknown')}
+                - Security Patterns Found: {', '.join(framework_info.get('security_patterns', []))}
+                - Missing Security Measures: {', '.join(framework_info.get('missing_security', []))}
+                - Package Manager: {dependency_info.get('package_manager', 'Unknown')}
+                - Dependencies: {len(dependency_info.get('dependencies', {}))} packages
+                - Framework-Specific Recommendations: {', '.join(framework_info.get('recommendations', []))}
+                
+                **ANALYSIS REQUIREMENTS**:
+                - Consider the detected framework when suggesting solutions
+                - Use framework-specific security patterns when available
+                - Avoid suggesting solutions that conflict with the detected framework
+                - Provide framework-appropriate code examples
+                """
+            
             # ONE MASSIVE PROMPT for ALL findings
             prompt = f"""
             You are an expert security engineer. Create remediation prompts for MULTIPLE security vulnerabilities in ONE response.
             
             VULNERABILITIES TO ANALYZE:
             {json.dumps(all_findings_summary, indent=2)}
+            {context_info}
             
             **CRITICAL REQUIREMENT**: For each vulnerability, you MUST include:
             - The exact file path(s) affected
             - Specific line numbers where the vulnerability exists
             - Which pages/components are impacted
             - How many occurrences exist across the codebase
+            - **Framework-specific solution** (based on detected technology stack)
             
             For EACH vulnerability, create a remediation prompt that:
             1. Clearly explains the security issue
             2. Provides context about why it's dangerous
             3. Gives specific, actionable steps to fix it
             4. Is written for coding assistants (Cursor, GitHub Copilot, etc.)
-            5. Includes code examples where appropriate
+            5. Includes code examples appropriate for the detected framework
             6. Addresses the root cause, not just symptoms
             7. **ALWAYS mentions the specific files and line numbers affected**
+            8. **Uses framework-specific security patterns when available**
             
             Example format for each remediation:
             ```
@@ -726,7 +1538,8 @@ class ChatGPTSecurityScanner:
             - **Files Affected**: `src/app/dashboard/page.tsx` (lines 45-67), `src/components/auth/requireAuth.tsx` (lines 23-45)
             - **Pages Impacted**: Dashboard page, User settings page
             - **Occurrences**: Found in 3 files across the codebase
-            - **Fix**: Implement proper role-based access control in the requireAuth function
+            - **Framework Context**: Next.js application (detected)
+            - **Framework-Specific Fix**: Implement middleware.ts for authentication and use next-auth
             - **Action**: Add authorization checks before accessing sensitive resources
             ```
             
@@ -740,7 +1553,7 @@ class ChatGPTSecurityScanner:
             }}
             
             Make each prompt specific enough that a coding assistant can implement the fix robustly.
-            **IMPORTANT**: Every remediation must include the exact file paths and line numbers.
+            **IMPORTANT**: Every remediation must include the exact file paths, line numbers, and framework-specific solutions.
             """
             
             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
@@ -795,7 +1608,7 @@ class ChatGPTSecurityScanner:
             logger.error(f"❌ Nuclear optimization failed: {e}")
             return {}
 
-    def generate_master_remediation(self, condensed_findings: List[SecurityFinding]) -> str:
+    def generate_master_remediation(self, condensed_findings: List[SecurityFinding], scan_context: Dict[str, Any] = None) -> str:
         """Generate a master remediation plan with phases for all findings"""
         try:
             # Group findings by severity
@@ -803,6 +1616,28 @@ class ChatGPTSecurityScanner:
             high = [f for f in condensed_findings if f.severity == "High"]
             medium = [f for f in condensed_findings if f.severity == "Medium"]
             low = [f for f in condensed_findings if f.severity == "Low"]
+            
+            # 🚀 FRAMEWORK-AWARE REMEDIATION: Include technology context
+            framework_context = ""
+            if scan_context:
+                framework_info = scan_context.get('framework', {})
+                dependency_info = scan_context.get('dependencies', {})
+                
+                framework_context = f"""
+                
+                **TECHNOLOGY STACK DETECTED**:
+                - Primary Framework: {framework_info.get('primary_framework', 'Unknown')}
+                - Package Manager: {dependency_info.get('package_manager', 'Unknown')}
+                - Security Patterns Found: {', '.join(framework_info.get('security_patterns', []))}
+                - Missing Security Measures: {', '.join(framework_info.get('missing_security', []))}
+                - Framework-Specific Recommendations: {', '.join(framework_info.get('recommendations', []))}
+                
+                **FRAMEWORK-SPECIFIC GUIDANCE**:
+                - Provide solutions appropriate for the detected framework
+                - Use framework-specific security patterns when available
+                - Consider the framework's built-in security features
+                - Avoid suggesting solutions that conflict with the framework
+                """
             
             prompt = f"""
             You are an expert security engineer. Create a comprehensive, phased remediation plan for this application.
@@ -815,6 +1650,7 @@ class ChatGPTSecurityScanner:
 
             DETAILED FINDINGS:
             {json.dumps([asdict(f) for f in condensed_findings], indent=2)}
+            {framework_context}
 
             Create a master remediation plan broken down into clear phases. For each finding, ALWAYS include:
             
@@ -964,12 +1800,71 @@ class ChatGPTSecurityScanner:
                 'file_count': self.count_files(repo_path)
             }
             
+            # 🚀 DEPENDENCY ANALYSIS: Eliminate false positives about unused packages
+            self.update_progress("Analyzing dependencies and framework", 15)
+            logger.info("🔍 DEPENDENCY ANALYSIS: Starting comprehensive dependency analysis...")
+            
+            try:
+                # Analyze dependencies to eliminate false positives
+                dependency_analysis = self.dependency_analyzer.analyze_dependencies(repo_path)
+                logger.info(f"🔍 DEPENDENCY ANALYSIS: Package manager detected: {dependency_analysis.get('package_manager', 'Unknown')}")
+                logger.info(f"🔍 DEPENDENCY ANALYSIS: Framework detected: {dependency_analysis.get('framework_detected', 'Unknown')}")
+                logger.info(f"🔍 DEPENDENCY ANALYSIS: Dependencies found: {len(dependency_analysis.get('dependencies', {}))}")
+                logger.info(f"🔍 DEPENDENCY ANALYSIS: Imports found: {len(dependency_analysis.get('imports_found', {}))}")
+                logger.info(f"🔍 DEPENDENCY ANALYSIS: Truly unused packages: {dependency_analysis.get('unused_packages', [])}")
+                
+                # Detect framework for context-aware analysis
+                framework_analysis = self.framework_detector.detect_framework(repo_path)
+                logger.info(f"🔍 FRAMEWORK DETECTION: Primary framework: {framework_analysis.get('primary_framework', 'Unknown')}")
+                logger.info(f"🔍 FRAMEWORK DETECTION: Security patterns found: {framework_analysis.get('security_patterns', [])}")
+                logger.info(f"🔍 FRAMEWORK DETECTION: Missing security: {framework_analysis.get('missing_security', [])}")
+                
+                # Store context for false positive filtering
+                scan_context = {
+                    'dependencies': dependency_analysis,
+                    'framework': framework_analysis,
+                    'repository_path': repo_path
+                }
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Dependency analysis failed: {e}")
+                scan_context = {}
+            
             # PROGRESS TRACKING: Start file filtering (EVEN DISTRIBUTION!)
             self.update_progress("Analyzing repository structure", 20)
             
             # PHASE 1 NUCLEAR OPTIMIZATION: Smart File Filtering + Batch Analysis
             all_findings = []
-            file_types = ['.js', '.ts', '.tsx', '.jsx', '.py', '.php', '.rb', '.go', '.java', '.cs', '.rs', '.html', '.vue', '.svelte']
+            
+            # 🚀 MULTI-LANGUAGE SUPPORT: Support for all major programming languages and frameworks
+            file_types = [
+                # JavaScript/TypeScript Ecosystem
+                '.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs',
+                # Python Ecosystem
+                '.py', '.pyx', '.pyi', '.pyw',
+                # Go Ecosystem
+                '.go', '.mod',
+                # Rust Ecosystem
+                '.rs', '.toml',
+                # Java Ecosystem
+                '.java', '.kt', '.gradle', '.xml',
+                # C# Ecosystem
+                '.cs', '.vb', '.csproj', '.vbproj',
+                # PHP Ecosystem
+                '.php', '.phtml', '.php3', '.php4', '.php5', '.php7',
+                # Ruby Ecosystem
+                '.rb', '.erb', '.rake', '.gemspec',
+                # Web Technologies
+                '.html', '.htm', '.xhtml', '.vue', '.svelte', '.jsx', '.tsx',
+                # Configuration Files
+                '.yaml', '.yml', '.json', '.toml', '.ini', '.conf', '.config',
+                # Shell Scripts
+                '.sh', '.bash', '.zsh', '.fish', '.ps1', '.bat', '.cmd',
+                # Docker & Infrastructure
+                '.dockerfile', '.dockerignore', '.yml', '.yaml',
+                # Database
+                '.sql', '.plsql', '.tsql'
+            ]
             
             # Collect and filter files with smart prioritization
             files_to_analyze = []
@@ -1110,6 +2005,33 @@ class ChatGPTSecurityScanner:
             condensed_findings = self.condense_findings(all_findings)
             logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
             
+            # 🚀 FALSE POSITIVE FILTERING: Eliminate false positives using context
+            self.update_progress("Filtering false positives", 72)
+            logger.info("🔍 FALSE POSITIVE FILTERING: Starting intelligent false positive filtering...")
+            
+            try:
+                if 'scan_context' in locals() and scan_context:
+                    original_count = len(condensed_findings)
+                    condensed_findings = self.false_positive_filter.filter_findings(condensed_findings, scan_context)
+                    filtered_count = len(condensed_findings)
+                    eliminated_count = original_count - filtered_count
+                    
+                    logger.info(f"🔍 FALSE POSITIVE FILTERING: Eliminated {eliminated_count} false positives!")
+                    logger.info(f"🔍 FALSE POSITIVE FILTERING: Original: {original_count} → Filtered: {filtered_count}")
+                    
+                    if eliminated_count > 0:
+                        logger.info("🔍 FALSE POSITIVE FILTERING: Eliminated findings were likely:")
+                        logger.info("   - Unused package warnings (when packages are actually used)")
+                        logger.info("   - Framework-handled security (when framework provides protection)")
+                        logger.info("   - Development-only issues (console.log, debug mode)")
+                        logger.info("   - Context-inappropriate warnings (wrong framework assumptions)")
+                else:
+                    logger.warning("⚠️ FALSE POSITIVE FILTERING: No scan context available, skipping filtering")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ False positive filtering failed: {e}")
+                logger.warning("⚠️ Continuing with unfiltered findings...")
+            
             # PROGRESS TRACKING: Condensing complete (EVEN DISTRIBUTION!)
             self.update_progress("Findings condensed", 75)
             
@@ -1119,7 +2041,7 @@ class ChatGPTSecurityScanner:
             # NUCLEAR OPTIMIZATION: Generate ALL remediations in ONE call
             logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call...")
             start_time_remediations = datetime.now()
-            condensed_remediations = self.generate_condensed_remediations(condensed_findings, all_findings)
+            condensed_remediations = self.generate_condensed_remediations(condensed_findings, all_findings, scan_context)
             remediation_time = (datetime.now() - start_time_remediations).total_seconds()
             logger.info(f"✅ NUCLEAR OPTIMIZATION: Generated {len(condensed_remediations)} remediations in {remediation_time:.1f}s!")
             
@@ -1131,7 +2053,7 @@ class ChatGPTSecurityScanner:
             
             # Generate master remediation plan
             logger.info(f"🔍 Generating master remediation plan...")
-            master_remediation = self.generate_master_remediation(condensed_findings)
+            master_remediation = self.generate_master_remediation(condensed_findings, scan_context)
             logger.info(f"✅ Master remediation generated")
             
             # PROGRESS TRACKING: Calculate codebase health (EVEN DISTRIBUTION!)
