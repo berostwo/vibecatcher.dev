@@ -17,7 +17,7 @@ async function createPaymentIntentHandler(request: NextRequest, user: any) {
     if (rateLimitCheck) return rateLimitCheck;
 
     // 2. INPUT VALIDATION - Prevent injection attacks
-    const validationCheck = createValidationMiddleware(PaymentIntentSchema)(request);
+    const validationCheck = await createValidationMiddleware(PaymentIntentSchema)(request);
     if (validationCheck) return validationCheck;
 
     // 3. CSRF PROTECTION - Prevent cross-site request forgery

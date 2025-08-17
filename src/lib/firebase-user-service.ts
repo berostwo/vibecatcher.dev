@@ -54,16 +54,8 @@ export class FirebaseUserService {
         
         // Check network connectivity
         console.log('Checking network connectivity...');
-        try {
-          const networkTest = await fetch('https://www.google.com', { 
-            method: 'HEAD',
-            mode: 'no-cors'
-          });
-          console.log('Network connectivity test passed');
-        } catch (networkError) {
-          console.warn('Network connectivity test failed:', networkError);
-          throw new Error('Network connectivity issue detected. Please check your internet connection.');
-        }
+        // Removed unnecessary network test that was causing CSP violations
+        console.log('Network connectivity assumed (CSP prevents external connectivity tests)');
         
         // Check if user already exists by GitHub ID
         const existingUser = await this.getUserByGitHubId(githubUser.id);

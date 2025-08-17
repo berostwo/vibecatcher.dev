@@ -28,19 +28,46 @@ export const RepositoryUrlSchema = z.object({
 });
 
 // Generic validation function
-export function validateRequest<T>(
+export async function validateRequest<T>(
   request: NextRequest,
   schema: z.ZodSchema<T>
-): { success: true; data: T } | { success: false; error: string; status: number } {
+): Promise<{ success: true; data: T } | { success: false; error: string; status: number }> {
   try {
-    const body = request.json ? request.json() : {};
+    console.log('🔍 Validation: Starting request validation...');
+    
+    // Check if request has a body
+    const contentType = request.headers.get('content-type');
+    console.log('🔍 Validation: Content-Type:', contentType);
+    
+    if (!contentType || !contentType.includes('application/json')) {
+      console.error('❌ Validation: Invalid content type:', contentType);
+      return { success: false, error: 'Invalid content type - expected application/json', status: 400 };
+    }
+    
+    // Parse request body
+    const body = await request.json();
+    console.log('🔍 Validation: Request body parsed successfully, keys:', Object.keys(body || {}));
+    
+    // Validate against schema
     const validatedData = schema.parse(body);
+    console.log('✅ Validation: Schema validation successful');
+    
     return { success: true, data: validatedData };
   } catch (error) {
+    console.error('❌ Validation error:', error);
+    
     if (error instanceof z.ZodError) {
       const errorMessage = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      console.error('❌ Validation: Zod validation failed:', errorMessage);
       return { success: false, error: `Validation failed: ${errorMessage}`, status: 400 };
     }
+    
+    if (error instanceof SyntaxError) {
+      console.error('❌ Validation: JSON parsing failed:', error.message);
+      return { success: false, error: 'Invalid JSON format', status: 400 };
+    }
+    
+    console.error('❌ Validation: Unknown validation error:', error);
     return { success: false, error: 'Invalid request data', status: 400 };
   }
 }
@@ -97,8 +124,8 @@ export function validateFilePath(path: string): boolean {
 
 // Create validation middleware
 export function createValidationMiddleware<T>(schema: z.ZodSchema<T>) {
-  return (request: NextRequest) => {
-    const validation = validateRequest(request, schema);
+  return async (request: NextRequest) => {
+    const validation = await validateRequest(request, schema);
     
     if (!validation.success) {
       return NextResponse.json(
