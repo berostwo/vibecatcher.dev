@@ -6,12 +6,15 @@ import tempfile
 import shutil
 import subprocess
 import threading
+import hashlib
+import time
 from typing import Dict, List, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from flask import Flask, request, jsonify
 import openai
 from dataclasses import dataclass, asdict
+from collections import OrderedDict
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -86,6 +89,30 @@ class ChatGPTSecurityScanner:
         self.pattern_database = {}  # Database of known security patterns
         self.file_risk_scores = {}  # Risk scores for files based on previous scans
         
+        # 🚀 ADVANCED CACHING SYSTEM: Multi-level intelligent caching
+        self.cache_stats = {
+            'hits': 0,
+            'misses': 0,
+            'total_requests': 0,
+            'cache_size': 0,
+            'memory_usage_mb': 0
+        }
+        
+        # Multi-level cache system
+        self.file_cache = OrderedDict()  # LRU cache for file analysis results
+        self.pattern_cache = OrderedDict()  # LRU cache for security patterns
+        self.batch_cache = OrderedDict()  # LRU cache for batch analysis
+        self.code_snippet_cache = OrderedDict()  # LRU cache for code snippets
+        
+        # Cache configuration
+        self.max_cache_size = 10000  # Maximum number of cached items
+        self.cache_ttl_hours = 24  # Cache items expire after 24 hours
+        self.pattern_similarity_threshold = 0.85  # Similarity threshold for pattern matching
+        
+        # Cache cleanup
+        self.last_cache_cleanup = time.time()
+        self.cache_cleanup_interval = 3600  # Clean up every hour
+        
         # SIMPLE PROGRESS TRACKING: Clean, accurate progress system
         self.progress_callback = None
         self.current_step = "Initializing"
@@ -98,23 +125,18 @@ class ChatGPTSecurityScanner:
             "Authentication & Authorization",
             "Input Validation & Injection",
             "Data Exposure & Privacy",
-            "Cryptography & Secrets",
+            "Cryptography & Secrets Management",
             "Session Management",
             "File Upload Security",
             "API Security",
-            "Frontend Security",
-            "Backend Security",
-            "Infrastructure Security",
-            "Dependency Security",
-            "Business Logic Security",
-            "Error Handling & Logging",
-            "CORS & Headers",
-            "Rate Limiting",
-            "SQL Injection",
-            "XSS & CSRF",
-            "SSRF & Path Traversal",
-            "Deserialization",
-            "Memory Safety"
+            "Frontend Security (XSS, CSRF)",
+            "Backend Security (SQL Injection, etc.)",
+            "Business Logic Flaws",
+            "Error Handling & Information Disclosure",
+            "Dependency Vulnerabilities",
+            "Configuration Security",
+            "Network Security",
+            "Physical Security (if applicable)"
         ]
         
         # Indie developer specific security patterns
@@ -260,6 +282,12 @@ class ChatGPTSecurityScanner:
     def analyze_file_with_chatgpt(self, file_path: str, file_content: str, file_type: str) -> List[SecurityFinding]:
         """Analyze a single file with ChatGPT for security vulnerabilities"""
         try:
+            # 🚀 ADVANCED CACHING: Check cache first before expensive analysis
+            cached_result = self.get_cached_result(file_content, "file")
+            if cached_result:
+                logger.info(f"🎯 CACHE HIT: Using cached analysis for {file_path}")
+                return cached_result
+            
             # Get file-specific analysis rules
             analysis_rules = self.get_file_analysis_rules(file_path)
             
@@ -398,6 +426,22 @@ class ChatGPTSecurityScanner:
                             continue
                     
                     logger.info(f"✅ Successfully parsed {len(security_findings)} findings for {file_path}")
+                    
+                    # 🚀 ADVANCED CACHING: Cache the analysis result for future use
+                    self.cache_result(file_content, security_findings, "file")
+                    
+                    # Also cache as a pattern for similar files
+                    normalized_content = self.normalize_code_content(file_content)
+                    pattern_cache_entry = {
+                        'data': security_findings,
+                        'original_content': normalized_content,
+                        'timestamp': time.time(),
+                        'size': len(str(security_findings)),
+                        'type': 'pattern'
+                    }
+                    pattern_key = self.generate_cache_key(normalized_content, "pattern")
+                    self._add_to_lru_cache(self.pattern_cache, pattern_key, pattern_cache_entry)
+                    
                     return security_findings
                 else:
                     logger.warning(f"No JSON found in ChatGPT response for {file_path}")
@@ -1122,6 +1166,26 @@ class ChatGPTSecurityScanner:
             logger.info(f"🎯 Report validation complete")
             logger.info(f"🚀 Scan completed successfully in {scan_duration:.2f}s")
             
+            # Add progress data to result
+            result['progress_data'] = progress_updates
+            
+            # 🚀 ADD CACHE STATISTICS to scan result
+            try:
+                cache_stats = self.get_cache_statistics()
+                result['cache_statistics'] = cache_stats
+                result['cache_benefits'] = {
+                    'cost_savings': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
+                    'time_savings': f"{cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes",
+                    'hit_rate': f"{cache_stats.get('hit_rate_percent', 0)}%",
+                    'api_calls_saved': cache_stats.get('cache_hits', 0)
+                }
+                logger.info(f"📊 CACHE STATS: Scan completed with {cache_stats.get('hit_rate_percent', 0)}% cache hit rate")
+            except Exception as cache_error:
+                logger.warning(f"⚠️ Failed to get cache statistics: {cache_error}")
+                result['cache_statistics'] = {'error': 'Failed to retrieve cache statistics'}
+            
+            logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
+            
             return asdict(report)
             
         except Exception as e:
@@ -1432,6 +1496,11 @@ class ChatGPTSecurityScanner:
                             
                             batch_time = (datetime.now() - batch_start_time).total_seconds()
                             logger.info(f"✅ THREAD BATCH {batch_num + 1} COMPLETE: {len(all_findings)} findings in {batch_time:.1f}s")
+                            
+                            # 🚀 ADVANCED CACHING: Cache batch analysis result
+                            batch_content_str = json.dumps(batch_content, sort_keys=True)
+                            self.cache_result(batch_content_str, all_findings, "batch")
+                            
                             return all_findings
                         else:
                             logger.error(f"❌ THREAD BATCH {batch_num + 1}: No JSON found in response")
@@ -2118,6 +2187,229 @@ class ChatGPTSecurityScanner:
             'skip_checks': []
         }
 
+    # 🚀 ADVANCED CACHING METHODS
+    
+    def generate_cache_key(self, content: str, cache_type: str = "file") -> str:
+        """Generate unique cache key based on content and type"""
+        # Create hash of content
+        content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        
+        # Add cache type and timestamp for better organization
+        timestamp = int(time.time() / (self.cache_ttl_hours * 3600))  # Hour-based timestamp
+        return f"{cache_type}:{content_hash}:{timestamp}"
+    
+    def normalize_code_content(self, content: str) -> str:
+        """Normalize code content for better pattern matching"""
+        # Remove comments, whitespace, and normalize
+        lines = content.split('\n')
+        normalized_lines = []
+        
+        for line in lines:
+            # Remove comments
+            if '//' in line:
+                line = line.split('//')[0]
+            if '#' in line:
+                line = line.split('#')[0]
+            if '/*' in line:
+                continue  # Skip multi-line comments
+            
+            # Remove extra whitespace
+            line = line.strip()
+            if line:
+                normalized_lines.append(line)
+        
+        return '\n'.join(normalized_lines)
+    
+    def calculate_content_similarity(self, content1: str, content2: str) -> float:
+        """Calculate similarity between two code contents"""
+        if not content1 or not content2:
+            return 0.0
+        
+        # Normalize both contents
+        norm1 = self.normalize_code_content(content1)
+        norm2 = self.normalize_code_content(content2)
+        
+        if norm1 == norm2:
+            return 1.0
+        
+        # Simple similarity calculation (can be enhanced with more sophisticated algorithms)
+        words1 = set(norm1.split())
+        words2 = set(norm2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        return len(intersection) / len(union) if union else 0.0
+    
+    def get_cached_result(self, content: str, cache_type: str = "file") -> Optional[Any]:
+        """Get cached result if available and not expired"""
+        try:
+            # Clean up cache periodically
+            self._cleanup_cache_if_needed()
+            
+            # Generate cache key
+            cache_key = self.generate_cache_key(content, cache_type)
+            
+            # Check file cache first
+            if cache_type == "file" and cache_key in self.file_cache:
+                result = self.file_cache[cache_key]
+                if self._is_cache_valid(result):
+                    self.cache_stats['hits'] += 1
+                    self.cache_stats['total_requests'] += 1
+                    logger.info(f"🎯 CACHE HIT: {cache_type} analysis found in cache")
+                    return result['data']
+            
+            # Check pattern cache for similar content
+            if cache_type == "file":
+                similar_result = self._find_similar_pattern(content)
+                if similar_result:
+                    self.cache_stats['hits'] += 1
+                    self.cache_stats['total_requests'] += 1
+                    logger.info(f"🎯 PATTERN CACHE HIT: Similar content found in cache")
+                    return similar_result
+            
+            # Check batch cache
+            if cache_type == "batch" and cache_key in self.batch_cache:
+                result = self.batch_cache[cache_key]
+                if self._is_cache_valid(result):
+                    self.cache_stats['hits'] += 1
+                    self.cache_stats['total_requests'] += 1
+                    logger.info(f"🎯 CACHE HIT: Batch analysis found in cache")
+                    return result['data']
+            
+            # Cache miss
+            self.cache_stats['misses'] += 1
+            self.cache_stats['total_requests'] += 1
+            logger.info(f"🔄 CACHE MISS: {cache_type} analysis not found in cache")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Cache retrieval error: {e}")
+            return None
+    
+    def cache_result(self, content: str, result: Any, cache_type: str = "file") -> None:
+        """Cache analysis result with TTL and LRU management"""
+        try:
+            # Generate cache key
+            cache_key = self.generate_cache_key(content, cache_type)
+            
+            # Create cache entry with metadata
+            cache_entry = {
+                'data': result,
+                'timestamp': time.time(),
+                'size': len(str(result)),
+                'type': cache_type
+            }
+            
+            # Add to appropriate cache
+            if cache_type == "file":
+                self._add_to_lru_cache(self.file_cache, cache_key, cache_entry)
+            elif cache_type == "batch":
+                self._add_to_lru_cache(self.batch_cache, cache_key, cache_entry)
+            elif cache_type == "pattern":
+                self._add_to_lru_cache(self.pattern_cache, cache_key, cache_entry)
+            
+            # Update cache statistics
+            self.cache_stats['cache_size'] = len(self.file_cache) + len(self.batch_cache) + len(self.pattern_cache)
+            self.cache_stats['memory_usage_mb'] = self._calculate_cache_memory_usage()
+            
+            logger.info(f"💾 CACHED: {cache_type} analysis result cached (key: {cache_key[:16]}...)")
+            
+        except Exception as e:
+            logger.error(f"❌ Cache storage error: {e}")
+    
+    def _add_to_lru_cache(self, cache: OrderedDict, key: str, value: Any) -> None:
+        """Add item to LRU cache with size management"""
+        # Remove oldest items if cache is full
+        while len(cache) >= self.max_cache_size:
+            cache.popitem(last=False)  # Remove oldest item
+        
+        # Add new item
+        cache[key] = value
+        
+        # Move to end (most recently used)
+        cache.move_to_end(key)
+    
+    def _is_cache_valid(self, cache_entry: Dict) -> bool:
+        """Check if cache entry is still valid (not expired)"""
+        if not cache_entry or 'timestamp' not in cache_entry:
+            return False
+        
+        age_hours = (time.time() - cache_entry['timestamp']) / 3600
+        return age_hours < self.cache_ttl_hours
+    
+    def _find_similar_pattern(self, content: str) -> Optional[Any]:
+        """Find similar pattern in pattern cache"""
+        normalized_content = self.normalize_code_content(content)
+        
+        for cache_key, cache_entry in self.pattern_cache.items():
+            if not self._is_cache_valid(cache_entry):
+                continue
+            
+            cached_content = cache_entry.get('original_content', '')
+            if not cached_content:
+                continue
+            
+            similarity = self.calculate_content_similarity(normalized_content, cached_content)
+            if similarity >= self.pattern_similarity_threshold:
+                logger.info(f"🎯 PATTERN MATCH: Found {similarity:.2f} similarity match")
+                return cache_entry['data']
+        
+        return None
+    
+    def _cleanup_cache_if_needed(self) -> None:
+        """Clean up expired cache entries"""
+        current_time = time.time()
+        if current_time - self.last_cache_cleanup < self.cache_cleanup_interval:
+            return
+        
+        logger.info("🧹 CACHE CLEANUP: Starting cache cleanup...")
+        
+        # Clean up expired entries
+        for cache_name, cache in [('file', self.file_cache), ('batch', self.batch_cache), ('pattern', self.pattern_cache)]:
+            expired_keys = [key for key, entry in cache.items() if not self._is_cache_valid(entry)]
+            for key in expired_keys:
+                del cache[key]
+            if expired_keys:
+                logger.info(f"🧹 CACHE CLEANUP: Removed {len(expired_keys)} expired entries from {cache_name} cache")
+        
+        # Update statistics
+        self.cache_stats['cache_size'] = len(self.file_cache) + len(self.batch_cache) + len(self.pattern_cache)
+        self.cache_stats['memory_usage_mb'] = self._calculate_cache_memory_usage()
+        
+        self.last_cache_cleanup = current_time
+        logger.info(f"🧹 CACHE CLEANUP: Complete. Cache size: {self.cache_stats['cache_size']}, Memory: {self.cache_stats['memory_usage_mb']:.2f}MB")
+    
+    def _calculate_cache_memory_usage(self) -> float:
+        """Calculate approximate memory usage of cache in MB"""
+        total_size = 0
+        for cache in [self.file_cache, self.batch_cache, self.pattern_cache]:
+            for entry in cache.values():
+                total_size += len(str(entry))
+        
+        return total_size / (1024 * 1024)  # Convert to MB
+    
+    def get_cache_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive cache statistics"""
+        hit_rate = (self.cache_stats['hits'] / max(self.cache_stats['total_requests'], 1)) * 100
+        
+        return {
+            'cache_hits': self.cache_stats['hits'],
+            'cache_misses': self.cache_stats['misses'],
+            'total_requests': self.cache_stats['total_requests'],
+            'hit_rate_percent': round(hit_rate, 2),
+            'cache_size': self.cache_stats['cache_size'],
+            'memory_usage_mb': round(self.cache_stats['memory_usage_mb'], 2),
+            'file_cache_size': len(self.file_cache),
+            'batch_cache_size': len(self.batch_cache),
+            'pattern_cache_size': len(self.pattern_cache),
+            'max_cache_size': self.max_cache_size,
+            'cache_ttl_hours': self.cache_ttl_hours
+        }
+
 # Create Flask app
 app = Flask(__name__)
 
@@ -2202,6 +2494,70 @@ def get_progress():
     
     logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {current_scan_progress}")
     return jsonify(current_scan_progress)
+
+@app.route('/cache-stats', methods=['GET'])
+def get_cache_statistics():
+    """Get comprehensive cache statistics and performance metrics"""
+    try:
+        # Get cache statistics from the scanner instance
+        if hasattr(app, 'scanner') and app.scanner:
+            cache_stats = app.scanner.get_cache_statistics()
+        else:
+            # Create a temporary scanner instance to get stats
+            temp_scanner = ChatGPTSecurityScanner()
+            cache_stats = temp_scanner.get_cache_statistics()
+        
+        # Add additional performance metrics
+        performance_metrics = {
+            'cache_efficiency': {
+                'hit_rate_percent': cache_stats.get('hit_rate_percent', 0),
+                'cost_savings_estimate': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
+                'api_calls_saved': cache_stats.get('cache_hits', 0),
+                'estimated_time_saved_minutes': cache_stats.get('cache_hits', 0) * 0.5  # 30 seconds per cached file
+            },
+            'cache_performance': {
+                'cache_size': cache_stats.get('cache_size', 0),
+                'memory_usage_mb': cache_stats.get('memory_usage_mb', 0),
+                'max_cache_size': cache_stats.get('max_cache_size', 10000),
+                'cache_ttl_hours': cache_stats.get('cache_ttl_hours', 24)
+            },
+            'cache_distribution': {
+                'file_cache_size': cache_stats.get('file_cache_size', 0),
+                'batch_cache_size': cache_stats.get('batch_cache_size', 0),
+                'pattern_cache_size': cache_stats.get('pattern_cache_size', 0)
+            }
+        }
+        
+        response_data = {
+            'status': 'success',
+            'timestamp': datetime.now().isoformat(),
+            'cache_statistics': cache_stats,
+            'performance_metrics': performance_metrics,
+            'cache_benefits': {
+                'description': 'Advanced multi-level caching system with pattern matching',
+                'features': [
+                    'File-level caching for individual analysis results',
+                    'Batch caching for multi-file analysis',
+                    'Pattern caching for similar code structures',
+                    'LRU cache management with TTL expiration',
+                    'Intelligent similarity matching',
+                    'Memory usage optimization'
+                ],
+                'cost_savings': f"Estimated ${cache_stats.get('cache_hits', 0) * 0.02:.2f} saved in API costs",
+                'time_savings': f"Estimated {cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes saved in processing time"
+            }
+        }
+        
+        logger.info(f"📊 CACHE STATS: Retrieved cache statistics - {cache_stats.get('hit_rate_percent', 0)}% hit rate")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"❌ Error retrieving cache statistics: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Failed to retrieve cache statistics: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/', methods=['POST'])
 def security_scan():

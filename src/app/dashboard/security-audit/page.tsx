@@ -152,13 +152,13 @@ const AuditReportTemplate = ({ results, masterRemediation }: {
   // AUTO-COLLAPSE: Track which card is currently expanded
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   
-  const healthScore = useMemo(() => {
-    if (!results.summary.totalIssues) return 100;
-    const weightedScore = (results.summary.critical * 10) + (results.summary.high * 5) + (results.summary.medium * 2) + (results.summary.low * 1);
-    const maxScore = results.summary.totalIssues * 10;
+    const healthScore = useMemo(() => {
+        if (!results.summary.totalIssues) return 100;
+        const weightedScore = (results.summary.critical * 10) + (results.summary.high * 5) + (results.summary.medium * 2) + (results.summary.low * 1);
+        const maxScore = results.summary.totalIssues * 10;
     return Math.max(0, Math.round((1 - (weightedScore / (maxScore || 1))) * 100));
-  }, [results]);
-  
+    }, [results]);
+    
   const getHealthColor = (score: number) => {
     if (score > 85) return 'text-green-500';
     if (score > 60) return 'text-yellow-500';
@@ -699,7 +699,7 @@ export default function SecurityAuditPage() {
       pollProgress();
       
       // Also add a delayed check to ensure progress polling is working
-      setTimeout(() => {
+    setTimeout(() => {
         console.log('📊 Delayed progress check - ensuring polling is active');
         if (progressInterval) {
           console.log('📊 Progress interval is active, continuing to poll');
@@ -910,7 +910,7 @@ export default function SecurityAuditPage() {
               className="min-w-[120px]"
             >
               Test Progress
-            </Button>
+          </Button>
           </div>
           
                      {/* PROGRESS BAR: Beautiful purple progress tracking */}
@@ -964,6 +964,6 @@ export default function SecurityAuditPage() {
           masterRemediation={scanResults.master_remediation}
         />
       )}
-    </div>
+                </div>
   );
 }
