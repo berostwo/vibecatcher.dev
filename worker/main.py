@@ -938,6 +938,16 @@ class ChatGPTSecurityScanner:
         
         logger.info(f"🚀 MULTI-API KEY SYSTEM: {len(self.api_keys)} API keys available for parallel processing!")
         
+        # Optional sharding configuration (HTTP fan-out to peer workers)
+        self.sharding_enabled = os.environ.get('SHARDING_ENABLED', 'false').lower() == 'true'
+        self.max_workers_per_scan = int(os.environ.get('SHARD_MAX_WORKERS_PER_SCAN', '3'))
+        peers_raw = os.environ.get('WORKER_PEERS', '')
+        # Comma-separated list of base URLs, e.g., https://service-1.run.app,https://service-2.run.app
+        self.worker_peers = [p.strip().rstrip('/') for p in peers_raw.split(',') if p.strip()]
+        self.worker_auth_token = os.environ.get('WORKER_AUTH_TOKEN', '')
+        if self.sharding_enabled:
+            logger.info(f"🧩 Sharding enabled. Peers: {len(self.worker_peers)}, max_workers_per_scan={self.max_workers_per_scan}")
+        
         # Initialize token usage tracking
         self.total_tokens_used = 0
         self.prompt_tokens = 0
@@ -1040,11 +1050,11 @@ class ChatGPTSecurityScanner:
         self.step_progress = progress
         
         # Store progress update in the instance
-        progress_data = {
-            'step': step,
-            'progress': progress,
-            'timestamp': datetime.now().isoformat()
-        }
+                progress_data = {
+                    'step': step,
+                    'progress': progress,
+                    'timestamp': datetime.now().isoformat()
+                }
         self.progress_updates.append(progress_data)
         
         if self.progress_callback:
@@ -1761,7 +1771,7 @@ class ChatGPTSecurityScanner:
             - **Fix**: Implement proper role-based access control
             - **Action**: Add authorization checks in requireAuth function
             ```
-
+            
             PHASE 1: Critical & High Priority (Immediate Action Required)
             - List specific fixes for Critical and High severity issues
             - Include exact file paths, line numbers, and affected pages
@@ -2011,80 +2021,88 @@ class ChatGPTSecurityScanner:
             # PROGRESS TRACKING: Start batch processing (EVEN DISTRIBUTION!)
             self.update_progress("Starting security analysis", 35)
             
-            # 🚀 PHASE 5: TRUE PARALLEL PROCESSING WITH RATE LIMITING PROTECTION!
-            logger.info(f"🚀 PHASE 5 PARALLEL PROCESSING: Starting {total_batches} batches with rate limiting protection!")
-            logger.info(f"🚀 Using {len(self.api_keys)} API keys for true parallel processing")
-            
-            # 🚀 IMPLEMENT TRUE PARALLEL PROCESSING with ThreadPoolExecutor
-            import concurrent.futures
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            
-            # Create a thread pool for true parallel execution
-            max_workers = min(len(self.api_keys), total_batches, 4)  # Limit concurrent workers
-            logger.info(f"🚀 THREAD POOL: Using {max_workers} concurrent workers for true parallel processing")
-            
-            start_parallel_time = datetime.now()
-            all_findings = []
-            
-            try:
-                # Use ThreadPoolExecutor for true parallel processing
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    # Submit all batch tasks to the thread pool
-                    future_to_batch = {}
-                    for batch_num, batch_files in enumerate(file_batches):
-                        # Add small delay between submissions to avoid rate limiting
-                        if batch_num > 0:
-                            import time
-                            time.sleep(0.1)  # 100ms delay between submissions
-                        
-                        future = executor.submit(
-                            self.analyze_files_batch_sync, 
-                            batch_files, 
-                            batch_num, 
-                            total_batches, 
-                            scan_start_time, 
-                            max_scan_time
-                        )
-                        future_to_batch[future] = batch_num
-                    
-                    logger.info(f"🚀 THREAD POOL: Submitted {len(future_to_batch)} batches for parallel execution")
-                    
-                    # Process completed batches as they finish (true parallel!)
-                    completed_batches = 0
-                    for future in as_completed(future_to_batch):
-                        batch_num = future_to_batch[future]
-                        try:
-                            batch_findings = future.result()
-                            all_findings.extend(batch_findings)
-                            completed_batches += 1
-                            logger.info(f"✅ THREAD POOL: Batch {batch_num + 1} completed ({completed_batches}/{total_batches}) - {len(batch_findings)} findings")
-                        except Exception as e:
-                            logger.error(f"❌ THREAD POOL: Batch {batch_num + 1} failed: {e}")
-                            # Try sequential fallback for failed batch
-                            try:
-                                logger.warning(f"⚠️ THREAD POOL: Attempting sequential fallback for batch {batch_num + 1}")
-                                batch_files = file_batches[batch_num]
-                                fallback_findings = self.analyze_files_batch(batch_files)
-                                all_findings.extend(fallback_findings)
-                                logger.info(f"✅ THREAD POOL: Sequential fallback successful for batch {batch_num + 1}")
-                            except Exception as fallback_error:
-                                logger.error(f"❌ THREAD POOL: Sequential fallback also failed for batch {batch_num + 1}: {fallback_error}")
-                
-                parallel_time = (datetime.now() - start_parallel_time).total_seconds()
-                logger.info(f"🚀 THREAD POOL COMPLETE: All {total_batches} batches finished in {parallel_time:.1f}s!")
-                logger.info(f"✅ THREAD POOL: Total findings collected: {len(all_findings)}")
-                
-            except Exception as e:
-                logger.error(f"❌ Thread pool processing failed: {e}")
-                # Fallback to sequential processing if thread pool fails
-                logger.warning(f"⚠️ Falling back to sequential processing...")
-                for batch_num, batch_files in enumerate(file_batches):
+            # 🚀 PHASE 5: TRUE PARALLEL PROCESSING WITH OPTIONAL SHARDING
+            logger.info(f"🚀 PHASE 5 PARALLEL PROCESSING: Starting {total_batches} batches")
+            logger.info(f"🚀 Using {len(self.api_keys)} API keys for intra-worker parallelism")
+
+            # If sharding is enabled and we have peers, offload part of the batches via HTTP fan-out
+            if self.sharding_enabled and self.worker_peers:
+                try:
+                    logger.info("🧩 Sharding: distributing batches to peers")
+                    shardable_batches = list(file_batches)
+                    local_batches: List[List[tuple]] = []
+
+                    # Determine how many peers to use for this scan (capped)
+                    peer_urls = self.worker_peers[: self.max_workers_per_scan - 1]  # -1 to keep local worker
+
+                    # Simple round-robin partitioning: assign every (n)th batch to a peer
+                    partitions: Dict[str, List[List[tuple]]] = {u: [] for u in peer_urls}
+                    if peer_urls:
+                        for idx, batch in enumerate(shardable_batches):
+                            target_peer = peer_urls[idx % len(peer_urls)]
+                            partitions[target_peer].append(batch)
+                        # Keep a fair slice locally as well
+                        local_batches = [b for i, b in enumerate(shardable_batches) if i % (len(peer_urls) + 1) == 0]
+                    else:
+                        local_batches = shardable_batches
+
+                    # Fire-and-collect: send shards to peers asynchronously while processing local batches
+                    aggregated_findings: List[SecurityFinding] = []
+
+                    async def send_shard(peer_url: str, batches: List[List[tuple]]):
+                        if not batches:
+                            return []
+                        payload = {
+                            'batches': [
+                                [
+                                    {'file_path': fp, 'relative_path': rp, 'file_type': ft}
+                                    for (fp, rp, ft) in batch
+                                ] for batch in batches
+                            ]
+                        }
+                        headers = {'Content-Type': 'application/json'}
+                        if self.worker_auth_token:
+                            headers['Authorization'] = f"Bearer {self.worker_auth_token}"
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(f"{peer_url}/internal/shard-scan", json=payload, headers=headers, timeout=900) as resp:
+                                if resp.status != 200:
+                                    text = await resp.text()
+                                    logger.warning(f"🧩 Shard to {peer_url} failed: {resp.status}: {text[:200]}")
+                                    return []
+                                data = await resp.json()
+                                return data.get('findings', [])
+
+                    # Kick off peer shard requests
+                    shard_tasks = [send_shard(url, batches) for url, batches in partitions.items()]
+
+                    # Process local batches with existing thread pool flow while peers run
+                    local_findings = self._process_batches_locally(local_batches, total_batches, scan_start_time, max_scan_time)
+
+                    # Collect peer results
                     try:
-                        batch_findings = self.analyze_files_batch(batch_files)
-                        all_findings.extend(batch_findings)
-                    except Exception as batch_error:
-                        logger.error(f"❌ Sequential fallback batch {batch_num + 1} failed: {batch_error}")
-                        continue
+                        peer_results = await asyncio.gather(*shard_tasks, return_exceptions=True)
+                        for r in peer_results:
+                            if isinstance(r, Exception):
+                                logger.warning(f"🧩 Shard task error: {r}")
+                            else:
+                                for f in r:
+                                    # Convert dicts to SecurityFinding where applicable
+                                    try:
+                                        aggregated_findings.append(SecurityFinding(**f))
+                                    except Exception:
+                                        pass
+                    except Exception as e:
+                        logger.warning(f"🧩 Shard collection failed: {e}")
+
+                    all_findings = local_findings + aggregated_findings
+            except Exception as e:
+                    logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
+                    all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
+            else:
+                # No sharding: process all batches locally
+                all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
+
+            # all_findings already computed via local processing and/or sharding above
             
             # PROGRESS TRACKING: All batches complete (EVEN DISTRIBUTION!)
             self.update_progress("Parallel batch analysis complete", 65)
@@ -2403,6 +2421,66 @@ class ChatGPTSecurityScanner:
                 batches.append(batch)
         
         return batches
+
+    def _process_batches_locally(self, batches: List[List[tuple]], total_batches: int, scan_start_time: datetime, max_scan_time: int) -> List['SecurityFinding']:
+        """Process provided batches using the existing thread pool logic and return findings."""
+        if not batches:
+            return []
+        import concurrent.futures
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # Limit concurrent workers by available API keys to spread rate limit load
+        max_workers = min(len(self.api_keys), len(batches), 4)
+        logger.info(f"🚀 THREAD POOL: Using {max_workers} concurrent workers for {len(batches)} local batches")
+        start_parallel_time = datetime.now()
+        all_findings: List[SecurityFinding] = []
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_batch: Dict[Any, int] = {}
+                for batch_num, batch_files in enumerate(batches):
+                    if batch_num > 0:
+                        import time as _time
+                        _time.sleep(0.1)
+                    future = executor.submit(
+                        self.analyze_files_batch_sync,
+                        batch_files,
+                        batch_num,
+                        total_batches,
+                        scan_start_time,
+                        max_scan_time,
+                    )
+                    future_to_batch[future] = batch_num
+                logger.info(f"🚀 THREAD POOL: Submitted {len(future_to_batch)} batches for parallel execution")
+                completed_batches = 0
+                for future in as_completed(future_to_batch):
+                    bnum = future_to_batch[future]
+                    try:
+                        batch_findings = future.result()
+                        all_findings.extend(batch_findings)
+                        completed_batches += 1
+                        logger.info(f"✅ THREAD POOL: Batch {bnum + 1} completed ({completed_batches}/{len(batches)}) - {len(batch_findings)} findings")
+                    except Exception as e:
+                        logger.error(f"❌ THREAD POOL: Batch {bnum + 1} failed: {e}")
+                        try:
+                            logger.warning(f"⚠️ THREAD POOL: Attempting sequential fallback for batch {bnum + 1}")
+                            fallback_findings = self.analyze_files_batch(batches[bnum])
+                            all_findings.extend(fallback_findings)
+                            logger.info(f"✅ THREAD POOL: Sequential fallback successful for batch {bnum + 1}")
+                        except Exception as fallback_error:
+                            logger.error(f"❌ THREAD POOL: Sequential fallback also failed for batch {bnum + 1}: {fallback_error}")
+        except Exception as e:
+            logger.error(f"❌ Thread pool processing failed: {e}")
+            logger.warning("⚠️ Falling back to sequential processing...")
+            for batch_num, batch_files in enumerate(batches):
+                try:
+                    batch_findings = self.analyze_files_batch(batch_files)
+                    all_findings.extend(batch_findings)
+                except Exception as batch_error:
+                    logger.error(f"❌ Sequential fallback batch {batch_num + 1} failed: {batch_error}")
+                    continue
+        parallel_time = (datetime.now() - start_parallel_time).total_seconds()
+        logger.info(f"🚀 THREAD POOL COMPLETE: {len(batches)} local batches finished in {parallel_time:.1f}s!")
+        logger.info(f"✅ THREAD POOL: Total findings collected locally: {len(all_findings)}")
+        return all_findings
     
     def analyze_files_batch_sync(self, batch_files: List[tuple], batch_num: int, total_batches: int, scan_start_time: datetime, max_scan_time: int) -> List[SecurityFinding]:
         """🚀 THREAD POOL VERSION: Analyze multiple files in ONE API call for true parallel processing"""
@@ -3636,6 +3714,46 @@ def get_cache_statistics():
             'message': f'Failed to retrieve cache statistics: {str(e)}',
             'timestamp': datetime.now().isoformat()
         }), 500
+
+@app.route('/internal/shard-scan', methods=['POST'])
+def shard_scan():
+    """Internal endpoint to process assigned batches from a peer orchestrator.
+    Requires Authorization: Bearer WORKER_AUTH_TOKEN when configured.
+    """
+    try:
+        token_header = request.headers.get('Authorization', '')
+        token = token_header.replace('Bearer ', '') if token_header.startswith('Bearer ') else token_header
+        required = os.environ.get('WORKER_AUTH_TOKEN', '')
+        if required and token != required:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        payload = request.get_json(silent=True) or {}
+        batches = payload.get('batches', [])
+        if not isinstance(batches, list):
+            return jsonify({'error': 'Invalid payload'}), 400
+
+        scanner = ChatGPTSecurityScanner()
+
+        # Convert incoming json batches back to tuple format expected by local processors
+        tuple_batches = []
+        for batch in batches:
+            tuple_batch = []
+            for f in batch:
+                tuple_batch.append((f.get('file_path'), f.get('relative_path'), f.get('file_type')))
+            tuple_batches.append(tuple_batch)
+
+        local_results = scanner._process_batches_locally(tuple_batches, len(tuple_batches), datetime.now(), 900)
+        serialized = []
+        for finding in local_results:
+            if isinstance(finding, SecurityFinding):
+                serialized.append(asdict(finding))
+            elif isinstance(finding, dict):
+                serialized.append(finding)
+
+        return jsonify({'status': 'ok', 'findings': serialized})
+    except Exception as e:
+        logger.error(f"❌ shard_scan failed: {e}")
+        return jsonify({'error': 'shard_scan_failed'}), 500
 
 @app.route('/', methods=['POST'])
 def security_scan():
