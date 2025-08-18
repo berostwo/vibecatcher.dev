@@ -318,6 +318,22 @@ export default function AuditHistoryPage() {
                         <p className="text-2xl font-bold text-green-500">{summary.low_count}</p>
                       </div>
                     </div>
+
+                    {/* Known vulnerable packages (from OSV) */}
+                    {Array.isArray((summary as any)?.vulnerable_packages) && (summary as any).vulnerable_packages.length > 0 && (
+                      <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4 text-left">
+                        <h4 className="text-sm font-semibold mb-2">Known vulnerable packages</h4>
+                        <ul className="list-disc list-inside text-sm text-muted-foreground">
+                          {((summary as any).vulnerable_packages as string[]).slice(0, 8).map((pkg, idx) => (
+                            <li key={idx}>{pkg}</li>
+                          ))}
+                          {((summary as any).vulnerable_packages as string[]).length > 8 && (
+                            <li className="italic">and more...</li>
+                          )}
+                        </ul>
+                        <p className="text-xs mt-2 text-muted-foreground">Identified via OSV. Consider updating to patched versions.</p>
+                      </div>
+                    )}
                     
                     {/* Master Remediation Plan */}
                     {audit.scanResults?.master_remediation && (

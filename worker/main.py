@@ -2226,6 +2226,12 @@ class ChatGPTSecurityScanner:
             # Add progress data to report
             report_dict = asdict(report)
             report_dict['progress_data'] = self.progress_updates
+            try:
+                if 'scan_context' in locals() and isinstance(scan_context, dict) and scan_context.get('vulnerable_packages'):
+                    report_dict.setdefault('summary', {})
+                    report_dict['summary']['vulnerable_packages'] = scan_context['vulnerable_packages']
+            except Exception:
+                pass
             
             # 🚀 ADD CACHE STATISTICS to scan result
             try:
