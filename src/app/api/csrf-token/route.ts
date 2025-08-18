@@ -6,11 +6,11 @@ import { createRateLimitMiddleware, RATE_LIMITS } from '@/lib/rate-limit';
 async function generateCSRFTokenHandler(request: NextRequest, user: any) {
   try {
     // Rate limiting for CSRF token generation
-    const rateLimitCheck = createRateLimitMiddleware(RATE_LIMITS.STRICT)(request);
+    const rateLimitCheck = await createRateLimitMiddleware(RATE_LIMITS.STRICT)(request);
     if (rateLimitCheck) return rateLimitCheck;
 
     // Generate new CSRF token for the user
-    const csrfToken = generateCSRFToken(user.uid);
+    const csrfToken = await generateCSRFToken(user.uid);
 
     return NextResponse.json({
       token: csrfToken,

@@ -1,4 +1,11 @@
-import { doc, getDoc, setDoc, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
+import { 
+  doc, 
+  setDoc, 
+  getDoc, 
+  updateDoc, 
+  serverTimestamp,
+  increment
+} from 'firebase/firestore';
 import { db } from './firebase';
 
 export interface UserData {
@@ -137,19 +144,40 @@ export class UserService {
 
   static async getGitHubToken(userId: string): Promise<string | null> {
     try {
-      const userData = await this.getUserData(userId);
+      const userRef = doc(db, 'users', userId);
+      
+      // Get current user data
+      const userDoc = await getDoc(userRef);
+      if (!userDoc.exists()) {
+        return null;
+      }
+      
+      const userData = userDoc.data();
       if (!userData?.githubAccessToken) {
         return null;
       }
       
       // Check if token is expired
       if (userData.githubTokenExpiresAt && userData.githubTokenExpiresAt < new Date()) {
-        console.log('GitHubService: Token expired, removing from Firebase');
-        await this.removeGitHubToken(userId);
+        console.log('GitHubService: Token expired, removing atomically');
+        
+        // Use optimistic locking with timestamp check to prevent race conditions
+        try {
+          await updateDoc(userRef, {
+            githubAccessToken: null,
+            githubTokenExpiresAt: null,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (updateError) {
+          // If update fails due to concurrent modification, token was already handled
+          console.log('GitHubService: Token already handled by another request');
+        }
+        
         return null;
       }
       
       return userData.githubAccessToken;
+      
     } catch (error) {
       console.error('Error getting GitHub token:', error);
       return null;

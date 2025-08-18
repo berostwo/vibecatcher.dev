@@ -155,7 +155,7 @@ export function AppSidebar() {
                      // Redirect to home page after sign out
                      window.location.href = '/'
                    } catch (error) {
-                     console.error('Error signing out:', error)
+                     console.error('Error signing out')
                      // Still redirect to home page even if there's an error
                      window.location.href = '/'
                    }

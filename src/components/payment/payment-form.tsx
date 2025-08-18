@@ -67,12 +67,12 @@ export function PaymentForm({ productId, onBack, onSuccess }: PaymentFormProps) 
       });
 
       if (confirmError) {
-        setError(confirmError.message || 'Payment failed');
+        setError('Payment failed. Please verify your card details or try another method.');
       } else {
         setPaymentSuccess(true);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Payment failed');
+      setError('Payment failed. Please try again later.');
     } finally {
       setIsLoading(false);
     }

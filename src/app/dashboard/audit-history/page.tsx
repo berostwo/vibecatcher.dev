@@ -3,22 +3,21 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { FirebaseAuditService, SecurityAudit } from '@/lib/firebase-audit-service';
-import { Badge, type BadgeProps } from "@/components/ui/badge"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
-import { Clock, SquareMenu, ShieldAlert, AlertTriangle, Info, Code, CheckCircle, Loader2, Download } from "lucide-react"
-import { DashboardPage, DashboardPageHeader } from "@/components/common/dashboard-page"
+import { AuditSecurityService } from '@/lib/audit-security';
+import { DashboardPage, DashboardPageHeader } from '@/components/common/dashboard-page';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Badge, BadgeProps } from '@/components/ui/badge';
+import { 
+  ShieldAlert, 
+  AlertTriangle, 
+  Info, 
+  CheckCircle, 
+  SquareMenu, 
+  Clock, 
+  Download, 
+  Code,
+  Loader2
+} from 'lucide-react';
 
 // This will be replaced with real data from Firebase
 
@@ -75,10 +74,14 @@ export default function AuditHistoryPage() {
     try {
       setLoading(true);
       const audits = await FirebaseAuditService.getAuditHistory(user.uid);
-      setAuditHistory(audits);
+      
+      // Sanitize all audit data before setting in state
+      const sanitizedAudits = audits.map(audit => AuditSecurityService.sanitizeAuditData(audit)).filter(Boolean);
+      
+      setAuditHistory(sanitizedAudits);
       setError(null);
     } catch (err) {
-      console.error('Error fetching audit history:', err);
+      console.error('Error fetching audit history');
       setError('Failed to load audit history');
     } finally {
       setLoading(false);
@@ -131,7 +134,7 @@ export default function AuditHistoryPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error downloading audit:', error);
+      console.error('Error downloading audit');
       alert('Failed to download audit. Please try again.');
     }
   };
@@ -196,9 +199,64 @@ export default function AuditHistoryPage() {
           // Skip audits without scan results
           if (!audit.scanResults) return null;
           
-          const healthScore = audit.scanResults.summary.codebase_health || 100;
           const summary = audit.scanResults.summary;
           const vulnerabilities = audit.scanResults.condensed_findings || [];
+          
+          // Sort vulnerabilities by severity (Critical -> High -> Medium -> Low)
+          const sortedVulnerabilities = [...vulnerabilities].sort((a, b) => {
+            const severityOrder = { 'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
+            const aSeverity = a?.severity || 'Medium';
+            const bSeverity = b?.severity || 'Medium';
+            return (severityOrder[aSeverity as keyof typeof severityOrder] || 4) - (severityOrder[bSeverity as keyof typeof severityOrder] || 4);
+          });
+          
+          // Calculate accurate codebase health score based on actual findings
+          const calculateHealthScore = (findings: any[]) => {
+            if (findings.length === 0) return 100; // Perfect if no issues
+            
+            let totalPenalty = 0;
+            let maxPossiblePenalty = 0;
+            
+            findings.forEach(finding => {
+              const severity = finding?.severity || 'Medium';
+              let penalty = 0;
+              let maxPenalty = 0;
+              
+              switch (severity) {
+                case 'Critical':
+                  penalty = 8; // Critical issues heavily impact health
+                  maxPenalty = 8;
+                  break;
+                case 'High':
+                  penalty = 5; // High issues significantly impact health
+                  maxPenalty = 5;
+                  break;
+                case 'Medium':
+                  penalty = 3; // Medium issues moderately impact health
+                  maxPenalty = 3;
+                  break;
+                case 'Low':
+                  penalty = 1; // Low issues slightly impact health
+                  maxPenalty = 1;
+                  break;
+                default:
+                  penalty = 2;
+                  maxPenalty = 2;
+              }
+              
+              // Apply penalty based on occurrences (capped at 2x)
+              const occurrencePenalty = Math.min(penalty * Math.min(finding?.occurrences || 1, 2), maxPenalty);
+              totalPenalty += occurrencePenalty;
+              maxPossiblePenalty += maxPenalty;
+            });
+            
+            // Calculate health percentage with more realistic scaling
+            const penaltyPercentage = Math.min((totalPenalty / maxPossiblePenalty) * 100, 95); // Cap at 95% penalty
+            const healthScore = Math.max(5, Math.round(100 - penaltyPercentage)); // Minimum 5% health
+            return healthScore;
+          };
+          
+          const healthScore = calculateHealthScore(sortedVulnerabilities);
           
           return (
           <AccordionItem
@@ -234,7 +292,7 @@ export default function AuditHistoryPage() {
                     <div className="grid grid-cols-2 gap-4 text-center">
                         <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
                             <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
-                            <p className="text-4xl font-bold">{summary.total_findings}</p>
+                            <p className="text-4xl font-bold">{sortedVulnerabilities.length}</p>
                         </div>
                         <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
                             <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
@@ -260,8 +318,30 @@ export default function AuditHistoryPage() {
                         <p className="text-2xl font-bold text-green-500">{summary.low_count}</p>
                       </div>
                     </div>
+                    
+                    {/* Master Remediation Plan */}
+                    {audit.scanResults?.master_remediation && (
+                      <div className="mt-4">
+                        <Accordion type="single" collapsible className="w-full">
+                          <AccordionItem value="master-remediation" className="rounded-lg border border-white/30 bg-card/50 shadow-sm">
+                            <AccordionTrigger className="hover:no-underline px-4">
+                              <div className="flex items-center gap-3">
+                                <ShieldAlert className="h-5 w-5 text-white" />
+                                <span className="font-semibold text-lg text-white">Master Remediation Plan</span>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent className="px-4 pb-4">
+                              <div className="bg-black/80 rounded-md p-4">
+                                <pre className="text-sm text-green-300 whitespace-pre-wrap font-mono leading-relaxed" dangerouslySetInnerHTML={{ __html: audit.scanResults.master_remediation }} />
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
+                      </div>
+                    )}
+                    
                     <Accordion type="single" collapsible className="w-full">
-                        {vulnerabilities.map((vuln) => {
+                        {sortedVulnerabilities.map((vuln) => {
                             const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
                             const remediation = audit.scanResults?.condensed_remediations?.[vuln.rule_id] || 
                               "Remediation prompt will be generated for this finding type.";
@@ -272,7 +352,7 @@ export default function AuditHistoryPage() {
                                     <div className="flex items-center gap-4 w-full">
                                         {icon}
                                         <div className="flex-grow text-left">
-                                            <p className={`font-semibold ${textColor}`}>{vuln.message}</p>
+                                            <p className={`font-semibold ${textColor}`} dangerouslySetInnerHTML={{ __html: vuln.message }} />
                                             <p className="text-sm text-muted-foreground font-mono">
                                               {vuln.occurrences > 1 
                                                 ? `${vuln.occurrences} occurrences`
@@ -283,13 +363,11 @@ export default function AuditHistoryPage() {
                                     </div>
                                 </AccordionTrigger>
                                 <AccordionContent className="pt-2">
-                                    <p className="text-sm text-foreground/80 mb-4">{vuln.description}</p>
+                                    <p className="text-sm text-foreground/80 mb-4" dangerouslySetInnerHTML={{ __html: vuln.description }} />
                                     <div className="bg-card/50 p-4 rounded-md border border-border">
                                         <h4 className="font-semibold mb-2 flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation</h4>
                                         <div className="bg-black/80 rounded-md p-3">
-                                            <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
-                                                {remediation}
-                                            </pre>
+                                            <pre className="text-xs text-green-300 whitespace-pre-wrap font-code" dangerouslySetInnerHTML={{ __html: remediation }} />
                                         </div>
                                     </div>
                                 </AccordionContent>
@@ -306,20 +384,7 @@ export default function AuditHistoryPage() {
                 </div>
               )}
               
-              {/* Master Remediation Plan */}
-              {audit.scanResults?.master_remediation && (
-                <div className="mt-6 p-4 bg-card/50 rounded-lg border border-border">
-                  <h4 className="font-semibold mb-3 flex items-center">
-                    <ShieldAlert className="mr-2 h-4 w-4" /> 
-                    Master Remediation Plan
-                  </h4>
-                  <div className="bg-black/80 rounded-md p-3">
-                    <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
-                      {audit.scanResults.master_remediation}
-                    </pre>
-                  </div>
-                </div>
-              )}
+
             </AccordionContent>
           </AccordionItem>
         )})}

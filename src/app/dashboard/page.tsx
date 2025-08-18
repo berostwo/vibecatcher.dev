@@ -6,16 +6,39 @@ import { Github, History, ShieldCheck, ArrowRight, CheckCircle, ShoppingCart } f
 import Link from 'next/link'
 import { DashboardPage, DashboardPageHeader } from '@/components/common/dashboard-page'
 import { useAuth } from '@/contexts/auth-context'
+import { useRouter } from 'next/navigation'
+import { useEffect } from 'react'
 
 export default function DashboardPageContent() {
   const { user, githubToken, isLoading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading && !user) {
+      router.replace('/');
+    }
+  }, [isLoading, user, router]);
   
-  if (isLoading) {
+  if (isLoading || (!user && typeof window !== 'undefined')) {
     return (
       <DashboardPage>
         <DashboardPageHeader title="Dashboard" description="An overview of your account and security audits." />
         <div className="flex items-center justify-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </DashboardPage>
+    );
+  }
+  
+  if (!user) {
+    return (
+      <DashboardPage>
+        <DashboardPageHeader title="Dashboard" description="An overview of your account and security audits." />
+        <div className="flex flex-col items-center justify-center py-12 gap-4">
+          <p className="text-muted-foreground">You must be signed in to view your dashboard.</p>
+          <Button asChild>
+            <Link href="/">Go to Home</Link>
+          </Button>
         </div>
       </DashboardPage>
     );

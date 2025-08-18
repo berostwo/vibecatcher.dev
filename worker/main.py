@@ -1006,7 +1006,11 @@ class ChatGPTSecurityScanner:
                 clone_cmd = ['git', 'clone', '--single-branch', '--depth', '1', '--no-tags', '--shallow-submodules', repo_url, repo_path]
                 logger.info(f"🌐 Using public clone (optimized)")
             
-            logger.info(f"🚀 Clone command: {' '.join(clone_cmd)}")
+            # Mask sensitive tokens in logged clone command
+            masked_cmd = ' '.join(clone_cmd)
+            if github_token:
+                masked_cmd = masked_cmd.replace(github_token, '***')
+            logger.info(f"🚀 Clone command: {masked_cmd}")
             
             # Execute clone
             process = await asyncio.create_subprocess_exec(
@@ -1020,6 +1024,8 @@ class ChatGPTSecurityScanner:
             
             if process.returncode != 0:
                 error_msg = stderr.decode()
+                if github_token:
+                    error_msg = error_msg.replace(github_token, '***')
                 logger.error(f"❌ Git clone failed with return code {process.returncode}")
                 logger.error(f"❌ Error output: {error_msg}")
                 raise Exception(f"Git clone failed: {error_msg}")
@@ -1245,7 +1251,7 @@ class ChatGPTSecurityScanner:
                     
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse ChatGPT response for {file_path}: {e}")
-                logger.warning(f"Response content: {content}")
+                logger.warning("Response content omitted for security")
                 return []
             except Exception as e:
                 logger.error(f"Unexpected error parsing response for {file_path}: {e}")
@@ -1604,7 +1610,7 @@ class ChatGPTSecurityScanner:
                     
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Failed to parse nuclear optimization response: {e}")
-                logger.error(f"Response content: {content}")
+                logger.error("Response content omitted for security")
                 return {}
             
         except Exception as e:
@@ -2850,7 +2856,7 @@ class ChatGPTSecurityScanner:
                     
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Failed to parse batch analysis response: {e}")
-                logger.error(f"Response content: {content}")
+                logger.error("Response content omitted for security")
                 return []
             
         except Exception as e:

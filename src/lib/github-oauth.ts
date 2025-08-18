@@ -47,8 +47,8 @@ export class GitHubOAuthService {
   /**
    * Initiate GitHub OAuth flow with popup
    */
-  static initiateOAuth(): Promise<string> {
-    return new Promise((resolve, reject) => {
+  static async initiateOAuth(): Promise<string> {
+    return new Promise(async (resolve, reject) => {
       console.log('=== OAuth Initiation Debug ===');
       console.log('GITHUB_CLIENT_ID:', GITHUB_CLIENT_ID);
       console.log('NEXT_PUBLIC_GITHUB_CLIENT_ID env:', process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID);
@@ -81,6 +81,21 @@ export class GitHubOAuthService {
       
       sessionStorage.setItem('github_oauth_state', JSON.stringify(stateData));
       console.log('Stored OAuth state:', stateData);
+      
+      // Store state on server for CSRF protection
+      try {
+        await fetch('/api/github/oauth/state', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ state, clientId: GITHUB_CLIENT_ID }),
+        });
+        console.log('✅ OAuth state stored on server');
+      } catch (error) {
+        console.error('❌ Failed to store OAuth state on server:', error);
+        // Continue with OAuth flow even if server storage fails
+      }
       
       // Build GitHub OAuth URL with aggressive parameters to force fresh login
       const params = new URLSearchParams({

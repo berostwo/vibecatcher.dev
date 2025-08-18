@@ -1,31 +1,76 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
-// Payment intent validation schema
+// Shared helpers
+const safeAlnumDash = /^[A-Za-z0-9_-]+$/;
+
+// Payment intent validation schema (strict)
 export const PaymentIntentSchema = z.object({
-  priceId: z.string().min(1).max(100).regex(/^price_[a-zA-Z0-9]+$/),
-  quantity: z.number().int().min(1).max(1000),
-});
+  priceId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .regex(/^price_[a-zA-Z0-9]{5,}$/),
+  quantity: z.coerce.number().int().min(1).max(1000),
+}).strict();
 
-// GitHub OAuth validation schema
+// GitHub OAuth validation schema (strict)
 export const GitHubOAuthSchema = z.object({
-  code: z.string().min(1).max(1000),
-  state: z.string().min(1).max(1000),
-});
+  code: z
+    .string()
+    .trim()
+    .min(20)
+    .max(2000)
+    .regex(safeAlnumDash, { message: 'Invalid code format' }),
+  state: z
+    .string()
+    .trim()
+    .min(32)
+    .max(128)
+    .regex(/^[a-f0-9]{32,}$/i, { message: 'Invalid state format' }),
+}).strict();
 
-// Repository URL validation schema
-export const RepositoryUrlSchema = z.object({
-  repository_url: z.string().url().refine(
-    (url) => url.startsWith('https://github.com/') || 
-             url.startsWith('https://gitlab.com/') || 
-             url.startsWith('https://bitbucket.org/'),
-    { message: 'Only GitHub, GitLab, and Bitbucket repositories are supported' }
-  ),
-  github_token: z.string().optional().refine(
-    (token) => !token || token.startsWith('ghp_') || token.startsWith('gho_') || token.startsWith('ghu_'),
-    { message: 'Invalid GitHub token format' }
-  ),
-});
+// Server-side GitHub OAuth state storage schema (strict)
+export const GitHubOAuthStateSchema = z.object({
+  state: z.string().trim().min(32).max(128).regex(/^[a-f0-9]{32,}$/i),
+  clientId: z.string().trim().min(10).max(200).regex(safeAlnumDash),
+}).strict();
+
+// Repository URL validation schema (strict)
+export const RepositoryUrlSchema = z
+  .object({
+    repository_url: z
+      .string()
+      .url()
+      .refine((url) => {
+        try {
+          const u = new URL(url);
+          const allowedHosts = new Set([
+            'github.com',
+            'gitlab.com',
+            'bitbucket.org',
+          ]);
+          return u.protocol === 'https:' && allowedHosts.has(u.hostname);
+        } catch {
+          return false;
+        }
+      }, { message: 'Only HTTPS GitHub, GitLab, and Bitbucket repositories are supported' }),
+    github_token: z
+      .string()
+      .optional()
+      .refine(
+        (token) =>
+          !token ||
+          token.startsWith('ghp_') ||
+          token.startsWith('gho_') ||
+          token.startsWith('ghu_') ||
+          token.startsWith('ghs_') ||
+          token.startsWith('ghr_'),
+        { message: 'Invalid GitHub token format' }
+      ),
+  })
+  .strict();
 
 // Generic validation function
 export async function validateRequest<T>(
@@ -33,41 +78,30 @@ export async function validateRequest<T>(
   schema: z.ZodSchema<T>
 ): Promise<{ success: true; data: T } | { success: false; error: string; status: number }> {
   try {
-    console.log('🔍 Validation: Starting request validation...');
-    
-    // Check if request has a body
-    const contentType = request.headers.get('content-type');
-    console.log('🔍 Validation: Content-Type:', contentType);
-    
-    if (!contentType || !contentType.includes('application/json')) {
-      console.error('❌ Validation: Invalid content type:', contentType);
+    // Minimal logging to avoid leaking sensitive info
+    const contentType = request.headers.get('content-type') || '';
+
+    if (!contentType.includes('application/json')) {
       return { success: false, error: 'Invalid content type - expected application/json', status: 400 };
     }
     
     // Parse request body
     const body = await request.json();
-    console.log('🔍 Validation: Request body parsed successfully, keys:', Object.keys(body || {}));
-    
+
     // Validate against schema
-    const validatedData = schema.parse(body);
-    console.log('✅ Validation: Schema validation successful');
-    
-    return { success: true, data: validatedData };
-  } catch (error) {
-    console.error('❌ Validation error:', error);
-    
-    if (error instanceof z.ZodError) {
-      const errorMessage = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
-      console.error('❌ Validation: Zod validation failed:', errorMessage);
+    const result = schema.safeParse(body);
+    if (!result.success) {
+      const errorMessage = result.error.errors
+        .map((e) => `${e.path.join('.') || 'root'}: ${e.message}`)
+        .join(', ');
       return { success: false, error: `Validation failed: ${errorMessage}`, status: 400 };
     }
     
+    return { success: true, data: result.data };
+  } catch (error) {
     if (error instanceof SyntaxError) {
-      console.error('❌ Validation: JSON parsing failed:', error.message);
       return { success: false, error: 'Invalid JSON format', status: 400 };
     }
-    
-    console.error('❌ Validation: Unknown validation error:', error);
     return { success: false, error: 'Invalid request data', status: 400 };
   }
 }

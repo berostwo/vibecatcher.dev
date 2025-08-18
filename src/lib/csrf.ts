@@ -1,55 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import crypto from 'crypto';
+import { FirebaseCSRFService } from './firebase-csrf';
 
-// In-memory CSRF token store (use Redis in production)
-const csrfTokens = new Map<string, { token: string; expires: number }>();
-
-export function generateCSRFToken(userId: string): string {
-  const token = crypto.randomBytes(32).toString('hex');
-  const expires = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
-  
-  csrfTokens.set(userId, { token, expires });
-  
-  return token;
+export async function generateCSRFToken(userId: string): Promise<string> {
+  return await FirebaseCSRFService.generateCSRFToken(userId);
 }
 
-export function validateCSRFToken(userId: string, token: string): boolean {
-  const storedData = csrfTokens.get(userId);
-  
-  if (!storedData) {
-    return false;
-  }
-  
-  // Check if token has expired
-  if (Date.now() > storedData.expires) {
-    csrfTokens.delete(userId);
-    return false;
-  }
-  
-  // Validate token
-  if (storedData.token !== token) {
-    return false;
-  }
-  
-  return true;
+export async function validateCSRFToken(userId: string, token: string): Promise<boolean> {
+  return await FirebaseCSRFService.validateCSRFToken(userId, token);
 }
 
-export function revokeCSRFToken(userId: string): void {
-  csrfTokens.delete(userId);
+export async function revokeCSRFToken(userId: string): Promise<void> {
+  await FirebaseCSRFService.revokeCSRFToken(userId);
 }
-
-// Clean up expired tokens periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [userId, data] of csrfTokens.entries()) {
-    if (now > data.expires) {
-      csrfTokens.delete(userId);
-    }
-  }
-}, 60 * 60 * 1000); // Clean up every hour
 
 export function createCSRFMiddleware() {
-  return (request: NextRequest, userId: string) => {
+  return async (request: NextRequest, userId: string) => {
     const csrfToken = request.headers.get('x-csrf-token');
     
     if (!csrfToken) {
@@ -59,7 +24,8 @@ export function createCSRFMiddleware() {
       );
     }
     
-    if (!validateCSRFToken(userId, csrfToken)) {
+    const isValid = await validateCSRFToken(userId, csrfToken);
+    if (!isValid) {
       return NextResponse.json(
         { error: 'Invalid CSRF token' },
         { status: 403 }

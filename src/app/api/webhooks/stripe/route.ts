@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     try {
       event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
     } catch (err) {
-      console.error('Webhook signature verification failed:', err);
+      console.error('Webhook signature verification failed');
       return NextResponse.json(
         { error: 'Invalid signature' },
         { status: 400 }
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     switch (event.type) {
       case 'payment_intent.succeeded':
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        console.log('Payment succeeded:', paymentIntent.id);
+        console.log('Payment succeeded:', paymentIntent.id.substring(0, 8) + '...');
         
         // TODO: Update user's audit count in database
         // const { priceId, quantity } = paymentIntent.metadata;
@@ -45,16 +45,16 @@ export async function POST(request: NextRequest) {
       
       case 'payment_intent.payment_failed':
         const failedPayment = event.data.object as Stripe.PaymentIntent;
-        console.log('Payment failed:', failedPayment.id);
+        console.log('Payment failed:', failedPayment.id.substring(0, 8) + '...');
         break;
       
       default:
-        console.log(`Unhandled event type: ${event.type}`);
+        console.log(`Unhandled webhook event: ${event.type}`);
     }
 
     return NextResponse.json({ received: true });
   } catch (error) {
-    console.error('Webhook error:', error);
+    console.error('Webhook processing error');
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

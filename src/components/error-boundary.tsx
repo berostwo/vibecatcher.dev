@@ -23,7 +23,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    console.error('ErrorBoundary caught an error');
   }
 
   render() {
@@ -36,9 +36,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
       return (
         <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
           <p className="text-red-800 font-medium">Something went wrong rendering this section.</p>
-          <p className="text-red-700 text-sm mt-1">
-            Error: {this.state.error?.message || 'Unknown error'}
-          </p>
+          <p className="text-red-700 text-sm mt-1">An unexpected error occurred. Please try again.</p>
         </div>
       );
     }

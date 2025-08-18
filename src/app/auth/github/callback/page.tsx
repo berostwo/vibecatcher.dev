@@ -22,17 +22,17 @@ export default function GitHubCallback() {
           return;
         }
 
-        console.log('OAuth callback received - code:', code.substring(0, 10) + '...', 'state:', state);
+        console.log('OAuth callback received');
 
         // Handle the OAuth callback
         const accessToken = await GitHubOAuthService.handleCallback(code, state);
         
         if (accessToken) {
-          console.log('Access token received, getting user info...');
+          console.log('Access token received, fetching user info');
           
           // Get user info from GitHub
           const userInfo = await GitHubOAuthService.getUserInfo(accessToken);
-          console.log('GitHub user info:', userInfo);
+          console.log('GitHub user info retrieved');
           
           // Create/update Firebase user
           const { FirebaseUserService } = await import('@/lib/firebase-user-service');
@@ -47,7 +47,7 @@ export default function GitHubCallback() {
             accessToken
           );
           
-          console.log('Firebase user created/updated:', firebaseUser);
+          console.log('Firebase user created/updated');
           
           // Store token on server (secure)
           await GitHubOAuthService.storeTokenOnServer(firebaseUser.uid, accessToken);
@@ -81,7 +81,7 @@ export default function GitHubCallback() {
           setStatus('error');
         }
       } catch (error) {
-        console.error('OAuth callback error:', error);
+        console.error('OAuth callback error');
         
         // Handle specific error types
         let errorMessage = 'Authentication failed';
@@ -89,25 +89,15 @@ export default function GitHubCallback() {
           if (error.message.includes('network')) {
             errorMessage = 'Network connection issue. Please check your internet connection and try again.';
           } else if (error.message.includes('Firebase')) {
-            errorMessage = 'Firebase service issue. Please try again in a few moments.';
+            errorMessage = 'Service issue. Please try again in a few moments.';
           } else if (error.message.includes('OAuth')) {
             errorMessage = 'GitHub authentication issue. Please try signing in again.';
-          } else {
-            errorMessage = error.message;
           }
         }
         
         setError(errorMessage);
         setStatus('error');
-        
-        // Log detailed error for debugging
-        console.error('Detailed error info:', {
-          error: error,
-          errorType: typeof error,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error type',
-          errorStack: error instanceof Error ? error.stack : 'No stack trace',
-          timestamp: new Date().toISOString()
-        });
+        // Avoid logging full error details in client console
       }
     };
 

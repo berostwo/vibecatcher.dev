@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { FirebaseRateLimitService } from './firebase-rate-limit';
 
 interface RateLimitConfig {
   limit: number;
@@ -6,51 +7,11 @@ interface RateLimitConfig {
   message?: string;
 }
 
-interface RateLimitData {
-  count: number;
-  resetTime: number;
-}
-
-// In-memory rate limit store (use Redis in production)
-const rateLimitStore = new Map<string, RateLimitData>();
-
-export function checkRateLimit(
-  identifier: string,
-  config: RateLimitConfig = { limit: 100, windowMs: 900000 }
-): { allowed: boolean; remaining: number; resetTime: number } {
-  const now = Date.now();
-  const key = identifier;
-  const userData = rateLimitStore.get(key);
-
-  // Clean up expired entries
-  if (userData && now > userData.resetTime) {
-    rateLimitStore.delete(key);
-  }
-
-  if (!userData || now > userData.resetTime) {
-    // First request or reset window
-    rateLimitStore.set(key, {
-      count: 1,
-      resetTime: now + config.windowMs,
-    });
-    return { allowed: true, remaining: config.limit - 1, resetTime: now + config.windowMs };
-  }
-
-  if (userData.count >= config.limit) {
-    // Rate limit exceeded
-    return { allowed: false, remaining: 0, resetTime: userData.resetTime };
-  }
-
-  // Increment counter
-  userData.count++;
-  return { allowed: true, remaining: config.limit - userData.count, resetTime: userData.resetTime };
-}
-
 export function getClientIdentifier(request: NextRequest): string {
-  // Use IP address as primary identifier
-  const ip = request.ip || 
-             request.headers.get('x-forwarded-for')?.split(',')[0] || 
+  // Use IP address from headers as primary identifier
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0] || 
              request.headers.get('x-real-ip') || 
+             request.headers.get('x-client-ip') ||
              'unknown';
   
   // Add user ID if authenticated
@@ -64,29 +25,34 @@ export function getClientIdentifier(request: NextRequest): string {
 }
 
 export function createRateLimitMiddleware(config: RateLimitConfig) {
-  return (request: NextRequest) => {
-    const identifier = getClientIdentifier(request);
-    const rateLimitResult = checkRateLimit(identifier, config);
+  return async (request: NextRequest) => {
+    try {
+      const identifier = getClientIdentifier(request);
+      const rateLimitResult = await FirebaseRateLimitService.checkRateLimit(identifier, config);
 
-    if (!rateLimitResult.allowed) {
-      return NextResponse.json(
-        {
-          error: config.message || 'Rate limit exceeded',
-          retryAfter: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
-        },
-        { 
-          status: 429,
-          headers: {
-            'X-RateLimit-Limit': config.limit.toString(),
-            'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
-            'X-RateLimit-Reset': rateLimitResult.resetTime.toString(),
-            'Retry-After': Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000).toString(),
+      if (!rateLimitResult.allowed) {
+        return NextResponse.json(
+          {
+            error: config.message || 'Rate limit exceeded',
+            retryAfter: Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
+          },
+          { 
+            status: 429,
+            headers: {
+              'X-RateLimit-Limit': config.limit.toString(),
+              'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
+              'X-RateLimit-Reset': rateLimitResult.resetTime.toString(),
+              'Retry-After': Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000).toString(),
+            }
           }
-        }
-      );
-    }
+        );
+      }
 
-    return null; // Continue to next middleware/handler
+      return null; // Continue to next middleware/handler
+    } catch (error) {
+      console.error('Rate limiting failed, allowing request:', error);
+      return null; // Allow request if rate limiting fails
+    }
   };
 }
 

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-// In-memory storage for development (replace with database in production)
-const tokenStore = new Map<string, { token: string; timestamp: number }>();
+import { FirebaseUserService } from '@/lib/firebase-user-service';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,11 +12,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Store token with timestamp
-    tokenStore.set(userId, {
-      token: accessToken,
-      timestamp: Date.now(),
-    });
+    // Store token securely in Firebase database
+    await FirebaseUserService.updateUserToken(userId, accessToken);
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -42,20 +37,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const tokenData = tokenStore.get(userId);
+    // Get token securely from Firebase database with expiration check
+    // getGitHubToken already handles expiration validation internally
+    const token = await FirebaseUserService.getGitHubToken(userId);
     
-    if (!tokenData) {
+    if (!token) {
       return NextResponse.json({ token: null });
     }
 
-    // Check if token is expired (24 hours)
-    const now = Date.now();
-    if (now - tokenData.timestamp > 24 * 60 * 60 * 1000) {
-      tokenStore.delete(userId);
-      return NextResponse.json({ token: null });
-    }
-
-    return NextResponse.json({ token: tokenData.token });
+    return NextResponse.json({ token });
   } catch (error) {
     console.error('Error retrieving token:', error);
     return NextResponse.json(
@@ -76,7 +66,8 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    tokenStore.delete(userId);
+    // Remove token securely from Firebase database
+    await FirebaseUserService.removeGitHubToken(userId);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting token:', error);

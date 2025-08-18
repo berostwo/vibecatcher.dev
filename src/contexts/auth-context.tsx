@@ -105,13 +105,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (user) {
       try {
         const token = await GitHubOAuthService.getTokenFromServer(user.uid);
-        setGitHubToken(token);
+        if (token) {
+          setGitHubToken(token);
+          console.log('GitHub token refreshed successfully');
+        } else {
+          // Token is expired or invalid, clear it
+          setGitHubToken(null);
+          console.log('GitHub token expired, user needs to re-authenticate');
+        }
       } catch (error) {
         console.warn('Could not refresh GitHub token from server:', error);
         setGitHubToken(null);
       }
     }
   };
+
+  // Set up automatic token refresh every 45 minutes (tokens expire in 1 hour)
+  useEffect(() => {
+    if (user && githubToken) {
+      const refreshInterval = setInterval(() => {
+        console.log('Refreshing GitHub token...');
+        refreshGitHubToken();
+      }, 45 * 60 * 1000); // 45 minutes
+
+      return () => clearInterval(refreshInterval);
+    }
+  }, [user, githubToken]);
 
   // Method to set GitHub token after successful OAuth
   const setGitHubTokenValue = (token: string) => {

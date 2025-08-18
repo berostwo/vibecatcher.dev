@@ -4,16 +4,17 @@ import { requireAuth } from '@/lib/auth-middleware';
 import { createRateLimitMiddleware, RATE_LIMITS } from '@/lib/rate-limit';
 import { createCSRFMiddleware } from '@/lib/csrf';
 import { createValidationMiddleware, PaymentIntentSchema } from '@/lib/validation';
+import type { DecodedIdToken } from 'firebase-admin/auth';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-07-30.basil',
 });
 
 // Secure payment intent creation with all security measures
-async function createPaymentIntentHandler(request: NextRequest, user: any) {
+async function createPaymentIntentHandler(request: NextRequest, user: DecodedIdToken): Promise<NextResponse> {
   try {
     // 1. RATE LIMITING - Prevent abuse
-    const rateLimitCheck = createRateLimitMiddleware(RATE_LIMITS.STRICT)(request);
+    const rateLimitCheck = await createRateLimitMiddleware(RATE_LIMITS.STRICT)(request);
     if (rateLimitCheck) return rateLimitCheck;
 
     // 2. INPUT VALIDATION - Prevent injection attacks
@@ -21,7 +22,7 @@ async function createPaymentIntentHandler(request: NextRequest, user: any) {
     if (validationCheck) return validationCheck;
 
     // 3. CSRF PROTECTION - Prevent cross-site request forgery
-    const csrfCheck = createCSRFMiddleware()(request, user.uid);
+    const csrfCheck = await createCSRFMiddleware()(request, user.uid);
     if (csrfCheck) return csrfCheck;
 
     // 4. BUSINESS LOGIC VALIDATION
@@ -64,25 +65,29 @@ async function createPaymentIntentHandler(request: NextRequest, user: any) {
       setup_future_usage: 'off_session',
     });
 
-    // 7. SECURE RESPONSE - Only return necessary data
-    return NextResponse.json({
+    // 7. SECURE RESPONSE - Only return necessary data, sanitize all output
+    const sanitizedResponse = {
       clientSecret: paymentIntent.client_secret,
-      paymentIntentId: paymentIntent.id,
-      amount: paymentIntent.amount,
+      paymentIntentId: paymentIntent.id.substring(0, 8) + '...', // Truncate for security
+      amount: Math.round(paymentIntent.amount / 100), // Convert from cents to dollars
       status: paymentIntent.status,
-    }, {
+      currency: paymentIntent.currency,
+    };
+
+    return NextResponse.json(sanitizedResponse, {
       headers: {
         'Cache-Control': 'no-store, no-cache, must-revalidate',
         'Pragma': 'no-cache',
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
         'X-XSS-Protection': '1; mode=block',
+        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
       }
     });
 
   } catch (error) {
     // 8. SECURE ERROR HANDLING - Don't leak sensitive information
-    console.error('Payment intent creation error:', error);
+    console.error('Payment intent creation error');
     
     if (error instanceof Stripe.errors.StripeError) {
       return NextResponse.json(
