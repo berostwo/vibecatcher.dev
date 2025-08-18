@@ -23,13 +23,14 @@ export const SECURITY_CONFIG = {
     MAX_REPOSITORY_SIZE: 500 * 1024 * 1024, // 500MB
   },
 
-  // Security headers
+  // Security headers (defaults to strict; dev overrides below)
   SECURITY_HEADERS: {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'X-XSS-Protection': '1; mode=block',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    // Strict production CSP (no inline)
     'Content-Security-Policy': "default-src 'self'; script-src 'self' https://js.stripe.com; style-src 'self' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://api.stripe.com https://github.com https://api.github.com https://www.google.com https://httpbin.org https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://firebase.googleapis.com https://chatgpt-security-scanner-505997387504.us-central1.run.app; frame-src https://js.stripe.com; object-src 'none';",
   },
 
@@ -76,20 +77,29 @@ export const SECURITY_CONFIG = {
 export const getSecurityConfig = () => {
   const isProduction = process.env.NODE_ENV === 'production';
   
-  return {
-    ...SECURITY_CONFIG,
+  // Start from defaults
+  const base = { ...SECURITY_CONFIG } as any;
+
+  if (isProduction) {
     // Stricter settings in production
-    RATE_LIMITS: isProduction ? {
+    base.RATE_LIMITS = {
       ...SECURITY_CONFIG.RATE_LIMITS,
       PAYMENT: { limit: 5, windowMs: 60000, message: 'Too many payment requests' },
       OAUTH: { limit: 3, windowMs: 60000, message: 'Too many OAuth attempts' },
-    } : SECURITY_CONFIG.RATE_LIMITS,
-    
-    // Additional security headers in production
-    SECURITY_HEADERS: isProduction ? {
+    };
+
+    base.SECURITY_HEADERS = {
       ...SECURITY_CONFIG.SECURITY_HEADERS,
       'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
       'Content-Security-Policy': SECURITY_CONFIG.SECURITY_HEADERS['Content-Security-Policy'] + "; upgrade-insecure-requests;",
-    } : SECURITY_CONFIG.SECURITY_HEADERS,
-  };
+    };
+  } else {
+    // Development: relax CSP to support Next.js dev runtime and HMR
+    base.SECURITY_HEADERS = {
+      ...SECURITY_CONFIG.SECURITY_HEADERS,
+      'Content-Security-Policy': "default-src 'self' http://localhost:3000; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com http://localhost:3000; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:3000 http://localhost:3000 https://api.stripe.com https://github.com https://api.github.com https://www.google.com https://httpbin.org https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://firebase.googleapis.com https://chatgpt-security-scanner-505997387504.us-central1.run.app; frame-src https://js.stripe.com; object-src 'none';",
+    };
+  }
+
+  return base;
 };

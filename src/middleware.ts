@@ -8,7 +8,7 @@ export function middleware(request: NextRequest) {
 
 	// Apply security headers to all responses
 	Object.entries(securityConfig.SECURITY_HEADERS).forEach(([header, value]) => {
-		response.headers.set(header, value);
+		response.headers.set(header, String(value));
 	});
 
 	// CORS handling for API routes

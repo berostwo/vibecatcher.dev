@@ -868,8 +868,10 @@ class EvidenceFilter:
                 if total_lines and (start_line > total_lines or end_line > total_lines):
                     continue
 
-                # Require snippet to exist verbatim in file
+                # Require snippet to exist verbatim in file and be meaningful length
                 snippet = finding.code_snippet.strip()
+                if len(snippet) < 8:
+                    continue
                 if not snippet or snippet not in file_content:
                     continue
 
@@ -889,16 +891,26 @@ class EvidenceFilter:
         message = (finding.message or '').lower()
         rule_id = (finding.rule_id or '').lower()
         snippet = (finding.code_snippet or '').lower()
+        path = (finding.file_path or '').replace('\\', '/').lower()
 
         # Heuristics for common classes of vulns
         if 'xss' in message or 'xss' in rule_id:
-            return 'dangerouslysetinnerhtml' in snippet or 'innerhtml' in snippet
+            # Only consider real sinks
+            risky_sinks = (
+                'dangerouslysetinnerhtml' in snippet or
+                'innerhtml' in snippet or
+                'insertadjacenthtml' in snippet
+            )
+            return risky_sinks
         if 'sql' in message or 'sql' in rule_id:
             risky_ops = any(tok in snippet for tok in ('select', 'insert', 'update', 'delete'))
             string_building = any(tok in snippet for tok in ('+', '%', 'format(', '{'))
             return risky_ops and string_building
         if 'csrf' in message or 'csrf' in rule_id:
-            return 'post' in snippet or 'fetch(' in snippet
+            # Only count if this is likely a server-side route or explicit POST client code
+            server_route = '/src/app/api/' in path or '/api/' in path
+            client_post = ('fetch(' in snippet and ("method: 'post'" in snippet or 'method:"post"' in snippet or 'method: "POST"' in snippet or "method: 'POST'" in snippet)) or '.post(' in snippet
+            return server_route or client_post
         if 'path traversal' in message or 'traversal' in rule_id:
             return '..' in snippet or '/..' in snippet
         return False
@@ -1290,6 +1302,8 @@ class ChatGPTSecurityScanner:
                             # Create finding with unique rule_id
                             finding_data = finding.copy()
                             finding_data['rule_id'] = unique_rule_id
+                            # Force file_path to the actual analyzed file to avoid invalid paths
+                            finding_data['file_path'] = file_path
                             
                             security_findings.append(SecurityFinding(**finding_data))
                         except Exception as e:
