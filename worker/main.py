@@ -1057,7 +1057,7 @@ class ChatGPTSecurityScanner:
         self.progress_callback = callback
     
     def update_progress(self, step: str, progress: float):
-        """Simple, accurate progress update"""
+        """Simple, accurate progress update with global variable update"""
         self.current_step = step
         self.step_progress = progress
         
@@ -1069,6 +1069,17 @@ class ChatGPTSecurityScanner:
         }
         self.progress_updates.append(progress_data)
         
+        # Update global progress variable directly for immediate access
+        global current_scan_progress
+        if current_scan_progress is None:
+            current_scan_progress = {}
+        
+        current_scan_progress.update({
+            'step': step,
+            'progress': progress,
+            'timestamp': datetime.now().isoformat()
+        })
+        
         if self.progress_callback:
             try:
                 logger.info(f"📊 PROGRESS: {step} - {progress:.1f}%")
@@ -1078,6 +1089,9 @@ class ChatGPTSecurityScanner:
                 logger.warning(f"Progress callback failed: {e}")
         else:
             logger.warning(f"📊 NO PROGRESS CALLBACK SET - step: {step}, progress: {progress}")
+        
+        # Log global variable update
+        logger.info(f"📊 GLOBAL PROGRESS UPDATED: {current_scan_progress}")
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
@@ -2041,6 +2055,8 @@ class ChatGPTSecurityScanner:
             if self.sharding_enabled and self.worker_peers:
                 try:
                     logger.info("🧩 Sharding: distributing batches to peers")
+                    self.update_progress("Distributing work to peer workers", 40)
+                    
                     shardable_batches = list(file_batches)
                     local_batches: List[List[tuple]] = []
 
@@ -2085,9 +2101,11 @@ class ChatGPTSecurityScanner:
                     shard_tasks = [send_shard(url, batches) for url, batches in partitions.items()]
 
                     # Process local batches with existing thread pool flow while peers run
+                    self.update_progress("Processing local batch", 45)
                     local_findings = self._process_batches_locally(local_batches, total_batches, scan_start_time, max_scan_time)
 
                     # Collect peer results
+                    self.update_progress("Collecting results from peer workers", 50)
                     try:
                         peer_results = await asyncio.gather(*shard_tasks, return_exceptions=True)
                         for r in peer_results:
@@ -2106,9 +2124,11 @@ class ChatGPTSecurityScanner:
                     all_findings = local_findings + aggregated_findings
                 except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
+                    self.update_progress("Sharding failed, falling back to local processing", 45)
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
             else:
                 # No sharding: process all batches locally
+                self.update_progress("Processing files locally", 40)
                 all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
 
             # all_findings already computed via local processing and/or sharding above
@@ -3805,6 +3825,14 @@ def get_progress():
             'message': 'No security scan is currently running'
         })
     
+    # Ensure we have valid progress data
+    if not isinstance(current_scan_progress, dict) or 'step' not in current_scan_progress or 'progress' not in current_scan_progress:
+        logger.warning(f"📊 PROGRESS ENDPOINT: Invalid progress data format: {current_scan_progress}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Invalid progress data format'
+        }), 500
+    
     logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {current_scan_progress}")
     return jsonify(current_scan_progress)
 
@@ -3953,25 +3981,28 @@ def security_scan():
         try:
             scanner = ChatGPTSecurityScanner()
             
-            # PROGRESS TRACKING: Set up progress callback for real-time updates
-            progress_updates = []
-            def progress_callback(progress_data):
-                global current_scan_progress
-                
-                progress_updates.append(progress_data)
-                logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
-                logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
-                
-                # Store current progress globally for real-time access
-                current_scan_progress = {
-                    'step': progress_data.get('step', 'Unknown'),
-                    'progress': progress_data.get('progress', 0),
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                logger.info(f"📊 STORED PROGRESS: {current_scan_progress}")
-                logger.info(f"📊 PROGRESS CALLBACK: Global variable ID = {id(current_scan_progress)}")
-                logger.info(f"📊 PROGRESS CALLBACK: Thread = {threading.current_thread().name}")
+                    # PROGRESS TRACKING: Set up progress callback for real-time updates
+        progress_updates = []
+        def progress_callback(progress_data):
+            global current_scan_progress
+            
+            progress_updates.append(progress_data)
+            logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
+            logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
+            
+            # Store current progress globally for real-time access
+            current_scan_progress = {
+                'step': progress_data.get('step', 'Unknown'),
+                'progress': progress_data.get('progress', 0),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            logger.info(f"📊 STORED PROGRESS: {current_scan_progress}")
+            logger.info(f"📊 PROGRESS CALLBACK: Global variable ID = {id(current_scan_progress)}")
+            logger.info(f"📊 PROGRESS CALLBACK: Thread = {threading.current_thread().name}")
+            
+            # Ensure the progress is immediately available
+            logger.info(f"📊 PROGRESS IMMEDIATELY AVAILABLE: {current_scan_progress}")
             
             scanner.set_progress_callback(progress_callback)
             
