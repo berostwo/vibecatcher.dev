@@ -2052,14 +2052,11 @@ class ChatGPTSecurityScanner:
                     async def send_shard(peer_url: str, batches: List[List[tuple]]):
                         if not batches:
                             return []
-                        payload = {
-                            'batches': [
-                                [
-                                    {'file_path': fp, 'relative_path': rp, 'file_type': ft}
-                                    for (fp, rp, ft) in batch
-                                ] for batch in batches
-                            ]
-                        }
+                        # Build content payload per batch so peers don't need repo on disk
+                        batches_payload: List[List[Dict[str, Any]]] = []
+                        for batch in batches:
+                            batches_payload.append(self._build_batch_payload(batch))
+                        payload = {'batches_content': batches_payload}
                         headers = {'Content-Type': 'application/json'}
                         if self.worker_auth_token:
                             headers['Authorization'] = f"Bearer {self.worker_auth_token}"
@@ -2481,6 +2478,154 @@ class ChatGPTSecurityScanner:
         logger.info(f"🚀 THREAD POOL COMPLETE: {len(batches)} local batches finished in {parallel_time:.1f}s!")
         logger.info(f"✅ THREAD POOL: Total findings collected locally: {len(all_findings)}")
         return all_findings
+
+    def _build_batch_payload(self, batch_files: List[tuple]) -> List[Dict[str, Any]]:
+        """Read and truncate file contents to build a shardable payload.
+        Each item: { 'file_path': relative_path, 'file_type': file_type, 'content': content }
+        """
+        payload_files: List[Dict[str, Any]] = []
+        for file_path, relative_path, file_type in batch_files:
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                # Truncate large contents similar to local analysis
+                if len(content) > 12000:
+                    chunks = self.chunk_file_content(content, relative_path, file_type)
+                    if chunks:
+                        content = chunks[0]
+                    else:
+                        content = content[:12000] + "\n... [truncated for shard analysis]"
+                elif len(content) > 8000:
+                    content = content[:8000] + "\n... [truncated for shard analysis]"
+                payload_files.append({
+                    'file_path': relative_path,
+                    'file_type': file_type,
+                    'content': content,
+                })
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to read {relative_path} for shard payload: {e}")
+                continue
+        return payload_files
+
+    def analyze_files_batch_from_payload(self, batch_items: List[Dict[str, Any]], batch_num: int, total_batches: int, scan_start_time: datetime, max_scan_time: int) -> List['SecurityFinding']:
+        """Analyze a batch where file contents are provided directly (used by shard workers)."""
+        try:
+            if not batch_items:
+                return []
+            elapsed_time = (datetime.now() - scan_start_time).total_seconds()
+            if elapsed_time > max_scan_time - 60:
+                logger.warning(f"⚠️ SHARD BATCH {batch_num + 1}: Approaching scan timeout ({elapsed_time:.0f}s), stopping early")
+                return []
+            batch_start_time = datetime.now()
+            logger.info(f"📦 SHARD BATCH {batch_num + 1}/{total_batches} (files: {len(batch_items)}) - STARTING")
+            batch_progress = 35 + (batch_num / max(1, total_batches)) * 30
+            self.update_progress(f"Analyzing shard batch {batch_num + 1}/{total_batches}", batch_progress)
+
+            batch_content = []
+            for item in batch_items:
+                content = item.get('content') or ''
+                relative_path = item.get('file_path') or 'unknown'
+                file_type = item.get('file_type') or 'unknown'
+                if not content:
+                    continue
+                batch_content.append({
+                    'file_path': relative_path,
+                    'file_type': file_type,
+                    'content': content,
+                })
+            if not batch_content:
+                return []
+
+            prompt = f"""
+            You are an expert security engineer. Analyze MULTIPLE files for security vulnerabilities in ONE response.
+
+            FILES TO ANALYZE:
+            {json.dumps(batch_content, indent=2)}
+
+            Return findings in this EXACT JSON format:
+            {{
+                "files": {{
+                    "file_path_1": {{
+                        "findings": [
+                            {{
+                                "rule_id": "vulnerability_type_identifier",
+                                "severity": "Critical|High|Medium|Low",
+                                "message": "Brief vulnerability description",
+                                "description": "Detailed explanation",
+                                "file_path": "file_path_1",
+                                "line_number": 123,
+                                "end_line": 125,
+                                "code_snippet": "vulnerable code here",
+                                "cwe_ids": ["CWE-79"],
+                                "owasp_ids": ["A01:2021"],
+                                "impact": "High|Medium|Low",
+                                "likelihood": "High|Medium|Low",
+                                "confidence": "High|Medium|Low"
+                            }}
+                        ]
+                    }}
+                }}
+            }}
+            """
+
+            api_key_index = batch_num % len(self.api_keys)
+            selected_api_key = self.api_keys[api_key_index]
+            logger.info(f"🚀 SHARD BATCH {batch_num + 1}: Using API key {api_key_index + 1}/{len(self.api_keys)}")
+            max_retries = 3
+            base_delay = 1.0
+            for attempt in range(max_retries):
+                try:
+                    client = openai.OpenAI(api_key=selected_api_key)
+                    response = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "You are an expert security engineer analyzing multiple files efficiently."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        max_tokens=8000,
+                        temperature=0.1,
+                    )
+                    self.api_calls_made += 1
+                    if hasattr(response, 'usage') and response.usage:
+                        self.prompt_tokens += response.usage.prompt_tokens
+                        self.completion_tokens += response.usage.completion_tokens
+                        self.total_tokens_used += response.usage.total_tokens
+                    content = response.choices[0].message.content
+                    json_start = content.find('{')
+                    json_end = content.rfind('}') + 1
+                    if json_start != -1 and json_end > json_start:
+                        result = json.loads(content[json_start:json_end])
+                        files_data = result.get('files', {})
+                        findings: List[SecurityFinding] = []
+                        for file_path, file_data in files_data.items():
+                            for i, finding in enumerate(file_data.get('findings', [])):
+                                try:
+                                    finding['file_path'] = file_path
+                                    file_id = os.path.basename(file_path).replace('.', '_').replace('-', '_')
+                                    finding['rule_id'] = f"{finding.get('rule_id', 'vulnerability')}_{file_id}_{i+1}"
+                                    findings.append(SecurityFinding(**finding))
+                                except Exception as e:
+                                    logger.warning(f"Failed to create SecurityFinding for {file_path}: {e}")
+                                    continue
+                        batch_time = (datetime.now() - batch_start_time).total_seconds()
+                        logger.info(f"✅ SHARD BATCH {batch_num + 1} COMPLETE: {len(findings)} findings in {batch_time:.1f}s")
+                        return findings
+                    else:
+                        logger.error(f"❌ SHARD BATCH {batch_num + 1}: No JSON found in response")
+                        return []
+                except Exception as api_error:
+                    if "429" in str(api_error) or "rate_limit" in str(api_error).lower():
+                        if attempt < max_retries - 1:
+                            import time as _t
+                            delay = base_delay * (2 ** attempt)
+                            logger.warning(f"⚠️ SHARD BATCH {batch_num + 1}: Rate limited, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries})")
+                            _t.sleep(delay)
+                            continue
+                    logger.error(f"❌ SHARD BATCH {batch_num + 1}: API error: {api_error}")
+                    return []
+        except Exception as e:
+            logger.error(f"❌ SHARD BATCH {batch_num + 1} failed: {e}")
+            return []
     
     def analyze_files_batch_sync(self, batch_files: List[tuple], batch_num: int, total_batches: int, scan_start_time: datetime, max_scan_time: int) -> List[SecurityFinding]:
         """🚀 THREAD POOL VERSION: Analyze multiple files in ONE API call for true parallel processing"""
@@ -3728,23 +3873,20 @@ def shard_scan():
             return jsonify({'error': 'Unauthorized'}), 401
 
         payload = request.get_json(silent=True) or {}
-        batches = payload.get('batches', [])
-        if not isinstance(batches, list):
+        batches_content = payload.get('batches_content', [])
+        if not isinstance(batches_content, list):
             return jsonify({'error': 'Invalid payload'}), 400
 
         scanner = ChatGPTSecurityScanner()
 
-        # Convert incoming json batches back to tuple format expected by local processors
-        tuple_batches = []
-        for batch in batches:
-            tuple_batch = []
-            for f in batch:
-                tuple_batch.append((f.get('file_path'), f.get('relative_path'), f.get('file_type')))
-            tuple_batches.append(tuple_batch)
+        # Analyze each content batch directly (no filesystem dependency)
+        all_results: List[SecurityFinding] = []
+        for idx, content_batch in enumerate(batches_content):
+            findings = scanner.analyze_files_batch_from_payload(content_batch, idx, len(batches_content), datetime.now(), 900)
+            all_results.extend(findings)
 
-        local_results = scanner._process_batches_locally(tuple_batches, len(tuple_batches), datetime.now(), 900)
         serialized = []
-        for finding in local_results:
+        for finding in all_results:
             if isinstance(finding, SecurityFinding):
                 serialized.append(asdict(finding))
             elif isinstance(finding, dict):
