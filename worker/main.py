@@ -1050,11 +1050,11 @@ class ChatGPTSecurityScanner:
         self.step_progress = progress
         
         # Store progress update in the instance
-                progress_data = {
-                    'step': step,
-                    'progress': progress,
-                    'timestamp': datetime.now().isoformat()
-                }
+        progress_data = {
+            'step': step,
+            'progress': progress,
+            'timestamp': datetime.now().isoformat()
+        }
         self.progress_updates.append(progress_data)
         
         if self.progress_callback:
