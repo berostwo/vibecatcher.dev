@@ -1039,6 +1039,18 @@ class ChatGPTSecurityScanner:
             "Missing access controls",
             "Weak crypto implementations"
         ]
+        
+        # Support up to 4 API keys per worker (5 workers × 4 keys = 20 total)
+        for i in range(1, 5):
+            additional_key = os.environ.get(f'OPENAI_API_KEY_{i}')
+            if additional_key:
+                self.api_keys.append(additional_key)
+        
+        # Sharding configuration
+        self.sharding_enabled = os.environ.get('SHARDING_ENABLED', 'false').lower() == 'true'
+        self.worker_peers = os.environ.get('WORKER_PEERS', '').split(',') if os.environ.get('WORKER_PEERS') else []
+        self.max_shard_workers = 2  # Max 2 workers collaborate on sharding
+        self.min_files_for_sharding = 300  # Only shard repos with 300+ files
     
     def set_progress_callback(self, callback):
         """Set callback function for progress updates"""

@@ -1,47 +1,58 @@
-# Worker Scaling Configuration
-# This file defines the scaling parameters for multiple worker instances
+# Worker Configuration for Horizontal Scaling
+worker_instances: 5
+min_instances_per_worker: 4
+max_instances_per_worker: 20
 
-worker_instances:
-  count: 4                    # Number of worker instances to deploy
-  min_instances_per_worker: 1  # Minimum instances per worker service
-  max_instances_per_worker: 5  # Maximum instances per worker service
-  
-  # Total scaling capacity:
-  # - Minimum: 4 workers × 1 instance = 4 total instances
-  # - Maximum: 4 workers × 5 instances = 20 total instances
-
+# Scaling Configuration
 scaling_config:
-  cpu_threshold: 70           # Scale up when CPU hits 70%
-  concurrency: 1              # 1 scan per worker instance
-  memory: "2Gi"               # Memory per worker instance
-  cpu: 2                      # CPU cores per worker instance
-  timeout: 900                # Maximum scan time in seconds
+  cpu: 2
+  memory: "2Gi"
+  timeout: 900
+  concurrency: 1
+  cpu_throttling: true
+  cpu_boost: true
 
+# API Key Distribution (4 keys per worker)
 api_key_distribution:
-  # Each worker gets 2 API keys for redundancy and load balancing
-  keys_per_worker: 2
-  total_api_keys_needed: 8    # 4 workers × 2 keys each
-  
-  # API key environment variables for each worker:
-  worker_1:
-    - OPENAI_API_KEY_1_1      # Primary key for worker 1
-    - OPENAI_API_KEY_1_2      # Backup key for worker 1
-  worker_2:
-    - OPENAI_API_KEY_2_1      # Primary key for worker 2
-    - OPENAI_API_KEY_2_2      # Backup key for worker 2
-  worker_3:
-    - OPENAI_API_KEY_3_1      # Primary key for worker 3
-    - OPENAI_API_KEY_3_2      # Backup key for worker 3
-  worker_4:
-    - OPENAI_API_KEY_4_1      # Primary key for worker 4
-    - OPENAI_API_KEY_4_2      # Backup key for worker 4
+  keys_per_worker: 4
+  total_keys_needed: 20
+  distribution:
+    - worker: "chatgpt-security-scanner"
+      keys: ["OPENAI_API_KEY", "OPENAI_API_KEY_1", "OPENAI_API_KEY_2", "OPENAI_API_KEY_3"]
+    - worker: "chatgpt-security-scanner-1"
+      keys: ["OPENAI_API_KEY", "OPENAI_API_KEY_1", "OPENAI_API_KEY_2", "OPENAI_API_KEY_3"]
+    - worker: "chatgpt-security-scanner-2"
+      keys: ["OPENAI_API_KEY", "OPENAI_API_KEY_1", "OPENAI_API_KEY_2", "OPENAI_API_KEY_3"]
+    - worker: "chatgpt-security-scanner-3"
+      keys: ["OPENAI_API_KEY", "OPENAI_API_KEY_1", "OPENAI_API_KEY_2", "OPENAI_API_KEY_3"]
+    - worker: "chatgpt-security-scanner-4"
+      keys: ["OPENAI_API_KEY", "OPENAI_API_KEY_1", "OPENAI_API_KEY_2", "OPENAI_API_KEY_3"]
 
+# Sharding Configuration
+sharding:
+  enabled: true
+  min_files_threshold: 300
+  max_workers_per_scan: 2
+  batch_size: 50
+  peer_workers:
+    - "chatgpt-security-scanner-1"
+    - "chatgpt-security-scanner-2"
+    - "chatgpt-security-scanner-3"
+    - "chatgpt-security-scanner-4"
+
+# Deployment
 deployment:
   region: "us-central1"
   platform: "managed"
   allow_unauthenticated: true
-  cpu_boost: true
+  memory: "2Gi"
+  cpu: 2
+  timeout: 900
+  min_instances: 4
+  max_instances: 20
+  concurrency: 1
   cpu_throttling: true
+  cpu_boost: true
 
 monitoring:
   health_check_interval: 30   # Health check every 30 seconds
