@@ -3780,8 +3780,7 @@ def handle_options():
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
-# Global variable to store current scan progress
-current_scan_progress = None
+# Global variable to store current scan progress (already declared at top)
 
 @app.route('/', methods=['GET'])
 def health_check():
@@ -3981,28 +3980,28 @@ def security_scan():
         try:
             scanner = ChatGPTSecurityScanner()
             
-                    # PROGRESS TRACKING: Set up progress callback for real-time updates
-        progress_updates = []
-        def progress_callback(progress_data):
-            global current_scan_progress
-            
-            progress_updates.append(progress_data)
-            logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
-            logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
-            
-            # Store current progress globally for real-time access
-            current_scan_progress = {
-                'step': progress_data.get('step', 'Unknown'),
-                'progress': progress_data.get('progress', 0),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            logger.info(f"📊 STORED PROGRESS: {current_scan_progress}")
-            logger.info(f"📊 PROGRESS CALLBACK: Global variable ID = {id(current_scan_progress)}")
-            logger.info(f"📊 PROGRESS CALLBACK: Thread = {threading.current_thread().name}")
-            
-            # Ensure the progress is immediately available
-            logger.info(f"📊 PROGRESS IMMEDIATELY AVAILABLE: {current_scan_progress}")
+            # PROGRESS TRACKING: Set up progress callback for real-time updates
+            progress_updates = []
+            def progress_callback(progress_data):
+                global current_scan_progress
+                
+                progress_updates.append(progress_data)
+                logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
+                logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
+                
+                # Store current progress globally for real-time access
+                current_scan_progress = {
+                    'step': progress_data.get('step', 'Unknown'),
+                    'progress': progress_data.get('progress', 0),
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+                logger.info(f"📊 STORED PROGRESS: {current_scan_progress}")
+                logger.info(f"📊 PROGRESS CALLBACK: Global variable ID = {id(current_scan_progress)}")
+                logger.info(f"📊 PROGRESS CALLBACK: Thread = {threading.current_thread().name}")
+                
+                # Ensure the progress is immediately available
+                logger.info(f"📊 PROGRESS IMMEDIATELY AVAILABLE: {current_scan_progress}")
             
             scanner.set_progress_callback(progress_callback)
             
