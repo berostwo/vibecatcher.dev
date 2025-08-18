@@ -1,0 +1,55 @@
+# Worker Scaling Configuration
+# This file defines the scaling parameters for multiple worker instances
+
+worker_instances:
+  count: 4                    # Number of worker instances to deploy
+  min_instances_per_worker: 1  # Minimum instances per worker service
+  max_instances_per_worker: 5  # Maximum instances per worker service
+  
+  # Total scaling capacity:
+  # - Minimum: 4 workers × 1 instance = 4 total instances
+  # - Maximum: 4 workers × 5 instances = 20 total instances
+
+scaling_config:
+  cpu_threshold: 70           # Scale up when CPU hits 70%
+  concurrency: 1              # 1 scan per worker instance
+  memory: "2Gi"               # Memory per worker instance
+  cpu: 2                      # CPU cores per worker instance
+  timeout: 900                # Maximum scan time in seconds
+
+api_key_distribution:
+  # Each worker gets 2 API keys for redundancy and load balancing
+  keys_per_worker: 2
+  total_api_keys_needed: 8    # 4 workers × 2 keys each
+  
+  # API key environment variables for each worker:
+  worker_1:
+    - OPENAI_API_KEY_1_1      # Primary key for worker 1
+    - OPENAI_API_KEY_1_2      # Backup key for worker 1
+  worker_2:
+    - OPENAI_API_KEY_2_1      # Primary key for worker 2
+    - OPENAI_API_KEY_2_2      # Backup key for worker 2
+  worker_3:
+    - OPENAI_API_KEY_3_1      # Primary key for worker 3
+    - OPENAI_API_KEY_3_2      # Backup key for worker 3
+  worker_4:
+    - OPENAI_API_KEY_4_1      # Primary key for worker 4
+    - OPENAI_API_KEY_4_2      # Backup key for worker 4
+
+deployment:
+  region: "us-central1"
+  platform: "managed"
+  allow_unauthenticated: true
+  cpu_boost: true
+  cpu_throttling: true
+
+monitoring:
+  health_check_interval: 30   # Health check every 30 seconds
+  health_check_timeout: 10    # Health check timeout in seconds
+  health_check_retries: 3     # Number of retries before marking unhealthy
+
+# Load balancing strategy:
+# - Round-robin distribution of new scans across workers
+# - Each worker handles 1 scan at a time
+# - Auto-scaling within each worker service based on demand
+# - Fallback to other workers if one becomes unavailable

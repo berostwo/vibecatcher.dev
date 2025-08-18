@@ -7,28 +7,26 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/chatgpt-security-scanner']
   
-  # Deploy container image to Cloud Run
+  # Deploy the new image to all Cloud Run services without overriding console-managed settings
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
-    args:
-      - 'run'
-      - 'deploy'
-      - 'chatgpt-security-scanner'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/chatgpt-security-scanner'
-      - '--region'
-      - 'us-central1'
-      - '--platform'
-      - 'managed'
-      - '--allow-unauthenticated'
-      - '--memory'
-      - '2Gi'
-      - '--cpu'
-      - '2'
-      - '--timeout'
-      - '900'
-      - '--max-instances'
-      - '10'
+    args: ['run','deploy','chatgpt-security-scanner','--image','gcr.io/$PROJECT_ID/chatgpt-security-scanner','--region','us-central1','--platform','managed','--quiet']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: ['run','deploy','chatgpt-security-scanner-1','--image','gcr.io/$PROJECT_ID/chatgpt-security-scanner','--region','us-central1','--platform','managed','--quiet']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: ['run','deploy','chatgpt-security-scanner-2','--image','gcr.io/$PROJECT_ID/chatgpt-security-scanner','--region','us-central1','--platform','managed','--quiet']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: ['run','deploy','chatgpt-security-scanner-3','--image','gcr.io/$PROJECT_ID/chatgpt-security-scanner','--region','us-central1','--platform','managed','--quiet']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: ['run','deploy','chatgpt-security-scanner-4','--image','gcr.io/$PROJECT_ID/chatgpt-security-scanner','--region','us-central1','--platform','managed','--quiet']
 
 images:
   - 'gcr.io/$PROJECT_ID/chatgpt-security-scanner'

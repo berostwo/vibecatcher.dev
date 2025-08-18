@@ -927,8 +927,8 @@ class ChatGPTSecurityScanner:
         if primary_key:
             self.api_keys.append(primary_key)
         
-        # Try to get additional API keys
-        for i in range(1, 4):  # Support up to 4 API keys
+        # Try to get additional API keys (support up to 8 keys for 4 workers × 2 keys each)
+        for i in range(1, 9):  # Support up to 8 API keys
             additional_key = os.environ.get(f'OPENAI_API_KEY_{i}')
             if additional_key:
                 self.api_keys.append(additional_key)

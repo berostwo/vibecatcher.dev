@@ -16,6 +16,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the ChatGPT security scanner
 COPY worker/main.py .
 
+# Set environment variables for multiple API keys
+ENV OPENAI_API_KEY=""
+ENV OPENAI_API_KEY_1=""
+ENV OPENAI_API_KEY_2=""
+ENV OPENAI_API_KEY_3=""
+ENV OPENAI_API_KEY_4=""
+ENV OPENAI_API_KEY_5=""
+ENV OPENAI_API_KEY_6=""
+ENV OPENAI_API_KEY_7=""
+ENV OPENAI_API_KEY_8=""
+
 # Expose port
 EXPOSE 8080
 
