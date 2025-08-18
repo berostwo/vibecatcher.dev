@@ -17,6 +17,8 @@ from flask import Flask, request, jsonify
 import openai
 from dataclasses import dataclass, asdict
 from collections import OrderedDict
+import urllib.request
+import urllib.error
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -784,6 +786,8 @@ class FalsePositiveFilter:
         filtered_findings = []
         
         for finding in findings:
+            if self._below_confidence_threshold(finding):
+                continue
             if not self._is_false_positive(finding, context):
                 filtered_findings.append(finding)
             else:
@@ -821,7 +825,7 @@ class FalsePositiveFilter:
     def _is_framework_handled_issue(self, finding: SecurityFinding, framework: str) -> bool:
         """Check if finding is handled by framework"""
         framework_handlers = {
-            'nextjs': ['csrf', 'xss', 'authentication'],
+            'nextjs': ['csrf', 'xss', 'authentication', 'csp'],
             'react': ['xss', 'state_management'],
             'express': ['cors', 'helmet', 'rate_limiting'],
             'django': ['csrf', 'xss', 'authentication'],
@@ -833,6 +837,70 @@ class FalsePositiveFilter:
                 if handler in finding.message.lower():
                     return True
         
+        return False
+    
+    def _below_confidence_threshold(self, finding: SecurityFinding) -> bool:
+        """Drop Low-confidence findings by default"""
+        confidence = (finding.confidence or '').strip().lower()
+        return confidence in ('', 'low')
+
+class EvidenceFilter:
+    """Validates findings against actual file content to reduce false positives"""
+
+    def filter_by_evidence(self, findings: List[SecurityFinding], file_content: str) -> List[SecurityFinding]:
+        filtered: List[SecurityFinding] = []
+        try:
+            lines = file_content.splitlines()
+            total_lines = len(lines)
+        except Exception:
+            lines = []
+            total_lines = 0
+
+        for finding in findings:
+            try:
+                # Require basic fields
+                if not finding.code_snippet or finding.line_number is None:
+                    continue
+
+                # Validate line bounds (allow 1-based or 0-based inputs)
+                start_line = max(1, int(finding.line_number or 1))
+                end_line = int(finding.end_line or start_line)
+                if total_lines and (start_line > total_lines or end_line > total_lines):
+                    continue
+
+                # Require snippet to exist verbatim in file
+                snippet = finding.code_snippet.strip()
+                if not snippet or snippet not in file_content:
+                    continue
+
+                # Apply stricter gate for low-confidence findings
+                confidence = (finding.confidence or '').lower()
+                if confidence in ('', 'low') and not self._looks_risky(finding):
+                    continue
+
+                filtered.append(finding)
+            except Exception:
+                # On any validation error, skip the finding
+                continue
+
+        return filtered
+
+    def _looks_risky(self, finding: SecurityFinding) -> bool:
+        message = (finding.message or '').lower()
+        rule_id = (finding.rule_id or '').lower()
+        snippet = (finding.code_snippet or '').lower()
+
+        # Heuristics for common classes of vulns
+        if 'xss' in message or 'xss' in rule_id:
+            return 'dangerouslysetinnerhtml' in snippet or 'innerhtml' in snippet
+        if 'sql' in message or 'sql' in rule_id:
+            risky_ops = any(tok in snippet for tok in ('select', 'insert', 'update', 'delete'))
+            string_building = any(tok in snippet for tok in ('+', '%', 'format(', '{'))
+            return risky_ops and string_building
+        if 'csrf' in message or 'csrf' in rule_id:
+            return 'post' in snippet or 'fetch(' in snippet
+        if 'path traversal' in message or 'traversal' in rule_id:
+            return '..' in snippet or '/..' in snippet
         return False
 
 class ChatGPTSecurityScanner:
@@ -868,6 +936,7 @@ class ChatGPTSecurityScanner:
         self.dependency_analyzer = DependencyAnalyzer()
         self.framework_detector = FrameworkDetector()
         self.false_positive_filter = FalsePositiveFilter()
+        self.evidence_filter = EvidenceFilter()
         
         # PHASE 4: Caching and ML-based optimization
         self.result_cache = {}  # Cache for analysis results

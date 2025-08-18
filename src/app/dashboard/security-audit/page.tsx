@@ -15,6 +15,7 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code } from 'lucide-react';
+import React from 'react'; // Added for useRef
 
 interface Repository {
   name: string;
@@ -305,6 +306,48 @@ export default function SecurityAuditPage() {
     step: string;
     progress: number;
   } | null>(null);
+  // Smooth displayed progress to avoid jumps
+  const [displayedProgress, setDisplayedProgress] = useState<number>(0);
+  const progressAnimRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Animate displayedProgress toward scanProgress.progress
+  useEffect(() => {
+    if (!scanProgress) {
+      if (progressAnimRef.current) {
+        clearInterval(progressAnimRef.current);
+        progressAnimRef.current = null;
+      }
+      setDisplayedProgress(0);
+      return;
+    }
+
+    const target = Math.max(0, Math.min(100, Math.round(scanProgress.progress)));
+    if (progressAnimRef.current) clearInterval(progressAnimRef.current);
+
+    progressAnimRef.current = setInterval(() => {
+      setDisplayedProgress((current) => {
+        if (current >= target) {
+          if (progressAnimRef.current) {
+            clearInterval(progressAnimRef.current);
+            progressAnimRef.current = null;
+          }
+          return target;
+        }
+        // Step size scales with gap but capped
+        const gap = target - current;
+        const step = Math.min(Math.max(gap / 10, 0.5), 3); // 0.5% to 3% per tick
+        const next = Math.min(current + step, target);
+        return next;
+      });
+    }, 80); // smooth ~12fps
+
+    return () => {
+      if (progressAnimRef.current) {
+        clearInterval(progressAnimRef.current);
+        progressAnimRef.current = null;
+      }
+    };
+  }, [scanProgress?.progress]);
   
   // PERSISTENT AUDIT STATE: Track current audit across page refreshes
   const [currentAudit, setCurrentAudit] = useState<SecurityAudit | null>(null);
@@ -918,12 +961,12 @@ export default function SecurityAuditPage() {
              <div className="space-y-3 pt-4">
                <div className="flex justify-between text-sm text-muted-foreground">
                  <span className="font-medium">{scanProgress.step}</span>
-                 <span className="font-mono">{Math.round(scanProgress.progress)}%</span>
+                 <span className="font-mono">{Math.round(displayedProgress)}%</span>
                </div>
                <div className="w-full bg-muted rounded-full h-3">
                  <div 
                    className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
-                   style={{ width: `${scanProgress.progress}%` }}
+                   style={{ width: `${displayedProgress}%` }}
                  />
                </div>
                {/* Progress tracking - no need to show audit ID to users */}
