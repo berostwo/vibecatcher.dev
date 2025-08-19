@@ -14,6 +14,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import logging
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import openai
 from dataclasses import dataclass, asdict
 from collections import OrderedDict
@@ -3793,6 +3794,9 @@ class ChatGPTSecurityScanner:
 
 # Create Flask app
 app = Flask(__name__)
+
+# Enable CORS for all routes
+CORS(app, origins=['*'], methods=['GET', 'POST', 'OPTIONS'])
 
 # App-level progress tracking to avoid threading issues
 app.current_scan_progress = None

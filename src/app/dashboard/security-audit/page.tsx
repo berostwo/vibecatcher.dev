@@ -308,6 +308,9 @@ export default function SecurityAuditPage() {
   // PERSISTENT AUDIT STATE: Track current audit across page refreshes
   const [currentAudit, setCurrentAudit] = useState<SecurityAudit | null>(null);
 
+  // REAL PROGRESS POLLING - Actually communicate with worker
+  const [progressPollingInterval, setProgressPollingInterval] = useState<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     if (user) {
       fetchRepositories();
@@ -315,6 +318,65 @@ export default function SecurityAuditPage() {
       checkExistingAudit();
     }
   }, [user]);
+
+  // REAL PROGRESS POLLING: Poll worker for actual progress updates
+  useEffect(() => {
+    if (isScanning && currentAudit?.id) {
+      // Start polling the worker for real progress
+      const interval = setInterval(async () => {
+        try {
+          console.log('🔄 POLLING WORKER FOR PROGRESS...');
+          // Poll the worker's progress endpoint
+          const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+          console.log('📡 WORKER RESPONSE STATUS:', response.status);
+          
+          if (response.ok) {
+            const progressData = await response.json();
+            console.log('📊 WORKER PROGRESS DATA:', progressData);
+            
+            if (progressData && progressData.step && typeof progressData.progress === 'number') {
+              console.log('✅ VALID PROGRESS UPDATE:', progressData);
+              setCurrentStep(progressData.step);
+              setCurrentProgress(progressData.progress);
+              
+              // Also update Firebase audit progress
+              try {
+                await FirebaseAuditService.updateAuditProgress(currentAudit.id, {
+                  step: progressData.step,
+                  progress: progressData.progress,
+                  timestamp: new Date().toISOString(),
+                });
+              } catch (error) {
+                console.warn('Failed to update Firebase progress:', error);
+              }
+            } else if (progressData.status === 'no_scan_running') {
+              console.log('⚠️ No scan running on worker');
+            } else {
+              console.log('⚠️ Invalid progress data format:', progressData);
+            }
+          } else {
+            console.error('❌ WORKER RESPONSE ERROR:', response.status, response.statusText);
+          }
+        } catch (error) {
+          console.error('❌ PROGRESS POLLING FAILED:', error);
+        }
+      }, 2000); // Poll every 2 seconds
+      
+      setProgressPollingInterval(interval);
+      
+      return () => {
+        if (interval) clearInterval(interval);
+      };
+    }
+  }, [isScanning, currentAudit?.id]);
+
+  // Cleanup polling when scan completes
+  useEffect(() => {
+    if (!isScanning && progressPollingInterval) {
+      clearInterval(progressPollingInterval);
+      setProgressPollingInterval(null);
+    }
+  }, [isScanning, progressPollingInterval]);
 
   // Check for existing active audit on page load/refresh
   const checkExistingAudit = async () => {
@@ -457,26 +519,9 @@ export default function SecurityAuditPage() {
       // Update status to running
       await FirebaseAuditService.updateAuditStatus(auditId, 'running');
 
-      // START PROGRESS ANIMATION IMMEDIATELY
+      // START REAL PROGRESS TRACKING
       setCurrentStep('Starting scan...');
-      setCurrentProgress(5);
-      
-      // Simulate progress while worker starts up
-      const progressInterval = setInterval(() => {
-        setCurrentProgress(prev => {
-          if (prev < 15) {
-            setCurrentStep('Initializing scan...');
-            return prev + 2;
-          } else if (prev < 25) {
-            setCurrentStep('Connecting to repository...');
-            return prev + 1;
-          } else if (prev < 35) {
-            setCurrentStep('Preparing analysis...');
-            return prev + 1;
-          }
-          return prev;
-        });
-      }, 1000);
+      setCurrentProgress(0);
 
       // Start the security scan
       console.log('🚀 Starting security scan...');
@@ -506,9 +551,6 @@ export default function SecurityAuditPage() {
       }
 
       console.log('🎉 Scan completed with results!', data);
-      
-      // Clear progress animation
-      clearInterval(progressInterval);
       
       // Set final progress
       setCurrentStep('Scan complete!');
