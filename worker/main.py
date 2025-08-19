@@ -1071,14 +1071,18 @@ class ChatGPTSecurityScanner:
         
         # Update global progress variable directly for immediate access
         global current_scan_progress
-        if current_scan_progress is None:
-            current_scan_progress = {}
         
-        current_scan_progress.update({
+        # Create a new dictionary to ensure the global reference is updated
+        current_scan_progress = {
             'step': step,
             'progress': progress,
             'timestamp': datetime.now().isoformat()
-        })
+        }
+        
+        # Log global variable update
+        logger.info(f"📊 GLOBAL PROGRESS UPDATED: {current_scan_progress}")
+        logger.info(f"📊 UPDATE_PROGRESS THREAD: {threading.current_thread().name}")
+        logger.info(f"📊 GLOBAL VARIABLE ID: {id(current_scan_progress)}")
         
         if self.progress_callback:
             try:
@@ -1089,9 +1093,6 @@ class ChatGPTSecurityScanner:
                 logger.warning(f"Progress callback failed: {e}")
         else:
             logger.warning(f"📊 NO PROGRESS CALLBACK SET - step: {step}, progress: {progress}")
-        
-        # Log global variable update
-        logger.info(f"📊 GLOBAL PROGRESS UPDATED: {current_scan_progress}")
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
@@ -3816,6 +3817,7 @@ def get_progress():
     current_thread = threading.current_thread()
     logger.info(f"📊 PROGRESS ENDPOINT CALLED: Thread={current_thread.name}, current_scan_progress = {current_scan_progress}")
     logger.info(f"📊 PROGRESS ENDPOINT: Global variable ID = {id(current_scan_progress)}")
+    logger.info(f"📊 PROGRESS ENDPOINT: All threads: {[t.name for t in threading.enumerate()]}")
     
     if current_scan_progress is None:
         logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
@@ -3975,6 +3977,8 @@ def security_scan():
             'progress': 0,
             'timestamp': datetime.now().isoformat()
         }
+        logger.info(f"📊 INITIAL PROGRESS SET: {current_scan_progress}")
+        logger.info(f"📊 INITIAL PROGRESS THREAD: {threading.current_thread().name}")
         
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
