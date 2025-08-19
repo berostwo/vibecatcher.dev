@@ -994,6 +994,16 @@ class ChatGPTSecurityScanner:
         self.current_step = "Initializing"
         self.step_progress = 0.0
         self.progress_updates = []  # Store progress updates for the current scan
+
+        # Progress/log emission throttling (defaults to 3 seconds)
+        try:
+            self.progress_log_interval_seconds = float(os.environ.get('PROGRESS_LOG_INTERVAL_SECONDS', '3'))
+        except Exception:
+            self.progress_log_interval_seconds = 3.0
+        self._last_progress_log_time = datetime.min
+        self._last_progress_logged_percent: int = -1
+        self._last_progress_step: Optional[str] = None
+        self._last_milestone_sent = -10
         
         # Security categories for comprehensive coverage
         
@@ -1057,42 +1067,60 @@ class ChatGPTSecurityScanner:
         self.progress_callback = callback
     
     def update_progress(self, step: str, progress: float):
-        """Simple, accurate progress update with global variable update"""
+        """Emit progress only at milestones (0,10,20,...,100)."""
         self.current_step = step
         self.step_progress = progress
-        
-        # Store progress update in the instance
+
+        # Always record raw update locally
         progress_data = {
             'step': step,
-            'progress': progress,
+            'progress': float(progress),
             'timestamp': datetime.now().isoformat()
         }
         self.progress_updates.append(progress_data)
-        
-        # Update global progress variable directly for immediate access
+
+        # Compute milestone to emit
+        try:
+            step_size = max(1, int(os.environ.get('PROGRESS_MILESTONE_STEP', '10')))
+        except Exception:
+            step_size = 10
+        milestone = int(max(0, min(100, (int(progress) // step_size) * step_size)))
+
+        # Ensure we emit at least 0% once
+        if self._last_milestone_sent < 0:
+            self._last_milestone_sent = 0
+
+        # Only emit when crossing a new milestone (or reaching 100%)
+        if milestone <= self._last_milestone_sent and milestone < 100:
+            return
+        self._last_milestone_sent = milestone
+
+        # Update global progress
         global current_scan_progress
-        
-        # Create a new dictionary to ensure the global reference is updated
         current_scan_progress = {
             'step': step,
-            'progress': progress,
+            'progress': milestone,
             'timestamp': datetime.now().isoformat()
         }
-        
-        # Log global variable update
-        logger.info(f"📊 GLOBAL PROGRESS UPDATED: {current_scan_progress}")
-        logger.info(f"📊 UPDATE_PROGRESS THREAD: {threading.current_thread().name}")
-        logger.info(f"📊 GLOBAL VARIABLE ID: {id(current_scan_progress)}")
-        
+
+        # Throttled logging aligned with polling interval
+        now = datetime.now()
+        if (
+            milestone != self._last_progress_logged_percent or
+            step != self._last_progress_step or
+            (now - self._last_progress_log_time).total_seconds() >= self.progress_log_interval_seconds
+        ):
+            logger.info(f"📊 PROGRESS MILESTONE: {step} - {milestone}%")
+            self._last_progress_log_time = now
+            self._last_progress_logged_percent = milestone
+            self._last_progress_step = step
+
+        # Callback with milestone payload
         if self.progress_callback:
             try:
-                logger.info(f"📊 PROGRESS: {step} - {progress:.1f}%")
-                logger.info(f"📊 CALLING PROGRESS CALLBACK: {progress_data}")
-                self.progress_callback(progress_data)
+                self.progress_callback(current_scan_progress)
             except Exception as e:
                 logger.warning(f"Progress callback failed: {e}")
-        else:
-            logger.warning(f"📊 NO PROGRESS CALLBACK SET - step: {step}, progress: {progress}")
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""

@@ -310,43 +310,14 @@ export default function SecurityAuditPage() {
   const [displayedProgress, setDisplayedProgress] = useState<number>(0);
   const progressAnimRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  // Animate displayedProgress toward scanProgress.progress
+  // Display exact milestone percent from worker
   useEffect(() => {
     if (!scanProgress) {
-      if (progressAnimRef.current) {
-        clearInterval(progressAnimRef.current);
-        progressAnimRef.current = null;
-      }
       setDisplayedProgress(0);
       return;
     }
-
-    const target = Math.max(0, Math.min(100, Math.round(scanProgress.progress)));
-    if (progressAnimRef.current) clearInterval(progressAnimRef.current);
-
-    progressAnimRef.current = setInterval(() => {
-      setDisplayedProgress((current) => {
-        if (current >= target) {
-          if (progressAnimRef.current) {
-            clearInterval(progressAnimRef.current);
-            progressAnimRef.current = null;
-          }
-          return target;
-        }
-        // Step size scales with gap but capped
-        const gap = target - current;
-        const step = Math.min(Math.max(gap / 10, 0.5), 3); // 0.5% to 3% per tick
-        const next = Math.min(current + step, target);
-        return next;
-      });
-    }, 80); // smooth ~12fps
-
-    return () => {
-      if (progressAnimRef.current) {
-        clearInterval(progressAnimRef.current);
-        progressAnimRef.current = null;
-      }
-    };
+    const pct = Math.max(0, Math.min(100, Math.round(scanProgress.progress)));
+    setDisplayedProgress(pct);
   }, [scanProgress?.progress]);
   
   // PERSISTENT AUDIT STATE: Track current audit across page refreshes
@@ -502,13 +473,13 @@ export default function SecurityAuditPage() {
       return false; // Continue polling
     };
     
-    // Poll every 500ms
+    // Poll every 3s
     const interval = setInterval(async () => {
       const shouldStop = await pollProgress();
       if (shouldStop) {
         clearInterval(interval);
       }
-    }, 500);
+    }, 3000);
     
     // Return cleanup function
     return () => clearInterval(interval);
@@ -735,8 +706,8 @@ export default function SecurityAuditPage() {
         }
       };
       
-      // Poll every 500ms
-      progressInterval = setInterval(pollProgress, 500);
+      // Poll every 3s
+      progressInterval = setInterval(pollProgress, 3000);
       
       // Initial poll
       pollProgress();
@@ -748,7 +719,7 @@ export default function SecurityAuditPage() {
           console.log('📊 Progress interval is active, continuing to poll');
         } else {
           console.log('📊 Progress interval was cleared, restarting polling');
-          progressInterval = setInterval(pollProgress, 500);
+          progressInterval = setInterval(pollProgress, 3000);
         }
       }, 5000); // Check after 5 seconds
 
