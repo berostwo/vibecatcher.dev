@@ -4054,7 +4054,7 @@ def security_scan():
                         req = urllib.request.Request(progress_webhook_url, method='POST')
                         req.add_header('Content-Type', 'application/json')
                         payload = _json.dumps({
-                            'audit_id': audit_id,
+                            'auditId': audit_id,
                             'step': app.current_scan_progress.get('step'),
                             'progress': app.current_scan_progress.get('progress'),
                         }).encode('utf-8')
