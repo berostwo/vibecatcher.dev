@@ -1072,11 +1072,11 @@ class ChatGPTSecurityScanner:
         self.step_progress = progress
         
         # Always record raw update locally
-                progress_data = {
-                    'step': step,
+        progress_data = {
+            'step': step,
             'progress': float(progress),
-                    'timestamp': datetime.now().isoformat()
-                }
+            'timestamp': datetime.now().isoformat()
+        }
         self.progress_updates.append(progress_data)
 
         # Compute milestone to emit
@@ -2152,7 +2152,7 @@ class ChatGPTSecurityScanner:
                         logger.warning(f"🧩 Shard collection failed: {e}")
 
                     all_findings = local_findings + aggregated_findings
-            except Exception as e:
+                except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
                     self.update_progress("Sharding failed, falling back to local processing", 45)
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
@@ -4045,7 +4045,7 @@ def security_scan():
                         req = urllib.request.Request(progress_webhook_url, method='POST')
                         req.add_header('Content-Type', 'application/json')
                         payload = _json.dumps({
-                            'auditId': audit_id,
+                            'audit_id': audit_id,
                             'step': current_scan_progress.get('step'),
                             'progress': current_scan_progress.get('progress'),
                         }).encode('utf-8')

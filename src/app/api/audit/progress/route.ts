@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore'
-import { db } from '@/lib/firebase'
+import { FirebaseAuditService } from '@/lib/firebase-audit-service'
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,13 +12,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
     }
 
-    await updateDoc(doc(db, 'audits', auditId), {
-      progress: {
-        step,
-        progress: Math.max(0, Math.min(100, Math.round(progress))),
-        timestamp: serverTimestamp(),
-      },
-      updatedAt: serverTimestamp(),
+    await FirebaseAuditService.updateAuditProgress(auditId, {
+      step,
+      progress: Math.max(0, Math.min(100, Math.round(progress))),
+      timestamp: new Date().toISOString(),
     })
 
     return NextResponse.json({ ok: true })
