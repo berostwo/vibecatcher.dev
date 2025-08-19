@@ -24,8 +24,7 @@ import urllib.error
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global variable for progress tracking
-current_scan_progress = None
+# Progress tracking moved to Flask app context to avoid threading issues
 
 class DependencyAnalyzer:
     """Analyzes dependencies to eliminate false positives about unused packages"""
@@ -1095,13 +1094,17 @@ class ChatGPTSecurityScanner:
             return
         self._last_milestone_sent = milestone
 
-        # Update global progress
-        global current_scan_progress
-        current_scan_progress = {
-            'step': step,
-            'progress': milestone,
-            'timestamp': datetime.now().isoformat()
-        }
+        # Update app-level progress
+        try:
+            from flask import current_app
+            if current_app and hasattr(current_app, 'current_scan_progress'):
+                current_app.current_scan_progress = {
+                    'step': step,
+                    'progress': milestone,
+                    'timestamp': datetime.now().isoformat()
+                }
+        except Exception as e:
+            logger.debug(f"Could not update app progress: {e}")
 
         # Throttled logging aligned with polling interval
         now = datetime.now()
@@ -1118,7 +1121,13 @@ class ChatGPTSecurityScanner:
         # Callback with milestone payload
         if self.progress_callback:
             try:
-                self.progress_callback(current_scan_progress)
+                # Create progress data for callback
+                progress_data = {
+                    'step': step,
+                    'progress': milestone,
+                    'timestamp': datetime.now().isoformat()
+                }
+                self.progress_callback(progress_data)
             except Exception as e:
                 logger.warning(f"Progress callback failed: {e}")
     
@@ -3776,6 +3785,9 @@ class ChatGPTSecurityScanner:
 # Create Flask app
 app = Flask(__name__)
 
+# App-level progress tracking to avoid threading issues
+app.current_scan_progress = None
+
 # Add CORS headers
 @app.after_request
 def add_cors_headers(response):
@@ -3840,15 +3852,14 @@ def health_check():
 @app.route('/progress', methods=['GET'])
 def get_progress():
     """Get current scan progress for real-time updates"""
-    global current_scan_progress
     
     # CRITICAL DEBUGGING: Check if we're in the right context
     current_thread = threading.current_thread()
-    logger.info(f"📊 PROGRESS ENDPOINT CALLED: Thread={current_thread.name}, current_scan_progress = {current_scan_progress}")
-    logger.info(f"📊 PROGRESS ENDPOINT: Global variable ID = {id(current_scan_progress)}")
+    logger.info(f"📊 PROGRESS ENDPOINT CALLED: Thread={current_thread.name}, app.current_scan_progress = {app.current_scan_progress}")
+    logger.info(f"📊 PROGRESS ENDPOINT: App variable ID = {id(app.current_scan_progress)}")
     logger.info(f"📊 PROGRESS ENDPOINT: All threads: {[t.name for t in threading.enumerate()]}")
     
-    if current_scan_progress is None:
+    if app.current_scan_progress is None:
         logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
         return jsonify({
             'status': 'no_scan_running',
@@ -3856,15 +3867,15 @@ def get_progress():
         })
     
     # Ensure we have valid progress data
-    if not isinstance(current_scan_progress, dict) or 'step' not in current_scan_progress or 'progress' not in current_scan_progress:
-        logger.warning(f"📊 PROGRESS ENDPOINT: Invalid progress data format: {current_scan_progress}")
+    if not isinstance(app.current_scan_progress, dict) or 'step' not in app.current_scan_progress or 'progress' not in app.current_scan_progress:
+        logger.warning(f"📊 PROGRESS ENDPOINT: Invalid progress data format: {app.current_scan_progress}")
         return jsonify({
             'status': 'error',
             'message': 'Invalid progress data format'
         }), 500
     
-    logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {current_scan_progress}")
-    return jsonify(current_scan_progress)
+    logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {app.current_scan_progress}")
+    return jsonify(app.current_scan_progress)
 
 @app.route('/cache-stats', methods=['GET'])
 def get_cache_statistics():
@@ -4001,14 +4012,13 @@ def security_scan():
         
         logger.info(f"🚀 Starting security scan for: {repo_url}")
         
-        # Reset global progress for new scan
-        global current_scan_progress
-        current_scan_progress = {
+        # Reset app-level progress for new scan
+        app.current_scan_progress = {
             'step': 'Starting scan...',
             'progress': 0,
             'timestamp': datetime.now().isoformat()
         }
-        logger.info(f"📊 INITIAL PROGRESS SET: {current_scan_progress}")
+        logger.info(f"📊 INITIAL PROGRESS SET: {app.current_scan_progress}")
         logger.info(f"📊 INITIAL PROGRESS THREAD: {threading.current_thread().name}")
         
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
@@ -4018,25 +4028,24 @@ def security_scan():
             # PROGRESS TRACKING: Set up progress callback for real-time updates
             progress_updates = []
             def progress_callback(progress_data):
-                global current_scan_progress
                 
                 progress_updates.append(progress_data)
                 logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
                 logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
                 
-                # Store current progress globally for real-time access
-                current_scan_progress = {
+                # Store current progress in app context for real-time access
+                app.current_scan_progress = {
                     'step': progress_data.get('step', 'Unknown'),
                     'progress': progress_data.get('progress', 0),
                     'timestamp': datetime.now().isoformat()
                 }
                 
-                logger.info(f"📊 STORED PROGRESS: {current_scan_progress}")
-                logger.info(f"📊 PROGRESS CALLBACK: Global variable ID = {id(current_scan_progress)}")
+                logger.info(f"📊 STORED PROGRESS: {app.current_scan_progress}")
+                logger.info(f"📊 PROGRESS CALLBACK: App variable ID = {id(app.current_scan_progress)}")
                 logger.info(f"📊 PROGRESS CALLBACK: Thread = {threading.current_thread().name}")
                 
                 # Ensure the progress is immediately available
-                logger.info(f"📊 PROGRESS IMMEDIATELY AVAILABLE: {current_scan_progress}")
+                logger.info(f"📊 PROGRESS IMMEDIATELY AVAILABLE: {app.current_scan_progress}")
                 # Fire-and-forget webhook to frontend to persist progress
                 try:
                     if progress_webhook_url and audit_id:
@@ -4046,8 +4055,8 @@ def security_scan():
                         req.add_header('Content-Type', 'application/json')
                         payload = _json.dumps({
                             'audit_id': audit_id,
-                            'step': current_scan_progress.get('step'),
-                            'progress': current_scan_progress.get('progress'),
+                            'step': app.current_scan_progress.get('step'),
+                            'progress': app.current_scan_progress.get('progress'),
                         }).encode('utf-8')
                         urllib.request.urlopen(req, payload, timeout=2)
                 except Exception as _e:
@@ -4076,8 +4085,8 @@ def security_scan():
             
             logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
             
-            # Reset global progress when scan completes
-            current_scan_progress = None
+            # Reset app-level progress when scan completes
+            app.current_scan_progress = None
             
             return jsonify(result)
             
