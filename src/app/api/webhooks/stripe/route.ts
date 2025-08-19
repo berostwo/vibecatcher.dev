@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import { getProductByPriceId } from '@/lib/stripe';
+import { UserService } from '@/lib/user-service';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-07-30.basil',
@@ -36,10 +38,22 @@ export async function POST(request: NextRequest) {
       case 'payment_intent.succeeded':
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
         console.log('Payment succeeded:', paymentIntent.id.substring(0, 8) + '...');
-        
-        // TODO: Update user's audit count in database
-        // const { priceId, quantity } = paymentIntent.metadata;
-        // await updateUserAuditCount(userId, quantity);
+        try {
+          const metadata = (paymentIntent.metadata || {}) as any;
+          const userId = metadata.userId as string | undefined;
+          const priceId = metadata.priceId as string | undefined;
+          const quantity = Number(metadata.quantity || 1);
+          if (userId && priceId) {
+            const product = getProductByPriceId(priceId);
+            if (product && 'credits' in product) {
+              const creditsToAdd = (product as any).credits * quantity;
+              await UserService.addCredits(userId, creditsToAdd);
+              console.log(`Added ${creditsToAdd} credits to user ${userId}`);
+            }
+          }
+        } catch (e) {
+          console.error('Failed to add credits after payment');
+        }
         
         break;
       

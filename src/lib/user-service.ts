@@ -13,7 +13,7 @@ export interface UserData {
   email: string;
   displayName?: string;
   photoURL?: string;
-  auditsAvailable: number;
+  creditsAvailable: number;
   totalAuditsUsed: number;
   createdAt: Date;
   updatedAt: Date;
@@ -36,7 +36,7 @@ export class UserService {
           email: data.email || '',
           displayName: data.displayName || '',
           photoURL: data.photoURL || '',
-          auditsAvailable: data.auditsAvailable || 0,
+          creditsAvailable: data.creditsAvailable || 0,
           totalAuditsUsed: data.totalAuditsUsed || 0,
           createdAt: data.createdAt?.toDate() || new Date(),
           updatedAt: data.updatedAt?.toDate() || new Date(),
@@ -50,7 +50,7 @@ export class UserService {
         const newUserData: UserData = {
           uid: userId,
           email: '',
-          auditsAvailable: 0,
+          creditsAvailable: 0,
           totalAuditsUsed: 0,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -91,27 +91,26 @@ export class UserService {
     }
   }
 
-  static async addAudits(userId: string, count: number): Promise<void> {
+  static async addCredits(userId: string, count: number): Promise<void> {
     try {
       await updateDoc(doc(db, 'users', userId), {
-        auditsAvailable: increment(count),
+        creditsAvailable: increment(count),
         updatedAt: serverTimestamp(),
       });
     } catch (error) {
-      console.error('Error adding audits:', error);
+      console.error('Error adding credits:', error);
       throw error;
     }
   }
 
-  static async useAudit(userId: string): Promise<void> {
+  static async useCredits(userId: string, credits: number): Promise<void> {
     try {
       await updateDoc(doc(db, 'users', userId), {
-        auditsAvailable: increment(-1),
-        totalAuditsUsed: increment(1),
+        creditsAvailable: increment(-credits),
         updatedAt: serverTimestamp(),
       });
     } catch (error) {
-      console.error('Error using audit:', error);
+      console.error('Error using credits:', error);
       throw error;
     }
   }

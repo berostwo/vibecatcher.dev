@@ -26,7 +26,7 @@ async function createPaymentIntentHandler(request: NextRequest, user: DecodedIdT
     if (csrfCheck) return csrfCheck;
 
     // 4. BUSINESS LOGIC VALIDATION
-    const { priceId, quantity = 1 } = (request as any).validatedData;
+    const { priceId, quantity = 1, payerEmail, payerName } = (request as any).validatedData;
 
     // Additional security checks
     if (!priceId || typeof priceId !== 'string') {
@@ -50,6 +50,8 @@ async function createPaymentIntentHandler(request: NextRequest, user: DecodedIdT
     const paymentIntent = await stripe.paymentIntents.create({
       amount: Math.round(quantity * 100), // Convert to cents
       currency: 'usd',
+      // Email receipt: prefer provided payerEmail, fallback to auth user
+      receipt_email: payerEmail || user.email || undefined,
       automatic_payment_methods: {
         enabled: true,
       },
@@ -57,6 +59,8 @@ async function createPaymentIntentHandler(request: NextRequest, user: DecodedIdT
         priceId,
         quantity: quantity.toString(),
         userId: user.uid, // Track which user created this
+        userEmail: payerEmail || user.email || '',
+        userName: payerName || (user as any).name || (user as any).displayName || '',
         timestamp: Date.now().toString(),
       },
       // Add additional security measures

@@ -1070,13 +1070,13 @@ class ChatGPTSecurityScanner:
         """Emit progress only at milestones (0,10,20,...,100)."""
         self.current_step = step
         self.step_progress = progress
-
+        
         # Always record raw update locally
-        progress_data = {
-            'step': step,
+                progress_data = {
+                    'step': step,
             'progress': float(progress),
-            'timestamp': datetime.now().isoformat()
-        }
+                    'timestamp': datetime.now().isoformat()
+                }
         self.progress_updates.append(progress_data)
 
         # Compute milestone to emit
@@ -2081,7 +2081,8 @@ class ChatGPTSecurityScanner:
             logger.info(f"🚀 Using {len(self.api_keys)} API keys for intra-worker parallelism")
 
             # If sharding is enabled and we have peers, offload part of the batches via HTTP fan-out
-            if self.sharding_enabled and self.worker_peers:
+            # Respect minimum file threshold to avoid sharding small repos
+            if self.sharding_enabled and self.worker_peers and total_files >= getattr(self, 'min_files_for_sharding', 300):
                 try:
                     logger.info("🧩 Sharding: distributing batches to peers")
                     self.update_progress("Distributing work to peer workers", 40)
@@ -2151,7 +2152,7 @@ class ChatGPTSecurityScanner:
                         logger.warning(f"🧩 Shard collection failed: {e}")
 
                     all_findings = local_findings + aggregated_findings
-                except Exception as e:
+            except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
                     self.update_progress("Sharding failed, falling back to local processing", 45)
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
@@ -3976,6 +3977,8 @@ def security_scan():
         
         repo_url = data.get('repository_url')
         github_token = data.get('github_token')
+        audit_id = data.get('audit_id')
+        progress_webhook_url = data.get('progress_webhook_url')
         
         # Input validation
         if not repo_url:
@@ -4034,6 +4037,21 @@ def security_scan():
                 
                 # Ensure the progress is immediately available
                 logger.info(f"📊 PROGRESS IMMEDIATELY AVAILABLE: {current_scan_progress}")
+                # Fire-and-forget webhook to frontend to persist progress
+                try:
+                    if progress_webhook_url and audit_id:
+                        import urllib.request
+                        import json as _json
+                        req = urllib.request.Request(progress_webhook_url, method='POST')
+                        req.add_header('Content-Type', 'application/json')
+                        payload = _json.dumps({
+                            'auditId': audit_id,
+                            'step': current_scan_progress.get('step'),
+                            'progress': current_scan_progress.get('progress'),
+                        }).encode('utf-8')
+                        urllib.request.urlopen(req, payload, timeout=2)
+                except Exception as _e:
+                    logger.debug(f"Progress webhook failed (non-fatal): {_e}")
             
             scanner.set_progress_callback(progress_callback)
             

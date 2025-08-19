@@ -9,28 +9,28 @@ export const getStripe = () => {
 // Product configuration
 export const STRIPE_PRODUCTS = {
   SINGLE: {
-    id: 'single_audit',
-    name: 'Single Audit',
-    price: 4.99,
-    audits: 1,
+    id: 'one_credit',
+    name: '1 Credit',
+    price: 7.99,
+    credits: 1,
     priceId: process.env.NEXT_PUBLIC_STRIPE_SINGLE_AUDIT_PRICE_ID,
-    description: 'One comprehensive security audit'
+    description: '1 credit = up to 500 scannable code files'
   },
   FIVE: {
-    id: 'five_audits',
-    name: '5 Audits',
-    price: 11.99,
-    audits: 5,
+    id: 'five_credits',
+    name: '5 Credits',
+    price: 24.99,
+    credits: 5,
     priceId: process.env.NEXT_PUBLIC_STRIPE_FIVE_AUDITS_PRICE_ID,
-    description: 'Five security audits at a discount'
+    description: '5 credits (each covers up to 500 files)'
   },
   TEN: {
-    id: 'ten_audits',
-    name: '10 Audits',
-    price: 18.99,
-    audits: 10,
+    id: 'ten_credits',
+    name: '10 Credits',
+    price: 39.99,
+    credits: 10,
     priceId: process.env.NEXT_PUBLIC_STRIPE_TEN_AUDITS_PRICE_ID,
-    description: 'Ten security audits at the best value'
+    description: '10 credits (each covers up to 500 files)'
   }
 };
 

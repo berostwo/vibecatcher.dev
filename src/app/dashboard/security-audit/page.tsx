@@ -618,6 +618,8 @@ export default function SecurityAuditPage() {
         body: JSON.stringify({
           repository_url: repositoryUrl,
           github_token: githubToken,
+          audit_id: auditId,
+          progress_webhook_url: typeof window !== 'undefined' ? `${window.location.origin}/api/audit/progress` : undefined,
         }),
       });
 
@@ -654,15 +656,12 @@ export default function SecurityAuditPage() {
                 };
               });
               
-              // Update Firebase with progress (use the higher value)
-              const currentProgress = scanProgress?.progress || 0;
-              const newProgress = Math.max(currentProgress, progressData.progress);
-              
-              await FirebaseAuditService.updateAuditProgress(auditId, {
-                step: progressData.step,
-                progress: newProgress,
-                timestamp: new Date().toISOString()
-              });
+              // Update Firebase via our lightweight proxy endpoint to decouple from worker
+              fetch('/api/audit/progress', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ auditId, step: progressData.step, progress: newProgress })
+              }).catch(() => {})
               
               // Check if progress is at 100% (scan complete)
               if (newProgress >= 100) {
@@ -952,7 +951,7 @@ export default function SecurityAuditPage() {
           results={{
             repoName: scanResults.repository_info.name,
             summary: {
-              totalIssues: scanResults.summary.total_findings,
+              totalIssues: scanResults.summary.condensed_findings,
               critical: scanResults.summary.critical_count,
               high: scanResults.summary.high_count,
               medium: scanResults.summary.medium_count,

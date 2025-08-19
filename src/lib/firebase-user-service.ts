@@ -111,7 +111,11 @@ export class FirebaseUserService {
         console.log('User data to store:', userData);
         
         // Store user in Firestore
-        await setDoc(doc(db, 'users', uid), userData);
+        await setDoc(doc(db, 'users', uid), {
+          ...userData,
+          // Ensure new users start with 0 credits (no freebies)
+          creditsAvailable: 0,
+        });
         
         console.log('Firebase user created successfully in Firestore:', uid);
         console.log('=== Firebase User Creation Complete ===');

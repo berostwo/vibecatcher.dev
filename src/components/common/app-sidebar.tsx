@@ -60,7 +60,7 @@ export function AppSidebar() {
   }
 
   return (
-    <div className={`transition-all duration-300 ${isExpanded ? 'w-96' : 'w-full'}`}>
+    <div className={`relative h-full flex flex-col transition-all duration-300 ${isExpanded ? 'w-96' : 'w-full'}`}>
       <SidebarHeader className="border-b border-sidebar-border justify-center">
         <div className="flex flex-col items-center space-y-2 group-data-[collapsible=icon]:hidden">
           <h2 className="text-lg font-semibold tracking-tighter flex items-baseline justify-center">
@@ -92,7 +92,7 @@ export function AppSidebar() {
           )}
         </div>
       </SidebarHeader>
-      <SidebarContent className="flex-grow p-2">
+      <SidebarContent className="flex-1 flex flex-col p-2 overflow-y-auto">
         <SidebarMenu>
           {menuItems.map((item) => (
             <SidebarMenuItem key={item.href}>
@@ -109,67 +109,72 @@ export function AppSidebar() {
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
+        {/* Bottom anchored purchase items + sign out */}
         <div className="mt-auto group-data-[collapsible=icon]:hidden">
-            {selectedProduct ? (
-              <div className="space-y-4">
-                <SidebarSeparator className="my-4" />
-                <StripeProvider>
-                  <PaymentForm
-                    productId={selectedProduct}
-                    onBack={handlePaymentBack}
-                    onSuccess={handlePaymentSuccess}
-                  />
-                </StripeProvider>
+          {selectedProduct ? (
+            <div className="space-y-4">
+              <SidebarSeparator className="my-4" />
+              <StripeProvider>
+                <PaymentForm
+                  productId={selectedProduct}
+                  onBack={handlePaymentBack}
+                  onSuccess={handlePaymentSuccess}
+                />
+              </StripeProvider>
+            </div>
+          ) : (
+            <>
+              <SidebarSeparator className="my-4" />
+              <div className="space-y-2">
+                {Object.values(STRIPE_PRODUCTS).map((product) => (
+                  <Button 
+                    key={product.id} 
+                    variant="outline" 
+                    className="w-full justify-between h-auto p-3 bg-sidebar-accent border-2 border-primary/20 hover:bg-background/50"
+                    onClick={() => handleProductSelect(product.id)}
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-left">{product.name}</p>
+                      <p className="text-xs text-muted-foreground text-left">${product.price}</p>
+                      {'credits' in product && (
+                        <p className="text-[11px] text-muted-foreground/80">{product.credits} credit{(product as any).credits !== 1 ? 's' : ''}</p>
+                      )}
+                    </div>
+                    <ShoppingCart className="h-4 w-4 text-primary" />
+                  </Button>
+                ))}
               </div>
-            ) : (
-              <>
-                <SidebarSeparator className="my-4" />
-                <div className="space-y-2">
-                     {Object.values(STRIPE_PRODUCTS).map((product) => (
-                        <Button 
-                          key={product.id} 
-                          variant="outline" 
-                          className="w-full justify-between h-auto p-3 bg-sidebar-accent border-2 border-primary/20 hover:bg-background/50"
-                          onClick={() => handleProductSelect(product.id)}
-                        >
-                             <div>
-                                <p className="text-sm font-medium text-left">{product.name}</p>
-                                <p className="text-xs text-muted-foreground text-left">${product.price}</p>
-                            </div>
-                            <ShoppingCart className="h-4 w-4 text-primary" />
-                        </Button>
-                     ))}
-                </div>
-              </>
-            )}
+              <SidebarSeparator className="my-4" />
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton 
+                    onClick={async () => {
+                      if (confirm('Are you sure you want to sign out?')) {
+                        try {
+                          await signOut()
+                          window.location.href = '/'
+                        } catch (error) {
+                          console.error('Error signing out')
+                          window.location.href = '/'
+                        }
+                      }
+                    }}
+                    tooltip={{ children: 'Sign Out', side: 'right', align: 'center' }}
+                    className="w-full hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    <LogOut />
+                    <span>Sign Out</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </>
+          )}
         </div>
       </SidebarContent>
-      <SidebarFooter>
-         <SidebarMenu>
-           <SidebarMenuItem>
-             <SidebarMenuButton 
-               onClick={async () => {
-                 if (confirm('Are you sure you want to sign out?')) {
-                   try {
-                     await signOut()
-                     // Redirect to home page after sign out
-                     window.location.href = '/'
-                   } catch (error) {
-                     console.error('Error signing out')
-                     // Still redirect to home page even if there's an error
-                     window.location.href = '/'
-                   }
-                 }
-               }}
-               tooltip={{ children: 'Sign Out', side: 'right', align: 'center' }}
-               className="w-full hover:bg-destructive/10 hover:text-destructive"
-             >
-                <LogOut />
-                <span>Sign Out</span>
-             </SidebarMenuButton>
-            </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
+      {/* Animated vertical divider that tracks the expanded payment pane */}
+      {isExpanded && (
+        <div className="hidden md:block absolute top-0 right-0 h-full w-px bg-sidebar-border transition-all duration-300" />
+      )}
     </div>
   )
 }

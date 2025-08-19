@@ -13,6 +13,9 @@ export const PaymentIntentSchema = z.object({
     .max(100)
     .regex(/^price_[a-zA-Z0-9]{5,}$/),
   quantity: z.coerce.number().int().min(1).max(1000),
+  // Optional payer details to override receipt email/name
+  payerEmail: z.string().email().max(320).optional(),
+  payerName: z.string().trim().min(1).max(200).optional(),
 }).strict();
 
 // GitHub OAuth validation schema (strict)

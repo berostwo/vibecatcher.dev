@@ -7,17 +7,32 @@ import Link from 'next/link'
 import { DashboardPage, DashboardPageHeader } from '@/components/common/dashboard-page'
 import { useAuth } from '@/contexts/auth-context'
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { UserService } from '@/lib/user-service'
 
 export default function DashboardPageContent() {
   const { user, githubToken, isLoading } = useAuth();
   const router = useRouter();
+  const [credits, setCredits] = useState<number>(0);
 
   useEffect(() => {
     if (!isLoading && !user) {
       router.replace('/');
     }
   }, [isLoading, user, router]);
+
+  useEffect(() => {
+    const loadCredits = async () => {
+      if (!user) return;
+      try {
+        const data = await UserService.getUserData(user.uid);
+        setCredits(data?.creditsAvailable || 0);
+      } catch (e) {
+        setCredits(0);
+      }
+    };
+    loadCredits();
+  }, [user]);
   
   if (isLoading || (!user && typeof window !== 'undefined')) {
     return (
@@ -91,11 +106,12 @@ export default function DashboardPageContent() {
         </Card>
         <Card className="border-2 border-primary/20">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Audits Available</CardTitle>
+            <CardTitle className="text-sm font-medium">Credits Available</CardTitle>
             <CheckCircle className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">8</div>
+            <div className="text-2xl font-bold">{credits}</div>
+            <p className="text-xs text-muted-foreground mt-1">1 credit = up to 500 scannable code files</p>
           </CardContent>
         </Card>
       </div>
