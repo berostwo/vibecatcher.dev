@@ -4,7 +4,8 @@ import { FirebaseAuditService } from '@/lib/firebase-audit-service'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => null) as any
-    const auditId = String(body?.auditId || '').trim()
+    // Accept both auditId and audit_id for maximum compatibility
+    const auditId = String(body?.auditId || body?.audit_id || '').trim()
     const step = String(body?.step || '').slice(0, 200)
     const progress = Number(body?.progress)
 

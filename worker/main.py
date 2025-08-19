@@ -2161,7 +2161,7 @@ class ChatGPTSecurityScanner:
                         logger.warning(f"🧩 Shard collection failed: {e}")
 
                     all_findings = local_findings + aggregated_findings
-                except Exception as e:
+            except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
                     self.update_progress("Sharding failed, falling back to local processing", 45)
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
