@@ -2173,7 +2173,16 @@ class ChatGPTSecurityScanner:
             # all_findings already computed via local processing and/or sharding above
             
             # PROGRESS TRACKING: All batches complete (EVEN DISTRIBUTION!)
-            self.update_progress("Parallel batch analysis complete", 65)
+            self.update_progress("Parallel batch analysis complete", 40)
+            
+            # PROGRESS TRACKING: Starting post-processing (EVEN DISTRIBUTION!)
+            self.update_progress("Starting post-processing analysis", 50)
+            
+            # PROGRESS TRACKING: Post-processing complete (EVEN DISTRIBUTION!)
+            self.update_progress("Post-processing complete", 60)
+            
+            # PROGRESS TRACKING: Starting final analysis (EVEN DISTRIBUTION!)
+            self.update_progress("Starting final analysis", 65)
             
             # PROGRESS TRACKING: Start condensing (EVEN DISTRIBUTION!)
             self.update_progress("Condensing security findings", 70)
