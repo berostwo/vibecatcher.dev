@@ -989,20 +989,7 @@ class ChatGPTSecurityScanner:
         self.last_cache_cleanup = time.time()
         self.cache_cleanup_interval = 3600  # Clean up every hour
         
-        # SIMPLE PROGRESS TRACKING: Clean, accurate progress system
-        self.progress_callback = None
-        self.current_step = "Initializing"
-        self.step_progress = 0.0
-        self.progress_updates = []  # Store progress updates for the current scan
-
-        # Progress/log emission throttling (defaults to 3 seconds)
-        try:
-            self.progress_log_interval_seconds = float(os.environ.get('PROGRESS_LOG_INTERVAL_SECONDS', '3'))
-        except Exception:
-            self.progress_log_interval_seconds = 3.0
-        self._last_progress_log_time = datetime.min
-        self._last_progress_logged_percent: int = -1
-        self._last_progress_step: Optional[str] = None
+                # Progress tracking completely removed
         self._last_milestone_sent = -10
         
         # Security categories for comprehensive coverage
@@ -1062,100 +1049,13 @@ class ChatGPTSecurityScanner:
         self.max_shard_workers = 2  # Max 2 workers collaborate on sharding
         self.min_files_for_sharding = 300  # Only shard repos with 300+ files
     
-    def set_progress_callback(self, callback):
-        """Set callback function for progress updates"""
-        self.progress_callback = callback
-    
-    def update_progress(self, step: str, progress: float):
-        """Emit progress only at milestones (0,10,20,...,100)."""
-        logger.info(f"📊 SCANNER UPDATE_PROGRESS CALLED: {step} - {progress}%")
-        logger.info(f"📊 SCANNER PROGRESS CALLBACK EXISTS: {self.progress_callback is not None}")
-        
-        self.current_step = step
-        self.step_progress = progress
-        
-        # Always record raw update locally
-        progress_data = {
-            'step': step,
-            'progress': float(progress),
-            'timestamp': datetime.now().isoformat()
-        }
-        self.progress_updates.append(progress_data)
-
-        # Compute milestone to emit
-        try:
-            step_size = max(1, int(os.environ.get('PROGRESS_MILESTONE_STEP', '10')))
-        except Exception:
-            step_size = 10
-        milestone = int(max(0, min(100, (int(progress) // step_size) * step_size)))
-
-        # Ensure we emit at least 0% once
-        if self._last_milestone_sent < 0:
-            self._last_milestone_sent = 0
-
-        # CRITICAL FIX: Always emit on actual progress changes OR new milestones
-        # Don't skip if we have genuine progress, even if milestone is same
-        has_progress_change = (
-            milestone != self._last_milestone_sent or 
-            step != self._last_progress_step or
-            progress > self.step_progress
-        )
-        
-        if not has_progress_change and milestone < 100:
-            logger.info(f"📊 SKIPPING - NO PROGRESS CHANGE: milestone={milestone}, last={self._last_milestone_sent}, step='{step}', last_step='{self._last_progress_step}'")
-            return
-            
-        self._last_milestone_sent = milestone
-
-        # Update app-level progress
-        try:
-            from flask import current_app
-            if current_app and hasattr(current_app, 'current_scan_progress'):
-                current_app.current_scan_progress = {
-                    'step': step,
-                    'progress': milestone,
-                    'timestamp': datetime.now().isoformat()
-                }
-        except Exception as e:
-            logger.debug(f"Could not update app progress: {e}")
-
-        # Throttled logging aligned with polling interval
-        now = datetime.now()
-        if (
-            milestone != self._last_progress_logged_percent or
-            step != self._last_progress_step or
-            (now - self._last_progress_log_time).total_seconds() >= self.progress_log_interval_seconds
-        ):
-            logger.info(f"📊 PROGRESS MILESTONE: {step} - {milestone}%")
-            self._last_progress_log_time = now
-            self._last_progress_logged_percent = milestone
-            self._last_progress_step = step
-
-        # Callback with milestone payload
-        if self.progress_callback:
-            try:
-                # Create progress data for callback
-                progress_data = {
-                    'step': step,
-                    'progress': milestone,
-                    'timestamp': datetime.now().isoformat()
-                }
-                logger.info(f"📊 CALLING PROGRESS CALLBACK: {progress_data}")
-                self.progress_callback(progress_data)
-                logger.info(f"📊 PROGRESS CALLBACK COMPLETED")
-            except Exception as e:
-                logger.error(f"❌ Progress callback failed: {e}")
-                import traceback
-                logger.error(f"❌ Progress callback traceback: {traceback.format_exc()}")
-        else:
-            logger.warning(f"⚠️ NO PROGRESS CALLBACK SET!")
+    # Progress callback methods completely removed
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
         logger.info(f"📥 Cloning repository: {repo_url}")
         
-        # PROGRESS TRACKING: Start cloning step (EVEN DISTRIBUTION!)
-        self.update_progress("Cloning repository", 10)
+        # Progress tracking removed
         
         # Validate repository URL
         if not any(domain in repo_url for domain in ALLOWED_REPO_DOMAINS):
@@ -1216,8 +1116,7 @@ class ChatGPTSecurityScanner:
             logger.info(f"📊 Repository size: {repo_size}")
             logger.info(f"📊 Total files: {file_count}")
             
-            # PROGRESS TRACKING: Clone complete (EVEN DISTRIBUTION!)
-            self.update_progress("Repository cloned", 20)
+                    # Progress tracking removed
             
             return repo_path
             
@@ -1968,8 +1867,7 @@ class ChatGPTSecurityScanner:
         logger.info(f"🚀 Starting ChatGPT security scan for: {repo_url}")
         
         try:
-            # PROGRESS TRACKING: Initialize progress (EVEN DISTRIBUTION!)
-            self.update_progress("Initializing scan", 5)
+            # Progress tracking removed
             
             # Clone repository with timeout
             repo_path = await asyncio.wait_for(
@@ -1986,7 +1884,6 @@ class ChatGPTSecurityScanner:
             }
             
             # 🚀 DEPENDENCY ANALYSIS: Eliminate false positives about unused packages
-            self.update_progress("Analyzing dependencies and framework", 15)
             logger.info("🔍 DEPENDENCY ANALYSIS: Starting comprehensive dependency analysis...")
             
             try:
@@ -2015,8 +1912,7 @@ class ChatGPTSecurityScanner:
                 logger.warning(f"⚠️ Dependency analysis failed: {e}")
                 scan_context = {}
             
-            # PROGRESS TRACKING: Start file filtering (EVEN DISTRIBUTION!)
-            self.update_progress("Analyzing repository structure", 20)
+            # Progress tracking removed
             
             # PHASE 1 NUCLEAR OPTIMIZATION: Smart File Filtering + Batch Analysis
             all_findings = []
@@ -2081,11 +1977,7 @@ class ChatGPTSecurityScanner:
             logger.info(f"🔍 Size skipped: {skipped_size/1024/1024:.1f}MB")
             logger.info(f"🔍 Supported file types: {', '.join(file_types)}")
             
-            # PROGRESS TRACKING: File filtering complete (EVEN DISTRIBUTION!)
-            self.update_progress("Repository structure analyzed", 25)
-            
-            # PROGRESS TRACKING: Start batch creation (EVEN DISTRIBUTION!)
-            self.update_progress("Preparing analysis batches", 30)
+            # Progress tracking removed
             
             # Create intelligent file batches based on priority
             file_batches = self.create_file_batches(files_to_analyze)
@@ -2101,8 +1993,7 @@ class ChatGPTSecurityScanner:
             scan_start_time = datetime.now()
             max_scan_time = 900  # 15 minutes max
             
-            # PROGRESS TRACKING: Start batch processing (EVEN DISTRIBUTION!)
-            self.update_progress("Starting security analysis", 35)
+            # Progress tracking removed
             
             # 🚀 PHASE 5: TRUE PARALLEL PROCESSING WITH OPTIONAL SHARDING
             logger.info(f"🚀 PHASE 5 PARALLEL PROCESSING: Starting {total_batches} batches")
@@ -2113,7 +2004,7 @@ class ChatGPTSecurityScanner:
             if self.sharding_enabled and self.worker_peers and total_files >= getattr(self, 'min_files_for_sharding', 300):
                 try:
                     logger.info("🧩 Sharding: distributing batches to peers")
-                    self.update_progress("Distributing work to peer workers", 40)
+                    # Progress tracking removed
                     
                     shardable_batches = list(file_batches)
                     local_batches: List[List[tuple]] = []
@@ -2159,11 +2050,9 @@ class ChatGPTSecurityScanner:
                     shard_tasks = [send_shard(url, batches) for url, batches in partitions.items()]
 
                     # Process local batches with existing thread pool flow while peers run
-                    self.update_progress("Processing local batch", 45)
                     local_findings = self._process_batches_locally(local_batches, total_batches, scan_start_time, max_scan_time)
 
                     # Collect peer results
-                    self.update_progress("Collecting results from peer workers", 50)
                     try:
                         peer_results = await asyncio.gather(*shard_tasks, return_exceptions=True)
                         for r in peer_results:
@@ -2180,31 +2069,16 @@ class ChatGPTSecurityScanner:
                         logger.warning(f"🧩 Shard collection failed: {e}")
 
                     all_findings = local_findings + aggregated_findings
-                except Exception as e:
+            except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
-                    self.update_progress("Sharding failed, falling back to local processing", 45)
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
             else:
                 # No sharding: process all batches locally
-                self.update_progress("Processing files locally", 40)
                 all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
 
             # all_findings already computed via local processing and/or sharding above
             
-            # PROGRESS TRACKING: All batches complete (EVEN DISTRIBUTION!)
-            self.update_progress("Parallel batch analysis complete", 40)
-            
-            # PROGRESS TRACKING: Starting post-processing (EVEN DISTRIBUTION!)
-            self.update_progress("Starting post-processing analysis", 50)
-            
-            # PROGRESS TRACKING: Post-processing complete (EVEN DISTRIBUTION!)
-            self.update_progress("Post-processing complete", 60)
-            
-            # PROGRESS TRACKING: Starting final analysis (EVEN DISTRIBUTION!)
-            self.update_progress("Starting final analysis", 65)
-            
-            # PROGRESS TRACKING: Start condensing (EVEN DISTRIBUTION!)
-            self.update_progress("Condensing security findings", 70)
+            # Progress tracking removed
             
             # Condense findings
             logger.info(f"🔍 Condensing {len(all_findings)} findings...")
@@ -2212,7 +2086,6 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ Condensed to {len(condensed_findings)} unique findings")
             
             # 🚀 FALSE POSITIVE FILTERING: Eliminate false positives using context
-            self.update_progress("Filtering false positives", 72)
             logger.info("🔍 FALSE POSITIVE FILTERING: Starting intelligent false positive filtering...")
             
             try:
@@ -2238,11 +2111,7 @@ class ChatGPTSecurityScanner:
                 logger.warning(f"⚠️ False positive filtering failed: {e}")
                 logger.warning("⚠️ Continuing with unfiltered findings...")
             
-            # PROGRESS TRACKING: Condensing complete (EVEN DISTRIBUTION!)
-            self.update_progress("Findings condensed", 75)
-            
-            # PROGRESS TRACKING: Start remediations (EVEN DISTRIBUTION!)
-            self.update_progress("Generating remediation prompts", 80)
+            # Progress tracking removed
             
             # NUCLEAR OPTIMIZATION: Generate ALL remediations in ONE call
             logger.info(f"🚀 NUCLEAR OPTIMIZATION: Generating {len(condensed_findings)} remediations in ONE API call...")
@@ -2251,11 +2120,7 @@ class ChatGPTSecurityScanner:
             remediation_time = (datetime.now() - start_time_remediations).total_seconds()
             logger.info(f"✅ NUCLEAR OPTIMIZATION: Generated {len(condensed_remediations)} remediations in {remediation_time:.1f}s!")
             
-            # PROGRESS TRACKING: Remediations complete (EVEN DISTRIBUTION!)
-            self.update_progress("Remediation prompts generated", 85)
-            
-            # PROGRESS TRACKING: Start master plan (EVEN DISTRIBUTION!)
-            self.update_progress("Creating master remediation plan", 90)
+            # Progress tracking removed
             
             # Generate master remediation plan
             logger.info(f"🔍 Generating master remediation plan...")
@@ -2263,7 +2128,7 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ Master remediation generated")
             
             # PROGRESS TRACKING: Calculate codebase health (EVEN DISTRIBUTION!)
-            self.update_progress("Calculating codebase health", 92)
+            # Progress tracking removed
             
             # Calculate accurate codebase health using ChatGPT
             logger.info(f"🔍 Calculating accurate codebase health...")
@@ -2271,7 +2136,7 @@ class ChatGPTSecurityScanner:
             logger.info(f"✅ Codebase health calculated: {codebase_health}%")
             
             # PROGRESS TRACKING: Health calculation complete (EVEN DISTRIBUTION!)
-            self.update_progress("Health calculation complete", 95)
+            # Progress tracking removed
             
             # Calculate scan duration
             scan_duration = (datetime.now() - start_time).total_seconds()
@@ -2320,7 +2185,7 @@ class ChatGPTSecurityScanner:
             )
             
             # PROGRESS TRACKING: Final completion
-            self.update_progress("Finalizing report", 100)
+            # Progress tracking removed
             
             # Cleanup
             shutil.rmtree(repo_path, ignore_errors=True)
@@ -2741,9 +2606,7 @@ class ChatGPTSecurityScanner:
             batch_start_time = datetime.now()
             logger.info(f"📦 THREAD BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)}) - STARTING")
             
-            # PROGRESS TRACKING: Update batch progress (35-65% - EVEN DISTRIBUTION!)
-            batch_progress = 35 + (batch_num / total_batches) * 30
-            self.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_progress)
+            # Progress tracking removed
             
             # Build comprehensive batch prompt with content chunking
             batch_content = []
@@ -3821,124 +3684,10 @@ import tempfile
 import os
 
 # Create a temporary file for progress tracking that works across processes
-PROGRESS_FILE = os.path.join(tempfile.gettempdir(), 'security_scanner_progress.json')
-PROGRESS_LOCK = threading.Lock()
-
-def write_progress_to_file(progress_data):
-    """Write progress data to file for cross-process access"""
-    try:
-        logger.info(f"📊 ATTEMPTING TO WRITE PROGRESS: {progress_data}")
-        logger.info(f"📊 PROGRESS FILE PATH: {PROGRESS_FILE}")
-        logger.info(f"📊 CURRENT WORKING DIRECTORY: {os.getcwd()}")
-        logger.info(f"📊 TEMP DIRECTORY: {tempfile.gettempdir()}")
-        
-        with PROGRESS_LOCK:
-            with open(PROGRESS_FILE, 'w') as f:
-                json.dump(progress_data, f)
-        
-        # Verify the file was actually written
-        if os.path.exists(PROGRESS_FILE):
-            with open(PROGRESS_FILE, 'r') as f:
-                written_data = json.load(f)
-            logger.info(f"📊 PROGRESS WRITTEN TO FILE: {progress_data}")
-            logger.info(f"📊 FILE CONTENTS VERIFIED: {written_data}")
-            logger.info(f"📊 FILE SIZE: {os.path.getsize(PROGRESS_FILE)} bytes")
-        else:
-            logger.error(f"❌ PROGRESS FILE WAS NOT CREATED: {PROGRESS_FILE}")
-            
-    except Exception as e:
-        logger.error(f"❌ Failed to write progress to file: {e}")
-        logger.error(f"❌ Exception type: {type(e)}")
-        import traceback
-        logger.error(f"❌ Traceback: {traceback.format_exc()}")
-
-def read_progress_from_file():
-    """Read progress data from file for cross-process access"""
-    try:
-        logger.info(f"📊 ATTEMPTING TO READ PROGRESS FILE: {PROGRESS_FILE}")
-        logger.info(f"📊 FILE EXISTS: {os.path.exists(PROGRESS_FILE)}")
-        
-        if not os.path.exists(PROGRESS_FILE):
-            logger.info(f"📊 PROGRESS FILE DOES NOT EXIST")
-            return None
-            
-        logger.info(f"📊 PROGRESS FILE EXISTS, READING CONTENTS...")
-        with PROGRESS_LOCK:
-            with open(PROGRESS_FILE, 'r') as f:
-                data = json.load(f)
-        logger.info(f"📊 SUCCESSFULLY READ PROGRESS DATA: {data}")
-        return data
-    except Exception as e:
-        logger.error(f"❌ Failed to read progress from file: {e}")
-        logger.error(f"❌ Exception type: {type(e)}")
-        import traceback
-        logger.error(f"❌ Traceback: {traceback.format_exc()}")
-        return None
+# Progress file functions completely removed
 
 # App-level progress tracking to avoid threading issues (kept for compatibility)
-app.current_scan_progress = None
-app.progress_lock = threading.Lock()
-
-# CRITICAL FIX: Global progress callback for scanner access
-GLOBAL_PROGRESS_CALLBACK = None
-GLOBAL_PROGRESS_WEBHOOK_URL = None
-GLOBAL_AUDIT_ID = None
-
-def global_progress_callback(progress_data):
-    """Global progress callback that can be accessed by the scanner"""
-    global GLOBAL_PROGRESS_CALLBACK, GLOBAL_PROGRESS_WEBHOOK_URL, GLOBAL_AUDIT_ID
-    
-    logger.info(f"📊 GLOBAL PROGRESS CALLBACK EXECUTED: {progress_data}")
-    
-    # Write progress to file for cross-process access
-    progress_entry = {
-        'step': progress_data.get('step', 'Unknown'),
-        'progress': progress_data.get('progress', 0),
-        'timestamp': datetime.now().isoformat()
-    }
-    
-    # Write progress to file for cross-process access
-    write_progress_to_file(progress_entry)
-    
-    logger.info(f"📊 STORED PROGRESS IN FILE: {progress_entry}")
-    logger.info(f"📊 GLOBAL CALLBACK: Thread = {threading.current_thread().name}")
-    
-    # Also update app context for compatibility
-    try:
-        with app.progress_lock:
-            app.current_scan_progress = progress_entry
-    except Exception:
-        pass
-    
-    # Fire-and-forget webhook to frontend to persist progress
-    try:
-        if GLOBAL_PROGRESS_WEBHOOK_URL and GLOBAL_AUDIT_ID:
-            logger.info(f"📡 SENDING GLOBAL CALLBACK WEBHOOK: {GLOBAL_PROGRESS_WEBHOOK_URL}")
-            logger.info(f"📡 GLOBAL WEBHOOK PAYLOAD: {{'auditId': {GLOBAL_AUDIT_ID}, 'step': {progress_entry.get('step')}, 'progress': {progress_entry.get('progress')}}}")
-            import urllib.request
-            import json as _json
-            req = urllib.request.Request(GLOBAL_PROGRESS_WEBHOOK_URL, method='POST')
-            req.add_header('Content-Type', 'application/json')
-            payload = _json.dumps({
-                'auditId': GLOBAL_AUDIT_ID,
-                'step': progress_entry.get('step'),
-                'progress': progress_entry.get('progress'),
-            }).encode('utf-8')
-            logger.info(f"📡 GLOBAL WEBHOOK REQUEST HEADERS: {dict(req.headers)}")
-            logger.info(f"📡 GLOBAL WEBHOOK REQUEST PAYLOAD: {payload}")
-            response = urllib.request.urlopen(req, payload, timeout=5)
-            logger.info(f"📡 GLOBAL WEBHOOK RESPONSE: {response.status} {response.reason}")
-            response_body = response.read()
-            logger.info(f"📡 GLOBAL WEBHOOK RESPONSE BODY: {response_body}")
-        else:
-            logger.warning(f"⚠️ NO GLOBAL WEBHOOK URL OR AUDIT ID: webhook_url={GLOBAL_PROGRESS_WEBHOOK_URL}, audit_id={GLOBAL_AUDIT_ID}")
-    except Exception as _e:
-        logger.error(f"❌ GLOBAL CALLBACK WEBHOOK FAILED: {_e}")
-        logger.error(f"❌ GLOBAL WEBHOOK ERROR TYPE: {type(_e)}")
-        if hasattr(_e, 'code'):
-            logger.error(f"❌ GLOBAL WEBHOOK HTTP CODE: {_e.code}")
-        if hasattr(_e, 'reason'):
-            logger.error(f"❌ GLOBAL WEBHOOK REASON: {_e.reason}")
+# Progress tracking completely removed
 
 # Add CORS headers
 @app.after_request
@@ -4001,36 +3750,7 @@ def health_check():
         'health_checks': checks
     })
 
-@app.route('/progress', methods=['GET'])
-def get_progress():
-    """Get current scan progress for real-time updates"""
-    
-    # CRITICAL DEBUGGING: Check if we're in the right context
-    current_thread = threading.current_thread()
-    logger.info(f"📊 PROGRESS ENDPOINT CALLED: Thread={current_thread.name}")
-    logger.info(f"📊 PROGRESS ENDPOINT: Progress file exists = {os.path.exists(PROGRESS_FILE)}")
-    logger.info(f"📊 PROGRESS ENDPOINT: All threads: {[t.name for t in threading.enumerate()]}")
-    
-    # CRITICAL FIX: Use file-based progress tracking for cross-process access
-    progress_data = read_progress_from_file()
-    
-    if not progress_data:
-        logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
-        return jsonify({
-            'status': 'no_scan_running',
-            'message': 'No security scan is currently running'
-        })
-    
-    # Ensure we have valid progress data
-    if not isinstance(progress_data, dict) or 'step' not in progress_data or 'progress' not in progress_data:
-        logger.warning(f"📊 PROGRESS ENDPOINT: Invalid progress data format: {progress_data}")
-        return jsonify({
-            'status': 'error',
-            'message': 'Invalid progress data format'
-        }), 500
-    
-    logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {progress_data}")
-    return jsonify(progress_data)
+# Progress endpoint completely removed
 
 @app.route('/cache-stats', methods=['GET'])
 def get_cache_statistics():
@@ -4191,8 +3911,8 @@ def security_scan():
             progress_data = {
                 'step': step,
                 'progress': progress,
-                'timestamp': datetime.now().isoformat()
-            }
+                    'timestamp': datetime.now().isoformat()
+                }
             # Write to process-safe file so /progress can read it
             write_progress_to_file(progress_data)
             # Update app context for compatibility
