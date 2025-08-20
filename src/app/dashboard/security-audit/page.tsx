@@ -319,69 +319,76 @@ export default function SecurityAuditPage() {
     }
   }, [user]);
 
-  // REAL PROGRESS POLLING: Poll worker for actual progress updates
+  // REAL PROGRESS POLLING: Poll Firestore for centralized progress updates
   useEffect(() => {
     if (isScanning && currentAudit?.id) {
-      // DELAY POLLING: Wait 3 seconds for scan request to reach worker
-      const delayTimer = setTimeout(() => {
-        console.log('🚀 STARTING PROGRESS POLLING AFTER DELAY...');
-        
-        // Start polling the worker for real progress
-        const interval = setInterval(async () => {
-          try {
-            console.log('🔄 POLLING WORKER FOR PROGRESS...');
-            // Poll the worker's progress endpoint
-            const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
-            console.log('📡 WORKER RESPONSE STATUS:', response.status);
+      console.log('🚀 STARTING ROBUST PROGRESS POLLING...');
+      const interval = setInterval(async () => {
+        try {
+          console.log('🔄 POLLING FOR PROGRESS...');
+          
+          // Strategy 1: Try Firestore first (if webhook worked)
+          const audit = await FirebaseAuditService.getAuditById(currentAudit.id);
+          console.log('📊 FIRESTORE AUDIT DATA:', audit);
+          
+          if (audit?.progress) {
+            console.log('✅ FIRESTORE PROGRESS FOUND:', audit.progress);
+            setCurrentStep(audit.progress.step);
+            setCurrentProgress(audit.progress.progress);
+          } else {
+            console.log('⚠️ NO FIRESTORE PROGRESS - TRYING WORKER DIRECT POLLING');
             
-            if (response.ok) {
-              const progressData = await response.json();
-              console.log('📊 WORKER PROGRESS DATA:', progressData);
+            // Strategy 2: Poll worker directly as fallback
+            try {
+              const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+              console.log('📡 WORKER POLL RESPONSE STATUS:', response.status);
               
-              if (progressData && progressData.step && typeof progressData.progress === 'number') {
-                console.log('✅ VALID PROGRESS UPDATE:', progressData);
-                setCurrentStep(progressData.step);
-                setCurrentProgress(progressData.progress);
+              if (response.ok) {
+                const progressData = await response.json();
+                console.log('📡 WORKER PROGRESS DATA:', progressData);
                 
-                // Also update Firebase audit progress
-                try {
-                  await FirebaseAuditService.updateAuditProgress(currentAudit.id, {
-                    step: progressData.step,
-                    progress: progressData.progress,
-                    timestamp: new Date().toISOString(),
-                  });
-                } catch (error) {
-                  console.warn('Failed to update Firebase progress:', error);
-                }
-              } else if (progressData.status === 'no_scan_running') {
-                console.log('⚠️ No scan running on worker');
-                // Fallback: read last persisted progress from Firestore if available
-                try {
-                  const activeAudit = await FirebaseAuditService.getActiveAudit(user!.uid);
-                  if (activeAudit?.progress) {
-                    setCurrentStep(activeAudit.progress.step);
-                    setCurrentProgress(activeAudit.progress.progress);
+                if (progressData && progressData.step && typeof progressData.progress === 'number') {
+                  console.log('✅ WORKER PROGRESS UPDATE:', progressData);
+                  setCurrentStep(progressData.step);
+                  setCurrentProgress(progressData.progress);
+                  
+                  // Also update Firestore for future polling
+                  try {
+                    await FirebaseAuditService.updateAuditProgress(currentAudit.id, {
+                      step: progressData.step,
+                      progress: progressData.progress,
+                      timestamp: new Date().toISOString(),
+                    });
+                    console.log('💾 UPDATED FIRESTORE WITH WORKER PROGRESS');
+                  } catch (error) {
+                    console.warn('Failed to update Firestore from worker poll:', error);
                   }
-                } catch (e) {
-                  // ignore
+                } else if (progressData.status === 'no_scan_running') {
+                  console.log('⚠️ Worker reports no scan running - this might be a race condition');
+                } else {
+                  console.log('⚠️ Invalid worker progress data format:', progressData);
                 }
               } else {
-                console.log('⚠️ Invalid progress data format:', progressData);
+                console.error('❌ WORKER POLL FAILED:', response.status, response.statusText);
               }
-            } else {
-              console.error('❌ WORKER RESPONSE ERROR:', response.status, response.statusText);
+            } catch (error) {
+              console.error('❌ WORKER POLL ERROR:', error);
             }
-          } catch (error) {
-            console.error('❌ PROGRESS POLLING FAILED:', error);
           }
-        }, 2000); // Poll every 2 seconds
-        
-        setProgressPollingInterval(interval);
-      }, 3000); // Wait 3 seconds before starting to poll
+          
+          // Check if scan completed
+          if (audit?.status === 'completed' && audit.scanResults) {
+            console.log('🎉 SCAN COMPLETED - STOPPING POLLING');
+            setScanResults(audit.scanResults as any);
+            setIsScanning(false);
+          }
+        } catch (e) {
+          console.error('❌ PROGRESS POLLING ERROR:', e);
+        }
+      }, 1000); // Poll every 1 second for more responsive updates
       
-      return () => {
-        clearTimeout(delayTimer);
-      };
+      setProgressPollingInterval(interval as unknown as NodeJS.Timeout);
+      return () => clearInterval(interval);
     }
   }, [isScanning, currentAudit?.id]);
 
@@ -541,6 +548,10 @@ export default function SecurityAuditPage() {
       // Start the security scan
       console.log('🚀 Starting security scan...');
       
+      const webhookUrl = typeof window !== 'undefined' ? `${window.location.origin}/api/audit/progress` : undefined;
+      console.log('📡 WEBHOOK URL BEING SENT:', webhookUrl);
+      console.log('📡 WINDOW LOCATION:', typeof window !== 'undefined' ? window.location : 'No window');
+      
       const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/', {
         method: 'POST',
         headers: {
@@ -550,7 +561,7 @@ export default function SecurityAuditPage() {
           repository_url: repositoryUrl,
           github_token: githubToken,
           audit_id: auditId,
-          progress_webhook_url: typeof window !== 'undefined' ? `${window.location.origin}/api/audit/progress` : undefined,
+          progress_webhook_url: webhookUrl,
         }),
       });
 

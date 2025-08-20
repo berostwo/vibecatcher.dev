@@ -4100,6 +4100,8 @@ def security_scan():
             # Fire-and-forget webhook push to frontend as a backup channel
             try:
                 if progress_webhook_url and audit_id:
+                    logger.info(f"📡 SENDING DIRECT WEBHOOK: {progress_webhook_url}")
+                    logger.info(f"📡 WEBHOOK PAYLOAD: {{'auditId': {audit_id}, 'step': {step}, 'progress': {progress}}}")
                     import urllib.request as _req
                     import json as _json
                     req = _req.Request(progress_webhook_url, method='POST')
@@ -4109,9 +4111,21 @@ def security_scan():
                         'step': step,
                         'progress': progress,
                     }).encode('utf-8')
-                    _req.urlopen(req, payload, timeout=2)
+                    logger.info(f"📡 WEBHOOK REQUEST HEADERS: {dict(req.headers)}")
+                    logger.info(f"📡 WEBHOOK REQUEST PAYLOAD: {payload}")
+                    response = _req.urlopen(req, payload, timeout=5)
+                    logger.info(f"📡 WEBHOOK RESPONSE: {response.status} {response.reason}")
+                    response_body = response.read()
+                    logger.info(f"📡 WEBHOOK RESPONSE BODY: {response_body}")
+                else:
+                    logger.warning(f"⚠️ NO WEBHOOK URL OR AUDIT ID: webhook_url={progress_webhook_url}, audit_id={audit_id}")
             except Exception as _e:
-                logger.debug(f"Progress webhook (direct) failed (non-fatal): {_e}")
+                logger.error(f"❌ DIRECT WEBHOOK FAILED: {_e}")
+                logger.error(f"❌ WEBHOOK ERROR TYPE: {type(_e)}")
+                if hasattr(_e, 'code'):
+                    logger.error(f"❌ WEBHOOK HTTP CODE: {_e.code}")
+                if hasattr(_e, 'reason'):
+                    logger.error(f"❌ WEBHOOK REASON: {_e.reason}")
             logger.info(f"📊 DIRECT PROGRESS UPDATE: {step} - {progress}%")
         
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
@@ -4148,6 +4162,8 @@ def security_scan():
                 # Fire-and-forget webhook to frontend to persist progress
                 try:
                     if progress_webhook_url and audit_id:
+                        logger.info(f"📡 SENDING CALLBACK WEBHOOK: {progress_webhook_url}")
+                        logger.info(f"📡 CALLBACK WEBHOOK PAYLOAD: {{'auditId': {audit_id}, 'step': {progress_entry.get('step')}, 'progress': {progress_entry.get('progress')}}}")
                         import urllib.request
                         import json as _json
                         req = urllib.request.Request(progress_webhook_url, method='POST')
@@ -4157,9 +4173,21 @@ def security_scan():
                             'step': progress_entry.get('step'),
                             'progress': progress_entry.get('progress'),
                         }).encode('utf-8')
-                        urllib.request.urlopen(req, payload, timeout=2)
+                        logger.info(f"📡 CALLBACK WEBHOOK REQUEST HEADERS: {dict(req.headers)}")
+                        logger.info(f"📡 CALLBACK WEBHOOK REQUEST PAYLOAD: {payload}")
+                        response = urllib.request.urlopen(req, payload, timeout=5)
+                        logger.info(f"📡 CALLBACK WEBHOOK RESPONSE: {response.status} {response.reason}")
+                        response_body = response.read()
+                        logger.info(f"📡 CALLBACK WEBHOOK RESPONSE BODY: {response_body}")
+                    else:
+                        logger.warning(f"⚠️ NO CALLBACK WEBHOOK URL OR AUDIT ID: webhook_url={progress_webhook_url}, audit_id={audit_id}")
                 except Exception as _e:
-                    logger.debug(f"Progress webhook failed (non-fatal): {_e}")
+                    logger.error(f"❌ CALLBACK WEBHOOK FAILED: {_e}")
+                    logger.error(f"❌ CALLBACK WEBHOOK ERROR TYPE: {type(_e)}")
+                    if hasattr(_e, 'code'):
+                        logger.error(f"❌ CALLBACK WEBHOOK HTTP CODE: {_e.code}")
+                    if hasattr(_e, 'reason'):
+                        logger.error(f"❌ CALLBACK WEBHOOK REASON: {_e.reason}")
             
             scanner.set_progress_callback(progress_callback)
             logger.info(f"📊 PROGRESS CALLBACK SET: {progress_callback}")
