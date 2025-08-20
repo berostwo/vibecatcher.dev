@@ -1128,9 +1128,13 @@ class ChatGPTSecurityScanner:
                     'progress': milestone,
                     'timestamp': datetime.now().isoformat()
                 }
+                logger.info(f"📊 CALLING PROGRESS CALLBACK: {progress_data}")
                 self.progress_callback(progress_data)
+                logger.info(f"📊 PROGRESS CALLBACK COMPLETED")
             except Exception as e:
-                logger.warning(f"Progress callback failed: {e}")
+                logger.error(f"❌ Progress callback failed: {e}")
+        else:
+            logger.warning(f"⚠️ NO PROGRESS CALLBACK SET!")
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
@@ -4123,6 +4127,9 @@ def security_scan():
                     logger.debug(f"Progress webhook failed (non-fatal): {_e}")
             
             scanner.set_progress_callback(progress_callback)
+            logger.info(f"📊 PROGRESS CALLBACK SET: {progress_callback}")
+            logger.info(f"📊 SCANNER HAS CALLBACK: {hasattr(scanner, 'progress_callback')}")
+            logger.info(f"📊 SCANNER CALLBACK VALUE: {getattr(scanner, 'progress_callback', None)}")
             
             # Set a hard timeout for the entire scan
             scan_timeout = 600  # 10 minutes max (Cloud Run timeout is 15 minutes)
