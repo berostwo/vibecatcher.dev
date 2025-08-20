@@ -3,7 +3,7 @@ import sys
 import json
 import asyncio
 import aiohttp
-import tempfile
+# tempfile import removed (was only used for progress tracking)
 import shutil
 import subprocess
 import threading
@@ -20,12 +20,154 @@ from dataclasses import dataclass, asdict
 from collections import OrderedDict
 import urllib.request
 import urllib.error
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn, BarColumn, TextColumn
+from rich.console import Console
+from rich.theme import Theme
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Progress tracking moved to Flask app context to avoid threading issues
+# Create custom purple theme for progress bars
+PROGRESS_THEME = Theme({
+    "progress": "purple",
+    "progress.bar": "purple",
+    "progress.description": "purple",
+    "progress.percentage": "purple",
+    "progress.remaining": "purple",
+    "progress.elapsed": "purple"
+})
+
+class ProgressTracker:
+    """Thread-safe progress tracker using rich.progress with purple theme"""
+    
+    def __init__(self):
+        self.progress_data = {
+            'step': 'Initializing...',
+            'percentage': 0,
+            'elapsed_seconds': 0,
+            'remaining_seconds': None,
+            'total_tasks': 0,
+            'completed_tasks': 0,
+            'timestamp': datetime.now().isoformat()
+        }
+        self.lock = threading.Lock()
+        self.start_time = None
+        self._progress = None
+        self._console = None
+        
+    def start_progress(self, total_tasks: int, initial_step: str = "Starting scan..."):
+        """Initialize progress tracking"""
+        with self.lock:
+            self.start_time = datetime.now()
+            self.progress_data.update({
+                'step': initial_step,
+                'percentage': 0,
+                'elapsed_seconds': 0,
+                'remaining_seconds': None,
+                'total_tasks': total_tasks,
+                'completed_tasks': 0,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # Create rich progress bar
+            self._progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[purple]{task.description}"),
+                BarColumn(bar_width=40, complete_style="purple", finished_style="purple"),
+                TextColumn("[purple]{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                console=Console(theme=PROGRESS_THEME),
+                expand=True
+            )
+            
+            self._progress.start()
+            self._progress.add_task(initial_step, total=total_tasks)
+            logger.info(f"🚀 Progress tracking started: {total_tasks} total tasks")
+    
+    def update_progress(self, step: str, completed_tasks: int = None, advance: int = 1):
+        """Update progress with new step and completion count"""
+        with self.lock:
+            if self._progress is None:
+                logger.warning("⚠️ Progress not started, cannot update")
+                return
+                
+            if completed_tasks is not None:
+                self.progress_data['completed_tasks'] = completed_tasks
+            else:
+                self.progress_data['completed_tasks'] += advance
+                
+            # Calculate percentage
+            if self.progress_data['total_tasks'] > 0:
+                percentage = min(100, (self.progress_data['completed_tasks'] / self.progress_data['total_tasks']) * 100)
+            else:
+                percentage = 0
+                
+            # Calculate time metrics
+            if self.start_time:
+                elapsed = (datetime.now() - self.start_time).total_seconds()
+                self.progress_data['elapsed_seconds'] = elapsed
+                
+                if percentage > 0:
+                    # Estimate remaining time based on current rate
+                    estimated_total = elapsed / (percentage / 100)
+                    remaining = max(0, estimated_total - elapsed)
+                    self.progress_data['remaining_seconds'] = remaining
+                else:
+                    self.progress_data['remaining_seconds'] = None
+            
+            # Update rich progress bar
+            if self._progress.tasks:
+                task = self._progress.tasks[0]
+                self._progress.update(
+                    task.id,
+                    description=step,
+                    completed=self.progress_data['completed_tasks'],
+                    total=self.progress_data['total_tasks']
+                )
+            
+            # Update progress data
+            self.progress_data.update({
+                'step': step,
+                'percentage': round(percentage, 1),
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            logger.info(f"📊 Progress: {step} - {percentage:.1f}% ({self.progress_data['completed_tasks']}/{self.progress_data['total_tasks']})")
+    
+    def get_progress_data(self) -> Dict[str, Any]:
+        """Get current progress data (thread-safe)"""
+        with self.lock:
+            return self.progress_data.copy()
+    
+    def complete_progress(self, final_step: str = "Scan completed"):
+        """Mark progress as complete"""
+        with self.lock:
+            if self._progress:
+                self._progress.update(0, description=final_step, completed=self.progress_data['total_tasks'])
+                self._progress.stop()
+                self._progress = None
+            
+            self.progress_data.update({
+                'step': final_step,
+                'percentage': 100,
+                'completed_tasks': self.progress_data['total_tasks'],
+                'remaining_seconds': 0,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            logger.info(f"✅ Progress completed: {final_step}")
+    
+    def cleanup(self):
+        """Clean up progress resources"""
+        with self.lock:
+            if self._progress:
+                self._progress.stop()
+                self._progress = None
+
+# Global progress tracker instance
+progress_tracker = ProgressTracker()
 
 class DependencyAnalyzer:
     """Analyzes dependencies to eliminate false positives about unused packages"""
@@ -754,7 +896,6 @@ class SecurityReport:
     findings: List[SecurityFinding]
     condensed_findings: List[SecurityFinding]
     condensed_remediations: Dict[str, str]  # rule_id -> remediation prompt
-    master_remediation: str
     scan_duration: float
     timestamp: str
     repository_info: Dict[str, Any]
@@ -990,7 +1131,7 @@ class ChatGPTSecurityScanner:
         self.cache_cleanup_interval = 3600  # Clean up every hour
         
                 # Progress tracking completely removed
-        self._last_milestone_sent = -10
+        # Progress tracking removed
         
         # Security categories for comprehensive coverage
         
@@ -1692,127 +1833,7 @@ class ChatGPTSecurityScanner:
             logger.error(f"❌ Nuclear optimization failed: {e}")
             return {}
 
-    def generate_master_remediation(self, condensed_findings: List[SecurityFinding], scan_context: Dict[str, Any] = None) -> str:
-        """Generate a master remediation plan with phases for all findings"""
-        try:
-            # Group findings by severity
-            critical = [f for f in condensed_findings if f.severity == "Critical"]
-            high = [f for f in condensed_findings if f.severity == "High"]
-            medium = [f for f in condensed_findings if f.severity == "Medium"]
-            low = [f for f in condensed_findings if f.severity == "Low"]
-            
-            # 🚀 FRAMEWORK-AWARE REMEDIATION: Include technology context
-            framework_context = ""
-            if scan_context:
-                framework_info = scan_context.get('framework', {})
-                dependency_info = scan_context.get('dependencies', {})
-                
-                framework_context = f"""
-                
-                **TECHNOLOGY STACK DETECTED**:
-                - Primary Framework: {framework_info.get('primary_framework', 'Unknown')}
-                - Package Manager: {dependency_info.get('package_manager', 'Unknown')}
-                - Security Patterns Found: {', '.join(framework_info.get('security_patterns', []))}
-                - Missing Security Measures: {', '.join(framework_info.get('missing_security', []))}
-                - Framework-Specific Recommendations: {', '.join(framework_info.get('recommendations', []))}
-                
-                **FRAMEWORK-SPECIFIC GUIDANCE**:
-                - Provide solutions appropriate for the detected framework
-                - Use framework-specific security patterns when available
-                - Consider the framework's built-in security features
-                - Avoid suggesting solutions that conflict with the framework
-                """
-            
-            prompt = f"""
-            You are an expert security engineer. Create a comprehensive, phased remediation plan for this application.
-
-            SECURITY FINDINGS SUMMARY:
-            - Critical: {len(critical)} findings
-            - High: {len(high)} findings  
-            - Medium: {len(medium)} findings
-            - Low: {len(low)} findings
-
-            DETAILED FINDINGS:
-            {json.dumps([asdict(f) for f in condensed_findings], indent=2)}
-            {framework_context}
-
-            Create a master remediation plan broken down into clear phases. For each finding, ALWAYS include:
-            
-            **CRITICAL REQUIREMENT**: For every security issue mentioned, you MUST specify:
-            - The exact file path(s) affected
-            - The specific page(s) or component(s) impacted
-            - Line numbers where the vulnerability exists
-            - Which users/roles are affected
-            
-            Example format:
-            ```
-            **Critical: Missing Authorization Checks**
-            - **Files Affected**: `src/app/dashboard/page.tsx` (lines 45-67), `src/components/auth/requireAuth.tsx` (lines 23-45)
-            - **Pages Impacted**: Dashboard page, User settings page, Admin panel
-            - **Users Affected**: All authenticated users, especially admin users
-            - **Fix**: Implement proper role-based access control
-            - **Action**: Add authorization checks in requireAuth function
-            ```
-            
-            PHASE 1: Critical & High Priority (Immediate Action Required)
-            - List specific fixes for Critical and High severity issues
-            - Include exact file paths, line numbers, and affected pages
-            - Specify which users/roles are impacted
-            - Include immediate security patches needed
-            
-            PHASE 2: Medium Priority (Short-term Implementation)
-            - Address medium severity issues with specific file locations
-            - Include affected pages and components
-            - Include testing and validation steps
-            
-            PHASE 3: Low Priority & Security Hardening (Long-term)
-            - Address low severity issues with file paths
-            - Include security best practices implementation
-            - Specify which areas of the codebase need attention
-            
-            PHASE 4: Testing & Validation
-            - Security testing procedures for each specific file
-            - Validation steps for each fix
-            - Test the specific pages and components mentioned
-            
-            PHASE 5: Monitoring & Prevention
-            - Ongoing security measures
-            - Prevention strategies for future issues
-            - Monitor the specific files and pages mentioned
-
-            **IMPORTANT**: Every security finding must include the exact file path, affected pages, and line numbers. This helps developers quickly locate and fix issues.
-            """
-
-            # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
-            api_key_index = self.api_calls_made % len(self.api_keys)
-            selected_api_key = self.api_keys[api_key_index]
-            
-            client = openai.OpenAI(api_key=selected_api_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are an expert security engineer creating phased remediation plans."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=4000,
-                temperature=0.1
-            )
-            
-            # Track token usage for master remediation
-            self.api_calls_made += 1
-            if hasattr(response, 'usage') and response.usage:
-                self.prompt_tokens += response.usage.prompt_tokens
-                self.completion_tokens += response.usage.completion_tokens
-                self.total_tokens_used += response.usage.total_tokens
-                logger.info(f"🔍 Master remediation token usage: {response.usage.total_tokens} tokens (prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})")
-            else:
-                logger.warning(f"⚠️ No token usage data available for master remediation")
-            
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            logger.error(f"Error generating master remediation: {e}")
-            return "Failed to generate master remediation plan."
+    
     
     def calculate_codebase_health(self, condensed_findings: List[SecurityFinding], all_findings: List[SecurityFinding], repo_info: Dict[str, Any]) -> int:
          """Calculate accurate codebase health percentage using reliable algorithm"""
@@ -2069,7 +2090,7 @@ class ChatGPTSecurityScanner:
                         logger.warning(f"🧩 Shard collection failed: {e}")
 
                     all_findings = local_findings + aggregated_findings
-            except Exception as e:
+                except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
             else:
@@ -2122,10 +2143,7 @@ class ChatGPTSecurityScanner:
             
             # Progress tracking removed
             
-            # Generate master remediation plan
-            logger.info(f"🔍 Generating master remediation plan...")
-            master_remediation = self.generate_master_remediation(condensed_findings, scan_context)
-            logger.info(f"✅ Master remediation generated")
+            # Master remediation removed
             
             # PROGRESS TRACKING: Calculate codebase health (EVEN DISTRIBUTION!)
             # Progress tracking removed
@@ -2178,7 +2196,6 @@ class ChatGPTSecurityScanner:
                 findings=all_findings,
                 condensed_findings=condensed_findings,
                 condensed_remediations=condensed_remediations,
-                master_remediation=master_remediation,
                 scan_duration=scan_duration,
                 timestamp=datetime.now().isoformat(),
                 repository_info=repo_info
@@ -2216,9 +2233,8 @@ class ChatGPTSecurityScanner:
             logger.info(f"🎯 Report validation complete")
             logger.info(f"🚀 Scan completed successfully in {scan_duration:.2f}s")
             
-            # Add progress data to report
+            # Progress tracking removed
             report_dict = asdict(report)
-            report_dict['progress_data'] = self.progress_updates
             try:
                 if 'scan_context' in locals() and isinstance(scan_context, dict) and scan_context.get('vulnerable_packages'):
                     report_dict.setdefault('summary', {})
@@ -2482,8 +2498,12 @@ class ChatGPTSecurityScanner:
                 return []
             batch_start_time = datetime.now()
             logger.info(f"📦 SHARD BATCH {batch_num + 1}/{total_batches} (files: {len(batch_items)}) - STARTING")
-            batch_progress = 35 + (batch_num / max(1, total_batches)) * 30
-            self.update_progress(f"Analyzing shard batch {batch_num + 1}/{total_batches}", batch_progress)
+            
+            # Update progress for shard batch processing
+            try:
+                progress_tracker.update_progress(f"Shard batch {batch_num + 1}/{total_batches}", batch_num + 1)
+            except Exception:
+                pass  # Don't let progress tracking break the scan
 
             batch_content = []
             for item in batch_items:
@@ -2606,7 +2626,11 @@ class ChatGPTSecurityScanner:
             batch_start_time = datetime.now()
             logger.info(f"📦 THREAD BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)}) - STARTING")
             
-            # Progress tracking removed
+            # Update progress for batch processing
+            try:
+                progress_tracker.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_num + 1)
+            except Exception:
+                pass  # Don't let progress tracking break the scan
             
             # Build comprehensive batch prompt with content chunking
             batch_content = []
@@ -2809,9 +2833,11 @@ class ChatGPTSecurityScanner:
             batch_start_time = datetime.now()
             logger.info(f"📦 PARALLEL BATCH {batch_num + 1}/{total_batches} (files: {len(batch_files)}) - STARTING")
             
-            # PROGRESS TRACKING: Update batch progress (35-65% - EVEN DISTRIBUTION!)
-            batch_progress = 35 + (batch_num / total_batches) * 30
-            self.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_progress)
+            # Update progress for parallel batch processing
+            try:
+                progress_tracker.update_progress(f"Processing batch {batch_num + 1}/{total_batches}", batch_num + 1)
+            except Exception:
+                pass  # Don't let progress tracking break the scan
             
             # Build comprehensive batch prompt with content chunking
             batch_content = []
@@ -3679,14 +3705,8 @@ app = Flask(__name__)
 # Enable CORS for all routes
 CORS(app, origins=['*'], methods=['GET', 'POST', 'OPTIONS'])
 
-# Process-safe progress tracking using a temporary file
-import tempfile
-import os
+# Progress tracking completely removed
 
-# Create a temporary file for progress tracking that works across processes
-# Progress file functions completely removed
-
-# App-level progress tracking to avoid threading issues (kept for compatibility)
 # Progress tracking completely removed
 
 # Add CORS headers
@@ -3723,7 +3743,7 @@ def handle_options():
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
-# Global variable to store current scan progress (already declared at top)
+# Progress tracking completely removed
 
 @app.route('/', methods=['GET'])
 def health_check():
@@ -3750,7 +3770,70 @@ def health_check():
         'health_checks': checks
     })
 
-# Progress endpoint completely removed
+@app.route('/progress', methods=['GET'])
+def get_progress():
+    """Get current scan progress for real-time updates"""
+    try:
+        progress_data = progress_tracker.get_progress_data()
+        
+        if not progress_data or progress_data['total_tasks'] == 0:
+            return jsonify({
+                'status': 'no_scan_running',
+                'message': 'No security scan is currently running'
+            })
+        
+        # Format time remaining for frontend
+        if progress_data['remaining_seconds'] is not None:
+            remaining_minutes = int(progress_data['remaining_seconds'] // 60)
+            remaining_seconds = int(progress_data['remaining_seconds'] % 60)
+            if remaining_minutes > 0:
+                time_remaining = f"{remaining_minutes}m {remaining_seconds}s"
+            else:
+                time_remaining = f"{remaining_seconds}s"
+        else:
+            time_remaining = "Calculating..."
+        
+        # Format elapsed time
+        elapsed_minutes = int(progress_data['elapsed_seconds'] // 60)
+        elapsed_seconds = int(progress_data['elapsed_seconds'] % 60)
+        if elapsed_minutes > 0:
+            elapsed_time = f"{elapsed_minutes}m {elapsed_seconds}s"
+        else:
+            elapsed_time = f"{elapsed_seconds}s"
+        
+        return jsonify({
+            'status': 'scan_running',
+            'step': progress_data['step'],
+            'percentage': progress_data['percentage'],
+            'elapsed_time': elapsed_time,
+            'time_remaining': time_remaining,
+            'completed_tasks': progress_data['completed_tasks'],
+            'total_tasks': progress_data['total_tasks'],
+            'timestamp': progress_data['timestamp']
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Progress endpoint error: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to get progress data'
+        }), 500
+
+@app.route('/progress/reset', methods=['POST'])
+def reset_progress():
+    """Reset progress tracker for new scan"""
+    try:
+        progress_tracker.cleanup()
+        return jsonify({
+            'status': 'success',
+            'message': 'Progress tracker reset successfully'
+        })
+    except Exception as e:
+        logger.error(f"❌ Progress reset error: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to reset progress tracker'
+        }), 500
 
 @app.route('/cache-stats', methods=['GET'])
 def get_cache_statistics():
@@ -3864,7 +3947,7 @@ def security_scan():
         repo_url = data.get('repository_url')
         github_token = data.get('github_token')
         audit_id = data.get('audit_id')
-        progress_webhook_url = data.get('progress_webhook_url')
+        # Progress tracking removed
         
         # Input validation
         if not repo_url:
@@ -3887,98 +3970,29 @@ def security_scan():
         
         logger.info(f"🚀 Starting security scan for: {repo_url}")
         
-        # Reset app-level progress for new scan
-        initial_progress = {
-            'step': 'Starting scan...',
-            'progress': 0,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        # Write initial progress to file for cross-process access
-        write_progress_to_file(initial_progress)
-        
-        # Also update app context for compatibility
-        with app.progress_lock:
-            app.current_scan_progress = initial_progress
-            
-        logger.info(f"📊 INITIAL PROGRESS SET: {initial_progress}")
-        logger.info(f"📊 INITIAL PROGRESS THREAD: {threading.current_thread().name}")
-        logger.info(f"📊 PROGRESS FILE CREATED: {PROGRESS_FILE}")
-        
-        # CRITICAL FIX: Add direct progress updates throughout the scan
-        def update_scan_progress(step: str, progress: float):
-            """Direct progress update that bypasses the callback system and pushes to webhook."""
-            progress_data = {
-                'step': step,
-                'progress': progress,
-                    'timestamp': datetime.now().isoformat()
-                }
-            # Write to process-safe file so /progress can read it
-            write_progress_to_file(progress_data)
-            # Update app context for compatibility
-            try:
-                with app.progress_lock:
-                    app.current_scan_progress = progress_data
-            except Exception:
-                pass
-            # Fire-and-forget webhook push to frontend as a backup channel
-            try:
-                if progress_webhook_url and audit_id:
-                    logger.info(f"📡 SENDING DIRECT WEBHOOK: {progress_webhook_url}")
-                    logger.info(f"📡 WEBHOOK PAYLOAD: {{'auditId': {audit_id}, 'step': {step}, 'progress': {progress}}}")
-                    import urllib.request as _req
-                    import json as _json
-                    req = _req.Request(progress_webhook_url, method='POST')
-                    req.add_header('Content-Type', 'application/json')
-                    payload = _json.dumps({
-                        'auditId': audit_id,
-                        'step': step,
-                        'progress': progress,
-                    }).encode('utf-8')
-                    logger.info(f"📡 WEBHOOK REQUEST HEADERS: {dict(req.headers)}")
-                    logger.info(f"📡 WEBHOOK REQUEST PAYLOAD: {payload}")
-                    response = _req.urlopen(req, payload, timeout=5)
-                    logger.info(f"📡 WEBHOOK RESPONSE: {response.status} {response.reason}")
-                    response_body = response.read()
-                    logger.info(f"📡 WEBHOOK RESPONSE BODY: {response_body}")
-                else:
-                    logger.warning(f"⚠️ NO WEBHOOK URL OR AUDIT ID: webhook_url={progress_webhook_url}, audit_id={audit_id}")
-            except Exception as _e:
-                logger.error(f"❌ DIRECT WEBHOOK FAILED: {_e}")
-                logger.error(f"❌ WEBHOOK ERROR TYPE: {type(_e)}")
-                if hasattr(_e, 'code'):
-                    logger.error(f"❌ WEBHOOK HTTP CODE: {_e.code}")
-                if hasattr(_e, 'reason'):
-                    logger.error(f"❌ WEBHOOK REASON: {_e.reason}")
-            logger.info(f"📊 DIRECT PROGRESS UPDATE: {step} - {progress}%")
-        
-        # CRITICAL FIX: Set initial progress to let frontend know scan has started
-        update_scan_progress("Starting scan...", 0)
-        logger.info(f"📊 INITIAL PROGRESS SET VIA UPDATE FUNCTION")
-        
-        # CRITICAL FIX: Set global variables for the global progress callback
-        global GLOBAL_PROGRESS_WEBHOOK_URL, GLOBAL_AUDIT_ID
-        GLOBAL_PROGRESS_WEBHOOK_URL = progress_webhook_url
-        GLOBAL_AUDIT_ID = audit_id
-        logger.info(f"📊 GLOBAL VARIABLES SET: webhook_url={GLOBAL_PROGRESS_WEBHOOK_URL}, audit_id={GLOBAL_AUDIT_ID}")
+        # Progress tracking removed
         
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
             scanner = ChatGPTSecurityScanner()
             
-            # CRITICAL FIX: Use global progress callback instead of local one
-            scanner.set_progress_callback(global_progress_callback)
-            logger.info(f"📊 GLOBAL PROGRESS CALLBACK SET: {global_progress_callback}")
-            logger.info(f"📊 SCANNER HAS CALLBACK: {hasattr(scanner, 'progress_callback')}")
-            logger.info(f"📊 SCANNER CALLBACK VALUE: {getattr(scanner, 'progress_callback', None)}")
+            # Initialize progress tracking
+            total_batches = len(file_batches) if 'file_batches' in locals() else 1
+            
+            # Reset progress tracker for new scan
+            progress_tracker.cleanup()
+            progress_tracker.start_progress(total_batches, "Initializing security scan...")
             
             # Set a hard timeout for the entire scan
             scan_timeout = 600  # 10 minutes max (Cloud Run timeout is 15 minutes)
             
             logger.info(f"🚀 Starting scan with {scan_timeout}s timeout protection")
             
-            # CRITICAL FIX: Add progress updates at key scan milestones
-            update_scan_progress("Scan in progress", 50)
+            # Update progress for scan start
+            progress_tracker.update_progress("Starting repository analysis...", 0)
+            
+            # Update progress for scan execution
+            progress_tracker.update_progress("Executing security analysis...", 1)
             
             # Run with timeout protection using asyncio.run()
             logger.info(f"🚀 EXECUTING SCAN: scanner.scan_repository()")
@@ -3988,34 +4002,24 @@ def security_scan():
             ))
             logger.info(f"🚀 SCAN EXECUTION COMPLETED: {result}")
             
-            # CRITICAL FIX: Update progress when scan completes
-            update_scan_progress("Scan analysis complete", 90)
+            # Update progress for scan completion
+            progress_tracker.update_progress("Finalizing scan results...", 2)
             
             # Check if scan failed
             if 'error' in result:
                 logger.error(f"Scan failed: {result['error']}")
                 return jsonify(result), 500
             
-            # Add progress data to result
-            # Progress data is already included in the result from scan_repository
-            
             logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
             
-            # Reset app-level progress when scan completes
-            app.current_scan_progress = None
-            
-            # Also remove progress file when scan completes
-            try:
-                if os.path.exists(PROGRESS_FILE):
-                    os.remove(PROGRESS_FILE)
-                    logger.info(f"📊 PROGRESS FILE CLEANED UP: {PROGRESS_FILE}")
-            except Exception as e:
-                logger.error(f"❌ Failed to cleanup progress file: {e}")
+            # Complete progress tracking
+            progress_tracker.complete_progress("Scan completed successfully!")
             
             return jsonify(result)
             
         except asyncio.TimeoutError:
             logger.error(f"❌ Scan timed out after {scan_timeout}s")
+            progress_tracker.complete_progress("Scan timed out")
             return jsonify({
                 'error': f'Scan timed out after {scan_timeout}s - repository too large or complex',
                 'error_type': 'TimeoutError',
@@ -4024,6 +4028,7 @@ def security_scan():
             }), 408
         except Exception as scan_error:
             logger.error(f"❌ Scan execution error: {scan_error}")
+            progress_tracker.complete_progress("Scan failed with error")
             return jsonify({
                 'error': str(scan_error),
                 'error_type': type(scan_error).__name__,
@@ -4036,6 +4041,10 @@ def security_scan():
 
 if __name__ == "__main__":
     try:
+        # Cleanup progress tracker on shutdown
+        import atexit
+        atexit.register(progress_tracker.cleanup)
+        
         # Read port from environment variable (Cloud Run requirement)
         port = int(os.environ.get('PORT', 8080))
         logger.info(f"🚀 NUCLEAR OPTIMIZED ChatGPT Security Scanner starting on port {port}")
