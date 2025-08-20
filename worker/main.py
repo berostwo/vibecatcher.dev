@@ -3813,23 +3813,52 @@ PROGRESS_LOCK = threading.Lock()
 def write_progress_to_file(progress_data):
     """Write progress data to file for cross-process access"""
     try:
+        logger.info(f"📊 ATTEMPTING TO WRITE PROGRESS: {progress_data}")
+        logger.info(f"📊 PROGRESS FILE PATH: {PROGRESS_FILE}")
+        logger.info(f"📊 CURRENT WORKING DIRECTORY: {os.getcwd()}")
+        logger.info(f"📊 TEMP DIRECTORY: {tempfile.gettempdir()}")
+        
         with PROGRESS_LOCK:
             with open(PROGRESS_FILE, 'w') as f:
                 json.dump(progress_data, f)
-        logger.info(f"📊 PROGRESS WRITTEN TO FILE: {progress_data}")
+        
+        # Verify the file was actually written
+        if os.path.exists(PROGRESS_FILE):
+            with open(PROGRESS_FILE, 'r') as f:
+                written_data = json.load(f)
+            logger.info(f"📊 PROGRESS WRITTEN TO FILE: {progress_data}")
+            logger.info(f"📊 FILE CONTENTS VERIFIED: {written_data}")
+            logger.info(f"📊 FILE SIZE: {os.path.getsize(PROGRESS_FILE)} bytes")
+        else:
+            logger.error(f"❌ PROGRESS FILE WAS NOT CREATED: {PROGRESS_FILE}")
+            
     except Exception as e:
         logger.error(f"❌ Failed to write progress to file: {e}")
+        logger.error(f"❌ Exception type: {type(e)}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
 
 def read_progress_from_file():
     """Read progress data from file for cross-process access"""
     try:
+        logger.info(f"📊 ATTEMPTING TO READ PROGRESS FILE: {PROGRESS_FILE}")
+        logger.info(f"📊 FILE EXISTS: {os.path.exists(PROGRESS_FILE)}")
+        
         if not os.path.exists(PROGRESS_FILE):
+            logger.info(f"📊 PROGRESS FILE DOES NOT EXIST")
             return None
+            
+        logger.info(f"📊 PROGRESS FILE EXISTS, READING CONTENTS...")
         with PROGRESS_LOCK:
             with open(PROGRESS_FILE, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+        logger.info(f"📊 SUCCESSFULLY READ PROGRESS DATA: {data}")
+        return data
     except Exception as e:
         logger.error(f"❌ Failed to read progress from file: {e}")
+        logger.error(f"❌ Exception type: {type(e)}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
         return None
 
 # App-level progress tracking to avoid threading issues (kept for compatibility)
@@ -4128,6 +4157,10 @@ def security_scan():
                     logger.error(f"❌ WEBHOOK REASON: {_e.reason}")
             logger.info(f"📊 DIRECT PROGRESS UPDATE: {step} - {progress}%")
         
+        # CRITICAL FIX: Set initial progress to let frontend know scan has started
+        update_scan_progress("Starting scan...", 0)
+        logger.info(f"📊 INITIAL PROGRESS SET VIA UPDATE FUNCTION")
+        
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
             scanner = ChatGPTSecurityScanner()
@@ -4173,12 +4206,12 @@ def security_scan():
                             'step': progress_entry.get('step'),
                             'progress': progress_entry.get('progress'),
                         }).encode('utf-8')
-                        logger.info(f"📡 CALLBACK WEBHOOK REQUEST HEADERS: {dict(req.headers)}")
-                        logger.info(f"📡 CALLBACK WEBHOOK REQUEST PAYLOAD: {payload}")
+                        logger.info(f"📡 WEBHOOK REQUEST HEADERS: {dict(req.headers)}")
+                        logger.info(f"📡 WEBHOOK REQUEST PAYLOAD: {payload}")
                         response = urllib.request.urlopen(req, payload, timeout=5)
-                        logger.info(f"📡 CALLBACK WEBHOOK RESPONSE: {response.status} {response.reason}")
+                        logger.info(f"📡 WEBHOOK RESPONSE: {response.status} {response.reason}")
                         response_body = response.read()
-                        logger.info(f"📡 CALLBACK WEBHOOK RESPONSE BODY: {response_body}")
+                        logger.info(f"📡 WEBHOOK RESPONSE BODY: {response_body}")
                     else:
                         logger.warning(f"⚠️ NO CALLBACK WEBHOOK URL OR AUDIT ID: webhook_url={progress_webhook_url}, audit_id={audit_id}")
                 except Exception as _e:
