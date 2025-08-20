@@ -56,7 +56,6 @@ interface ScanResults {
   findings: SecurityFinding[];
   condensed_findings: SecurityFinding[];
   condensed_remediations: { [key: string]: string };
-  master_remediation: string;
   scan_duration: number;
   timestamp: string;
   repository_info: {
@@ -127,7 +126,7 @@ const getSeverityStyles = (severity: string) => {
   }
 };
 
-const AuditReportTemplate = ({ results, masterRemediation }: { 
+const AuditReportTemplate = ({ results }: { 
   results: {
     repoName: string;
     summary: {
@@ -148,7 +147,6 @@ const AuditReportTemplate = ({ results, masterRemediation }: {
       occurrences: number;
     }>;
   };
-  masterRemediation: string;
 }) => {
   // AUTO-COLLAPSE: Track which card is currently expanded
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
@@ -210,23 +208,7 @@ const AuditReportTemplate = ({ results, masterRemediation }: {
               <p className="text-4xl font-bold text-green-500">{results.summary.low}</p>
             </div>
           </div>
-          <Accordion type="single" collapsible className="w-full">
-            {/* Master Prompt section removed to reduce API usage */}
-            <AccordionItem value="master-remediation" className="border border-foreground/20 bg-foreground/5 rounded-lg shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-4 py-3">
-                <div className="flex items-center gap-2 text-foreground">
-                  <Code className="mr-2 h-4 w-4" /> View Master Remediation Plan
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-4 pb-4">
-                <div className="bg-black/80 rounded-md p-3 text-left">
-                  <pre className="text-xs text-green-300 whitespace-pre-wrap font-code text-left">
-                    {masterRemediation || "Master remediation plan will be generated for all findings."}
-                  </pre>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
+          {/* Master remediation UI removed */}
         </div>
       </CardHeader>
       <CardContent>
@@ -301,9 +283,11 @@ export default function SecurityAuditPage() {
   const [scanResults, setScanResults] = useState<ScanResults | null>(null);
   const [userGitHubUsername, setUserGitHubUsername] = useState<string>('');
   
-  // SIMPLE PROGRESS TRACKING - No more complex state
+  // SIMPLE PROGRESS TRACKING - now includes time remaining
   const [currentStep, setCurrentStep] = useState<string>('Initializing scan...');
   const [currentProgress, setCurrentProgress] = useState<number>(0);
+  const [elapsedTime, setElapsedTime] = useState<string>('0s');
+  const [timeRemaining, setTimeRemaining] = useState<string>('Calculating...');
   
   // PERSISTENT AUDIT STATE: Track current audit across page refreshes
   const [currentAudit, setCurrentAudit] = useState<SecurityAudit | null>(null);
@@ -347,16 +331,18 @@ export default function SecurityAuditPage() {
                 const progressData = await response.json();
                 console.log('📡 WORKER PROGRESS DATA:', progressData);
                 
-                if (progressData && progressData.step && typeof progressData.progress === 'number') {
+                if (progressData && progressData.step && (typeof progressData.percentage === 'number' || typeof progressData.progress === 'number')) {
                   console.log('✅ WORKER PROGRESS UPDATE:', progressData);
                   setCurrentStep(progressData.step);
-                  setCurrentProgress(progressData.progress);
+                  setCurrentProgress(typeof progressData.percentage === 'number' ? progressData.percentage : progressData.progress);
+                  if (progressData.elapsed_time) setElapsedTime(progressData.elapsed_time);
+                  if (progressData.time_remaining) setTimeRemaining(progressData.time_remaining);
                   
                   // Also update Firestore for future polling
                   try {
                     await FirebaseAuditService.updateAuditProgress(currentAudit.id, {
                       step: progressData.step,
-                      progress: progressData.progress,
+                      progress: typeof progressData.percentage === 'number' ? progressData.percentage : progressData.progress,
                       timestamp: new Date().toISOString(),
                     });
                     console.log('💾 UPDATED FIRESTORE WITH WORKER PROGRESS');
@@ -730,18 +716,22 @@ export default function SecurityAuditPage() {
             </Button>
           </div>
           
-          {/* SIMPLE PROGRESS BAR - No more complex logic */}
+          {/* SIMPLE PROGRESS BAR with time remaining */}
           {isScanning && (
             <div className="space-y-3 pt-4">
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span className="font-medium">{currentStep}</span>
-                <span className="font-mono">{currentProgress}%</span>
+                <span className="font-mono">ETA: {timeRemaining}</span>
               </div>
               <div className="w-full bg-muted rounded-full h-3">
                 <div 
                   className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
                   style={{ width: `${currentProgress}%` }}
                 />
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span className="font-mono">Elapsed: {elapsedTime}</span>
+                <span className="font-mono">{Math.round(currentProgress)}%</span>
               </div>
             </div>
           )}
@@ -777,7 +767,6 @@ export default function SecurityAuditPage() {
               };
             })
           }}
-          masterRemediation={scanResults.master_remediation}
         />
       )}
     </div>

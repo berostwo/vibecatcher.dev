@@ -3,7 +3,7 @@ import sys
 import json
 import asyncio
 import aiohttp
-# tempfile import removed (was only used for progress tracking)
+import tempfile
 import shutil
 import subprocess
 import threading
