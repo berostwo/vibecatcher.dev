@@ -70,6 +70,20 @@ class ProgressTracker:
                 'timestamp': datetime.now().isoformat()
             })
             
+            # Update global scan state for cross-thread access
+            global current_scan_state, current_scan_lock
+            with current_scan_lock:
+                current_scan_state.update({
+                    'is_running': True,
+                    'step': initial_step,
+                    'percentage': 0,
+                    'total_tasks': total_tasks,
+                    'completed_tasks': 0,
+                    'start_time': self.start_time,
+                    'elapsed_seconds': 0,
+                    'remaining_seconds': None
+                })
+            
             # Create rich progress bar
             self._progress = Progress(
                 SpinnerColumn(),
@@ -134,6 +148,17 @@ class ProgressTracker:
                 'timestamp': datetime.now().isoformat()
             })
             
+            # Update global scan state for cross-thread access
+            global current_scan_state, current_scan_lock
+            with current_scan_lock:
+                current_scan_state.update({
+                    'step': step,
+                    'percentage': round(percentage, 1),
+                    'completed_tasks': self.progress_data['completed_tasks'],
+                    'elapsed_seconds': self.progress_data['elapsed_seconds'],
+                    'remaining_seconds': self.progress_data['remaining_seconds']
+                })
+            
             logger.info(f"📊 Progress: {step} - {percentage:.1f}% ({self.progress_data['completed_tasks']}/{self.progress_data['total_tasks']})")
     
     def get_progress_data(self) -> Dict[str, Any]:
@@ -157,6 +182,16 @@ class ProgressTracker:
                 'timestamp': datetime.now().isoformat()
             })
             
+            # Update global scan state for cross-thread access
+            global current_scan_state, current_scan_lock
+            with current_scan_lock:
+                current_scan_state.update({
+                    'is_running': False,
+                    'step': final_step,
+                    'percentage': 100,
+                    'completed_tasks': self.progress_data['total_tasks']
+                })
+            
             logger.info(f"✅ Progress completed: {final_step}")
     
     def cleanup(self):
@@ -168,6 +203,19 @@ class ProgressTracker:
 
 # Global progress tracker instance
 progress_tracker = ProgressTracker()
+
+# Global scan state for cross-thread access
+current_scan_state = {
+    'is_running': False,
+    'step': 'No scan running',
+    'percentage': 0,
+    'total_tasks': 0,
+    'completed_tasks': 0,
+    'start_time': None,
+    'elapsed_seconds': 0,
+    'remaining_seconds': None
+}
+current_scan_lock = threading.Lock()
 
 class DependencyAnalyzer:
     """Analyzes dependencies to eliminate false positives about unused packages"""
@@ -3774,18 +3822,27 @@ def health_check():
 def get_progress():
     """Get current scan progress for real-time updates"""
     try:
-        progress_data = progress_tracker.get_progress_data()
+        # Use global scan state for cross-thread access
+        global current_scan_state, current_scan_lock
         
-        if not progress_data or progress_data['total_tasks'] == 0:
+        with current_scan_lock:
+            scan_state = current_scan_state.copy()
+        
+        # DEBUG: Log what we're getting from global state
+        logger.info(f"📊 PROGRESS ENDPOINT: global_scan_state = {scan_state}")
+        logger.info(f"📊 PROGRESS ENDPOINT: is_running = {scan_state.get('is_running', 'NOT_FOUND')}")
+        
+        if not scan_state.get('is_running', False):
+            logger.warning(f"📊 PROGRESS ENDPOINT: Returning no_scan_running - is_running: {scan_state.get('is_running', 'NOT_FOUND')}")
             return jsonify({
                 'status': 'no_scan_running',
                 'message': 'No security scan is currently running'
             })
         
         # Format time remaining for frontend
-        if progress_data['remaining_seconds'] is not None:
-            remaining_minutes = int(progress_data['remaining_seconds'] // 60)
-            remaining_seconds = int(progress_data['remaining_seconds'] % 60)
+        if scan_state.get('remaining_seconds') is not None:
+            remaining_minutes = int(scan_state['remaining_seconds'] // 60)
+            remaining_seconds = int(scan_state['remaining_seconds'] % 60)
             if remaining_minutes > 0:
                 time_remaining = f"{remaining_minutes}m {remaining_seconds}s"
             else:
@@ -3794,8 +3851,8 @@ def get_progress():
             time_remaining = "Calculating..."
         
         # Format elapsed time
-        elapsed_minutes = int(progress_data['elapsed_seconds'] // 60)
-        elapsed_seconds = int(progress_data['elapsed_seconds'] % 60)
+        elapsed_minutes = int(scan_state.get('elapsed_seconds', 0) // 60)
+        elapsed_seconds = int(scan_state.get('elapsed_seconds', 0) % 60)
         if elapsed_minutes > 0:
             elapsed_time = f"{elapsed_minutes}m {elapsed_seconds}s"
         else:
@@ -3803,13 +3860,13 @@ def get_progress():
         
         return jsonify({
             'status': 'scan_running',
-            'step': progress_data['step'],
-            'percentage': progress_data['percentage'],
+            'step': scan_state.get('step', 'Unknown'),
+            'percentage': scan_state.get('percentage', 0),
             'elapsed_time': elapsed_time,
             'time_remaining': time_remaining,
-            'completed_tasks': progress_data['completed_tasks'],
-            'total_tasks': progress_data['total_tasks'],
-            'timestamp': progress_data['timestamp']
+            'completed_tasks': scan_state.get('completed_tasks', 0),
+            'total_tasks': scan_state.get('total_tasks', 0),
+            'timestamp': datetime.now().isoformat()
         })
         
     except Exception as e:
