@@ -4081,14 +4081,49 @@ def security_scan():
         logger.info(f"📊 INITIAL PROGRESS THREAD: {threading.current_thread().name}")
         logger.info(f"📊 PROGRESS FILE CREATED: {PROGRESS_FILE}")
         
+        # CRITICAL FIX: Add direct progress updates throughout the scan
+        def update_scan_progress(step: str, progress: float):
+            """Direct progress update that bypasses the callback system and pushes to webhook."""
+            progress_data = {
+                'step': step,
+                'progress': progress,
+                'timestamp': datetime.now().isoformat()
+            }
+            # Write to process-safe file so /progress can read it
+            write_progress_to_file(progress_data)
+            # Update app context for compatibility
+            try:
+                with app.progress_lock:
+                    app.current_scan_progress = progress_data
+            except Exception:
+                pass
+            # Fire-and-forget webhook push to frontend as a backup channel
+            try:
+                if progress_webhook_url and audit_id:
+                    import urllib.request as _req
+                    import json as _json
+                    req = _req.Request(progress_webhook_url, method='POST')
+                    req.add_header('Content-Type', 'application/json')
+                    payload = _json.dumps({
+                        'auditId': audit_id,
+                        'step': step,
+                        'progress': progress,
+                    }).encode('utf-8')
+                    _req.urlopen(req, payload, timeout=2)
+            except Exception as _e:
+                logger.debug(f"Progress webhook (direct) failed (non-fatal): {_e}")
+            logger.info(f"📊 DIRECT PROGRESS UPDATE: {step} - {progress}%")
+        
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
             scanner = ChatGPTSecurityScanner()
             
-            # PROGRESS TRACKING: Set up progress callback for real-time updates
+            # CRITICAL FIX: Direct progress updates instead of callback system
+            update_scan_progress("Starting security analysis", 35)
+            
+            # PROGRESS TRACKING: Set up progress callback for real-time updates (keeping for compatibility)
             progress_updates = []
             def progress_callback(progress_data):
-                
                 progress_updates.append(progress_data)
                 logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
                 logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
@@ -4136,11 +4171,17 @@ def security_scan():
             
             logger.info(f"🚀 Starting scan with {scan_timeout}s timeout protection")
             
+            # CRITICAL FIX: Add progress updates at key scan milestones
+            update_scan_progress("Scan in progress", 50)
+            
             # Run with timeout protection using asyncio.run()
             result = asyncio.run(asyncio.wait_for(
                 scanner.scan_repository(repo_url, github_token),
                 timeout=scan_timeout
             ))
+            
+            # CRITICAL FIX: Update progress when scan completes
+            update_scan_progress("Scan analysis complete", 90)
             
             # Check if scan failed
             if 'error' in result:

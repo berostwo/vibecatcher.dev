@@ -355,6 +355,16 @@ export default function SecurityAuditPage() {
                 }
               } else if (progressData.status === 'no_scan_running') {
                 console.log('⚠️ No scan running on worker');
+                // Fallback: read last persisted progress from Firestore if available
+                try {
+                  const activeAudit = await FirebaseAuditService.getActiveAudit(user!.uid);
+                  if (activeAudit?.progress) {
+                    setCurrentStep(activeAudit.progress.step);
+                    setCurrentProgress(activeAudit.progress.progress);
+                  }
+                } catch (e) {
+                  // ignore
+                }
               } else {
                 console.log('⚠️ Invalid progress data format:', progressData);
               }
