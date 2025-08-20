@@ -322,50 +322,55 @@ export default function SecurityAuditPage() {
   // REAL PROGRESS POLLING: Poll worker for actual progress updates
   useEffect(() => {
     if (isScanning && currentAudit?.id) {
-      // Start polling the worker for real progress
-      const interval = setInterval(async () => {
-        try {
-          console.log('🔄 POLLING WORKER FOR PROGRESS...');
-          // Poll the worker's progress endpoint
-          const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
-          console.log('📡 WORKER RESPONSE STATUS:', response.status);
-          
-          if (response.ok) {
-            const progressData = await response.json();
-            console.log('📊 WORKER PROGRESS DATA:', progressData);
+      // DELAY POLLING: Wait 3 seconds for scan request to reach worker
+      const delayTimer = setTimeout(() => {
+        console.log('🚀 STARTING PROGRESS POLLING AFTER DELAY...');
+        
+        // Start polling the worker for real progress
+        const interval = setInterval(async () => {
+          try {
+            console.log('🔄 POLLING WORKER FOR PROGRESS...');
+            // Poll the worker's progress endpoint
+            const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+            console.log('📡 WORKER RESPONSE STATUS:', response.status);
             
-            if (progressData && progressData.step && typeof progressData.progress === 'number') {
-              console.log('✅ VALID PROGRESS UPDATE:', progressData);
-              setCurrentStep(progressData.step);
-              setCurrentProgress(progressData.progress);
+            if (response.ok) {
+              const progressData = await response.json();
+              console.log('📊 WORKER PROGRESS DATA:', progressData);
               
-              // Also update Firebase audit progress
-              try {
-                await FirebaseAuditService.updateAuditProgress(currentAudit.id, {
-                  step: progressData.step,
-                  progress: progressData.progress,
-                  timestamp: new Date().toISOString(),
-                });
-              } catch (error) {
-                console.warn('Failed to update Firebase progress:', error);
+              if (progressData && progressData.step && typeof progressData.progress === 'number') {
+                console.log('✅ VALID PROGRESS UPDATE:', progressData);
+                setCurrentStep(progressData.step);
+                setCurrentProgress(progressData.progress);
+                
+                // Also update Firebase audit progress
+                try {
+                  await FirebaseAuditService.updateAuditProgress(currentAudit.id, {
+                    step: progressData.step,
+                    progress: progressData.progress,
+                    timestamp: new Date().toISOString(),
+                  });
+                } catch (error) {
+                  console.warn('Failed to update Firebase progress:', error);
+                }
+              } else if (progressData.status === 'no_scan_running') {
+                console.log('⚠️ No scan running on worker');
+              } else {
+                console.log('⚠️ Invalid progress data format:', progressData);
               }
-            } else if (progressData.status === 'no_scan_running') {
-              console.log('⚠️ No scan running on worker');
             } else {
-              console.log('⚠️ Invalid progress data format:', progressData);
+              console.error('❌ WORKER RESPONSE ERROR:', response.status, response.statusText);
             }
-          } else {
-            console.error('❌ WORKER RESPONSE ERROR:', response.status, response.statusText);
+          } catch (error) {
+            console.error('❌ PROGRESS POLLING FAILED:', error);
           }
-        } catch (error) {
-          console.error('❌ PROGRESS POLLING FAILED:', error);
-        }
-      }, 2000); // Poll every 2 seconds
-      
-      setProgressPollingInterval(interval);
+        }, 2000); // Poll every 2 seconds
+        
+        setProgressPollingInterval(interval);
+      }, 3000); // Wait 3 seconds before starting to poll
       
       return () => {
-        if (interval) clearInterval(interval);
+        clearTimeout(delayTimer);
       };
     }
   }, [isScanning, currentAudit?.id]);

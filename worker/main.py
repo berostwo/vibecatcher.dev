@@ -3800,6 +3800,7 @@ CORS(app, origins=['*'], methods=['GET', 'POST', 'OPTIONS'])
 
 # App-level progress tracking to avoid threading issues
 app.current_scan_progress = None
+app.progress_lock = threading.Lock()
 
 # Add CORS headers
 @app.after_request
@@ -3872,23 +3873,27 @@ def get_progress():
     logger.info(f"📊 PROGRESS ENDPOINT: App variable ID = {id(app.current_scan_progress)}")
     logger.info(f"📊 PROGRESS ENDPOINT: All threads: {[t.name for t in threading.enumerate()]}")
     
-    if app.current_scan_progress is None:
-        logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
-        return jsonify({
-            'status': 'no_scan_running',
-            'message': 'No security scan is currently running'
-        })
-    
-    # Ensure we have valid progress data
-    if not isinstance(app.current_scan_progress, dict) or 'step' not in app.current_scan_progress or 'progress' not in app.current_scan_progress:
-        logger.warning(f"📊 PROGRESS ENDPOINT: Invalid progress data format: {app.current_scan_progress}")
-        return jsonify({
-            'status': 'error',
-            'message': 'Invalid progress data format'
-        }), 500
-    
-    logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {app.current_scan_progress}")
-    return jsonify(app.current_scan_progress)
+    # CRITICAL FIX: Use lock to safely read progress
+    with app.progress_lock:
+        current_progress = app.current_scan_progress
+        
+        if current_progress is None:
+            logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
+            return jsonify({
+                'status': 'no_scan_running',
+                'message': 'No security scan is currently running'
+            })
+        
+        # Ensure we have valid progress data
+        if not isinstance(current_progress, dict) or 'step' not in current_progress or 'progress' not in current_progress:
+            logger.warning(f"📊 PROGRESS ENDPOINT: Invalid progress data format: {current_progress}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid progress data format'
+            }), 500
+        
+        logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {current_progress}")
+        return jsonify(current_progress)
 
 @app.route('/cache-stats', methods=['GET'])
 def get_cache_statistics():
@@ -4026,11 +4031,12 @@ def security_scan():
         logger.info(f"🚀 Starting security scan for: {repo_url}")
         
         # Reset app-level progress for new scan
-        app.current_scan_progress = {
-            'step': 'Starting scan...',
-            'progress': 0,
-            'timestamp': datetime.now().isoformat()
-        }
+        with app.progress_lock:
+            app.current_scan_progress = {
+                'step': 'Starting scan...',
+                'progress': 0,
+                'timestamp': datetime.now().isoformat()
+            }
         logger.info(f"📊 INITIAL PROGRESS SET: {app.current_scan_progress}")
         logger.info(f"📊 INITIAL PROGRESS THREAD: {threading.current_thread().name}")
         
@@ -4046,12 +4052,13 @@ def security_scan():
                 logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
                 logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
                 
-                # Store current progress in app context for real-time access
-                app.current_scan_progress = {
-                    'step': progress_data.get('step', 'Unknown'),
-                    'progress': progress_data.get('progress', 0),
-                    'timestamp': datetime.now().isoformat()
-                }
+                # CRITICAL FIX: Use threading.Lock to safely update app progress
+                with app.progress_lock:
+                    app.current_scan_progress = {
+                        'step': progress_data.get('step', 'Unknown'),
+                        'progress': progress_data.get('progress', 0),
+                        'timestamp': datetime.now().isoformat()
+                    }
                 
                 logger.info(f"📊 STORED PROGRESS: {app.current_scan_progress}")
                 logger.info(f"📊 PROGRESS CALLBACK: App variable ID = {id(app.current_scan_progress)}")
