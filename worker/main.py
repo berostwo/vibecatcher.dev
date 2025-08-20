@@ -4002,12 +4002,13 @@ def security_scan():
         try:
             scanner = ChatGPTSecurityScanner()
             
-            # Initialize progress tracking
-            total_batches = len(file_batches) if 'file_batches' in locals() else 1
+            # Initialize progress tracking - estimate based on repository size
+            # We'll use a reasonable estimate since we don't know exact batch count yet
+            estimated_batches = 30  # Conservative estimate for most repos
             
             # Reset progress tracker for new scan
             progress_tracker.cleanup()
-            progress_tracker.start_progress(total_batches, "Initializing security scan...")
+            progress_tracker.start_progress(estimated_batches, "Initializing security scan...")
             
             # Set a hard timeout for the entire scan
             scan_timeout = 600  # 10 minutes max (Cloud Run timeout is 15 minutes)
@@ -4018,10 +4019,14 @@ def security_scan():
             progress_tracker.update_progress("Starting repository analysis...", 0)
             
             # Update progress for scan execution
-            progress_tracker.update_progress("Executing security analysis...", 1)
+            progress_tracker.update_progress("Executing security analysis...", 5)
             
             # Run with timeout protection using asyncio.run()
             logger.info(f"🚀 EXECUTING SCAN: scanner.scan_repository()")
+            
+            # Update progress to show scan is actively running
+            progress_tracker.update_progress("Scanning repository files...", 25)
+            
             result = asyncio.run(asyncio.wait_for(
                 scanner.scan_repository(repo_url, github_token),
                 timeout=scan_timeout
@@ -4029,7 +4034,7 @@ def security_scan():
             logger.info(f"🚀 SCAN EXECUTION COMPLETED: {result}")
             
             # Update progress for scan completion
-            progress_tracker.update_progress("Finalizing scan results...", 2)
+            progress_tracker.update_progress("Finalizing scan results...", 95)
             
             # Check if scan failed
             if 'error' in result:
