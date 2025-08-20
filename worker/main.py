@@ -3798,9 +3798,35 @@ app = Flask(__name__)
 # Enable CORS for all routes
 CORS(app, origins=['*'], methods=['GET', 'POST', 'OPTIONS'])
 
-# Thread-safe progress tracking using a global dictionary
-PROGRESS_STORE = {}
+# Process-safe progress tracking using a temporary file
+import tempfile
+import os
+
+# Create a temporary file for progress tracking that works across processes
+PROGRESS_FILE = os.path.join(tempfile.gettempdir(), 'security_scanner_progress.json')
 PROGRESS_LOCK = threading.Lock()
+
+def write_progress_to_file(progress_data):
+    """Write progress data to file for cross-process access"""
+    try:
+        with PROGRESS_LOCK:
+            with open(PROGRESS_FILE, 'w') as f:
+                json.dump(progress_data, f)
+        logger.info(f"📊 PROGRESS WRITTEN TO FILE: {progress_data}")
+    except Exception as e:
+        logger.error(f"❌ Failed to write progress to file: {e}")
+
+def read_progress_from_file():
+    """Read progress data from file for cross-process access"""
+    try:
+        if not os.path.exists(PROGRESS_FILE):
+            return None
+        with PROGRESS_LOCK:
+            with open(PROGRESS_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"❌ Failed to read progress from file: {e}")
+        return None
 
 # App-level progress tracking to avoid threading issues (kept for compatibility)
 app.current_scan_progress = None
@@ -3874,30 +3900,29 @@ def get_progress():
     # CRITICAL DEBUGGING: Check if we're in the right context
     current_thread = threading.current_thread()
     logger.info(f"📊 PROGRESS ENDPOINT CALLED: Thread={current_thread.name}")
-    logger.info(f"📊 PROGRESS ENDPOINT: Global store keys = {list(PROGRESS_STORE.keys())}")
+    logger.info(f"📊 PROGRESS ENDPOINT: Progress file exists = {os.path.exists(PROGRESS_FILE)}")
     logger.info(f"📊 PROGRESS ENDPOINT: All threads: {[t.name for t in threading.enumerate()]}")
     
-    # CRITICAL FIX: Use global store to safely read progress
-    with PROGRESS_LOCK:
-        if not PROGRESS_STORE:
-            logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
-            return jsonify({
-                'status': 'no_scan_running',
-                'message': 'No security scan is currently running'
-            })
-        
-        # Get the most recent progress entry
-        latest_progress = max(PROGRESS_STORE.values(), key=lambda x: x.get('timestamp', ''))
-        
-        if not latest_progress or 'step' not in latest_progress or 'progress' not in latest_progress:
-            logger.warning(f"📊 PROGRESS ENDPOINT: Invalid progress data format: {latest_progress}")
-            return jsonify({
-                'status': 'error',
-                'message': 'Invalid progress data format'
-            }), 500
-        
-        logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {latest_progress}")
-        return jsonify(latest_progress)
+    # CRITICAL FIX: Use file-based progress tracking for cross-process access
+    progress_data = read_progress_from_file()
+    
+    if not progress_data:
+        logger.info(f"📊 PROGRESS ENDPOINT: No scan running, returning no_scan_running")
+        return jsonify({
+            'status': 'no_scan_running',
+            'message': 'No security scan is currently running'
+        })
+    
+    # Ensure we have valid progress data
+    if not isinstance(progress_data, dict) or 'step' not in progress_data or 'progress' not in progress_data:
+        logger.warning(f"📊 PROGRESS ENDPOINT: Invalid progress data format: {progress_data}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Invalid progress data format'
+        }), 500
+    
+    logger.info(f"📊 PROGRESS ENDPOINT: Returning progress data: {progress_data}")
+    return jsonify(progress_data)
 
 @app.route('/cache-stats', methods=['GET'])
 def get_cache_statistics():
@@ -4041,15 +4066,8 @@ def security_scan():
             'timestamp': datetime.now().isoformat()
         }
         
-        # Store in global store for thread-safe access
-        with PROGRESS_LOCK:
-            progress_key = f"scan_{int(time.time())}"
-            PROGRESS_STORE[progress_key] = initial_progress
-            
-            # Keep only the last 10 progress entries
-            if len(PROGRESS_STORE) > 10:
-                oldest_key = min(PROGRESS_STORE.keys(), key=lambda k: PROGRESS_STORE[k].get('timestamp', ''))
-                del PROGRESS_STORE[oldest_key]
+        # Write initial progress to file for cross-process access
+        write_progress_to_file(initial_progress)
         
         # Also update app context for compatibility
         with app.progress_lock:
@@ -4057,7 +4075,7 @@ def security_scan():
             
         logger.info(f"📊 INITIAL PROGRESS SET: {initial_progress}")
         logger.info(f"📊 INITIAL PROGRESS THREAD: {threading.current_thread().name}")
-        logger.info(f"📊 GLOBAL STORE SIZE: {len(PROGRESS_STORE)}")
+        logger.info(f"📊 PROGRESS FILE CREATED: {PROGRESS_FILE}")
         
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
@@ -4071,26 +4089,18 @@ def security_scan():
                 logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
                 logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
                 
-                # CRITICAL FIX: Use global store to safely update progress across threads
+                # CRITICAL FIX: Use file-based progress tracking for cross-process access
                 progress_entry = {
                     'step': progress_data.get('step', 'Unknown'),
                     'progress': progress_data.get('progress', 0),
                     'timestamp': datetime.now().isoformat()
                 }
                 
-                with PROGRESS_LOCK:
-                    # Store progress with a unique key
-                    progress_key = f"scan_{int(time.time())}"
-                    PROGRESS_STORE[progress_key] = progress_entry
-                    
-                    # Keep only the last 10 progress entries to avoid memory bloat
-                    if len(PROGRESS_STORE) > 10:
-                        oldest_key = min(PROGRESS_STORE.keys(), key=lambda k: PROGRESS_STORE[k].get('timestamp', ''))
-                        del PROGRESS_STORE[oldest_key]
+                # Write progress to file for cross-process access
+                write_progress_to_file(progress_entry)
                 
-                logger.info(f"📊 STORED PROGRESS IN GLOBAL STORE: {progress_entry}")
+                logger.info(f"📊 STORED PROGRESS IN FILE: {progress_entry}")
                 logger.info(f"📊 PROGRESS CALLBACK: Thread = {threading.current_thread().name}")
-                logger.info(f"📊 GLOBAL STORE SIZE: {len(PROGRESS_STORE)}")
                 
                 # Also update app context for compatibility
                 with app.progress_lock:
@@ -4137,6 +4147,14 @@ def security_scan():
             
             # Reset app-level progress when scan completes
             app.current_scan_progress = None
+            
+            # Also remove progress file when scan completes
+            try:
+                if os.path.exists(PROGRESS_FILE):
+                    os.remove(PROGRESS_FILE)
+                    logger.info(f"📊 PROGRESS FILE CLEANED UP: {PROGRESS_FILE}")
+            except Exception as e:
+                logger.error(f"❌ Failed to cleanup progress file: {e}")
             
             return jsonify(result)
             
