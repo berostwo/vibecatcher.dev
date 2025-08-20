@@ -3835,6 +3835,31 @@ def reset_progress():
             'message': 'Failed to reset progress tracker'
         }), 500
 
+@app.route('/cleanup-stuck-audit', methods=['POST'])
+def cleanup_stuck_audit():
+    """Clean up stuck audit by resetting progress and clearing state"""
+    try:
+        data = request.get_json()
+        audit_id = data.get('audit_id')
+        
+        if not audit_id:
+            return jsonify({'error': 'audit_id is required'}), 400
+        
+        # Reset progress tracker
+        progress_tracker.cleanup()
+        
+        # Clear any temporary files
+        import os
+        temp_file = f"/tmp/security_scanner_progress_{audit_id}.json"
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        
+        logger.info(f"🧹 Cleaned up stuck audit: {audit_id}")
+        return jsonify({'status': 'ok', 'message': f'Stuck audit {audit_id} cleaned up'})
+    except Exception as e:
+        logger.error(f"❌ Failed to cleanup stuck audit: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/cache-stats', methods=['GET'])
 def get_cache_statistics():
     """Get comprehensive cache statistics and performance metrics"""
@@ -3947,6 +3972,7 @@ def security_scan():
         repo_url = data.get('repository_url')
         github_token = data.get('github_token')
         audit_id = data.get('audit_id')
+        progress_webhook_url = data.get('progress_webhook_url')
         # Progress tracking removed
         
         # Input validation
@@ -4015,11 +4041,51 @@ def security_scan():
             # Complete progress tracking
             progress_tracker.complete_progress("Scan completed successfully!")
             
+            # Send completion webhook if URL provided
+            if progress_webhook_url:
+                try:
+                    import requests
+                    webhook_payload = {
+                        'audit_id': audit_id,
+                        'status': 'completed',
+                        'progress': {
+                            'step': 'Scan completed successfully!',
+                            'progress': 100,
+                            'timestamp': datetime.now().isoformat()
+                        },
+                        'scan_results': result
+                    }
+                    requests.post(progress_webhook_url, json=webhook_payload, timeout=10)
+                    logger.info(f"📡 Completion webhook sent to: {progress_webhook_url}")
+                except Exception as webhook_error:
+                    logger.warning(f"⚠️ Failed to send completion webhook: {webhook_error}")
+            
             return jsonify(result)
             
         except asyncio.TimeoutError:
             logger.error(f"❌ Scan timed out after {scan_timeout}s")
             progress_tracker.complete_progress("Scan timed out")
+            
+            # Send timeout webhook if URL provided
+            if progress_webhook_url:
+                try:
+                    import requests
+                    webhook_payload = {
+                        'audit_id': audit_id,
+                        'status': 'failed',
+                        'progress': {
+                            'step': 'Scan timed out',
+                            'progress': 100,
+                            'timestamp': datetime.now().isoformat()
+                        },
+                        'error': f'Scan timed out after {scan_timeout}s - repository too large or complex',
+                        'error_type': 'TimeoutError'
+                    }
+                    requests.post(progress_webhook_url, json=webhook_payload, timeout=10)
+                    logger.info(f"📡 Timeout webhook sent to: {progress_webhook_url}")
+                except Exception as webhook_error:
+                    logger.warning(f"⚠️ Failed to send timeout webhook: {webhook_error}")
+            
             return jsonify({
                 'error': f'Scan timed out after {scan_timeout}s - repository too large or complex',
                 'error_type': 'TimeoutError',
@@ -4029,6 +4095,27 @@ def security_scan():
         except Exception as scan_error:
             logger.error(f"❌ Scan execution error: {scan_error}")
             progress_tracker.complete_progress("Scan failed with error")
+            
+            # Send error webhook if URL provided
+            if progress_webhook_url:
+                try:
+                    import requests
+                    webhook_payload = {
+                        'audit_id': audit_id,
+                        'status': 'failed',
+                        'progress': {
+                            'step': 'Scan failed with error',
+                            'progress': 100,
+                            'timestamp': datetime.now().isoformat()
+                        },
+                        'error': str(scan_error),
+                        'error_type': type(scan_error).__name__
+                    }
+                    requests.post(progress_webhook_url, json=webhook_payload, timeout=10)
+                    logger.info(f"📡 Error webhook sent to: {progress_webhook_url}")
+                except Exception as webhook_error:
+                    logger.warning(f"⚠️ Failed to send error webhook: {webhook_error}")
+            
             return jsonify({
                 'error': str(scan_error),
                 'error_type': type(scan_error).__name__,

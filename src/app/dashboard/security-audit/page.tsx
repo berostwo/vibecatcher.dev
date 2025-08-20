@@ -614,8 +614,8 @@ export default function SecurityAuditPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Security Audit</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-6xl font-bold font-headline uppercase italic -mb-6 text-primary/50">Security Audit</h1>
+          <p className="text-muted-foreground mt-4">
             Comprehensive security analysis powered by ChatGPT for bulletproof applications
           </p>
         </div>
@@ -713,6 +713,60 @@ export default function SecurityAuditPage() {
               className="min-w-[120px]"
             >
               Cleanup Stale
+            </Button>
+            <Button 
+              onClick={async () => {
+                try {
+                  // Call worker cleanup endpoint for stuck audits
+                  if (currentAudit) {
+                    const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/cleanup-stuck-audit', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        audit_id: currentAudit.id,
+                      }),
+                    });
+                    
+                    if (response.ok) {
+                      // Also cleanup in Firestore
+                      await FirebaseAuditService.updateAuditStatus(
+                        currentAudit.id, 
+                        'failed', 
+                        undefined, 
+                        'Manual cleanup - worker reset'
+                      );
+                      setCurrentAudit(null);
+                      setIsScanning(false);
+                      setCurrentStep('Initializing scan...');
+                      setCurrentProgress(0);
+                      toast({
+                        title: 'Worker Cleanup Complete',
+                        description: 'Stuck audit has been cleaned up on both worker and database.',
+                      });
+                    } else {
+                      throw new Error('Worker cleanup failed');
+                    }
+                  } else {
+                    toast({
+                      title: 'No Audit to Cleanup',
+                      description: 'No current audit found.',
+                    });
+                  }
+                } catch (error) {
+                  console.error('Worker cleanup failed:', error);
+                  toast({
+                    title: 'Worker Cleanup Failed',
+                    description: 'Failed to cleanup stuck audit on worker.',
+                    variant: 'destructive',
+                  });
+                }
+              }}
+              variant="outline"
+              className="min-w-[120px]"
+            >
+              Force Worker Reset
             </Button>
           </div>
           
