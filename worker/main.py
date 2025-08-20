@@ -1068,6 +1068,9 @@ class ChatGPTSecurityScanner:
     
     def update_progress(self, step: str, progress: float):
         """Emit progress only at milestones (0,10,20,...,100)."""
+        logger.info(f"📊 SCANNER UPDATE_PROGRESS CALLED: {step} - {progress}%")
+        logger.info(f"📊 SCANNER PROGRESS CALLBACK EXISTS: {self.progress_callback is not None}")
+        
         self.current_step = step
         self.step_progress = progress
         
@@ -1092,6 +1095,7 @@ class ChatGPTSecurityScanner:
 
         # Only emit when crossing a new milestone (or reaching 100%)
         if milestone <= self._last_milestone_sent and milestone < 100:
+            logger.info(f"📊 SKIPPING MILESTONE: {milestone} <= {self._last_milestone_sent}")
             return
         self._last_milestone_sent = milestone
 
@@ -1133,6 +1137,8 @@ class ChatGPTSecurityScanner:
                 logger.info(f"📊 PROGRESS CALLBACK COMPLETED")
             except Exception as e:
                 logger.error(f"❌ Progress callback failed: {e}")
+                import traceback
+                logger.error(f"❌ Progress callback traceback: {traceback.format_exc()}")
         else:
             logger.warning(f"⚠️ NO PROGRESS CALLBACK SET!")
     
@@ -4236,10 +4242,12 @@ def security_scan():
             update_scan_progress("Scan in progress", 50)
             
             # Run with timeout protection using asyncio.run()
+            logger.info(f"🚀 EXECUTING SCAN: scanner.scan_repository()")
             result = asyncio.run(asyncio.wait_for(
                 scanner.scan_repository(repo_url, github_token),
                 timeout=scan_timeout
             ))
+            logger.info(f"🚀 SCAN EXECUTION COMPLETED: {result}")
             
             # CRITICAL FIX: Update progress when scan completes
             update_scan_progress("Scan analysis complete", 90)
