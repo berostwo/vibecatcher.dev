@@ -1093,10 +1093,18 @@ class ChatGPTSecurityScanner:
         if self._last_milestone_sent < 0:
             self._last_milestone_sent = 0
 
-        # Only emit when crossing a new milestone (or reaching 100%)
-        if milestone <= self._last_milestone_sent and milestone < 100:
-            logger.info(f"📊 SKIPPING MILESTONE: {milestone} <= {self._last_milestone_sent}")
+        # CRITICAL FIX: Always emit on actual progress changes OR new milestones
+        # Don't skip if we have genuine progress, even if milestone is same
+        has_progress_change = (
+            milestone != self._last_milestone_sent or 
+            step != self._last_progress_step or
+            progress > self.step_progress
+        )
+        
+        if not has_progress_change and milestone < 100:
+            logger.info(f"📊 SKIPPING - NO PROGRESS CHANGE: milestone={milestone}, last={self._last_milestone_sent}, step='{step}', last_step='{self._last_progress_step}'")
             return
+            
         self._last_milestone_sent = milestone
 
         # Update app-level progress
@@ -3871,6 +3879,67 @@ def read_progress_from_file():
 app.current_scan_progress = None
 app.progress_lock = threading.Lock()
 
+# CRITICAL FIX: Global progress callback for scanner access
+GLOBAL_PROGRESS_CALLBACK = None
+GLOBAL_PROGRESS_WEBHOOK_URL = None
+GLOBAL_AUDIT_ID = None
+
+def global_progress_callback(progress_data):
+    """Global progress callback that can be accessed by the scanner"""
+    global GLOBAL_PROGRESS_CALLBACK, GLOBAL_PROGRESS_WEBHOOK_URL, GLOBAL_AUDIT_ID
+    
+    logger.info(f"📊 GLOBAL PROGRESS CALLBACK EXECUTED: {progress_data}")
+    
+    # Write progress to file for cross-process access
+    progress_entry = {
+        'step': progress_data.get('step', 'Unknown'),
+        'progress': progress_data.get('progress', 0),
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    # Write progress to file for cross-process access
+    write_progress_to_file(progress_entry)
+    
+    logger.info(f"📊 STORED PROGRESS IN FILE: {progress_entry}")
+    logger.info(f"📊 GLOBAL CALLBACK: Thread = {threading.current_thread().name}")
+    
+    # Also update app context for compatibility
+    try:
+        with app.progress_lock:
+            app.current_scan_progress = progress_entry
+    except Exception:
+        pass
+    
+    # Fire-and-forget webhook to frontend to persist progress
+    try:
+        if GLOBAL_PROGRESS_WEBHOOK_URL and GLOBAL_AUDIT_ID:
+            logger.info(f"📡 SENDING GLOBAL CALLBACK WEBHOOK: {GLOBAL_PROGRESS_WEBHOOK_URL}")
+            logger.info(f"📡 GLOBAL WEBHOOK PAYLOAD: {{'auditId': {GLOBAL_AUDIT_ID}, 'step': {progress_entry.get('step')}, 'progress': {progress_entry.get('progress')}}}")
+            import urllib.request
+            import json as _json
+            req = urllib.request.Request(GLOBAL_PROGRESS_WEBHOOK_URL, method='POST')
+            req.add_header('Content-Type', 'application/json')
+            payload = _json.dumps({
+                'auditId': GLOBAL_AUDIT_ID,
+                'step': progress_entry.get('step'),
+                'progress': progress_entry.get('progress'),
+            }).encode('utf-8')
+            logger.info(f"📡 GLOBAL WEBHOOK REQUEST HEADERS: {dict(req.headers)}")
+            logger.info(f"📡 GLOBAL WEBHOOK REQUEST PAYLOAD: {payload}")
+            response = urllib.request.urlopen(req, payload, timeout=5)
+            logger.info(f"📡 GLOBAL WEBHOOK RESPONSE: {response.status} {response.reason}")
+            response_body = response.read()
+            logger.info(f"📡 GLOBAL WEBHOOK RESPONSE BODY: {response_body}")
+        else:
+            logger.warning(f"⚠️ NO GLOBAL WEBHOOK URL OR AUDIT ID: webhook_url={GLOBAL_PROGRESS_WEBHOOK_URL}, audit_id={GLOBAL_AUDIT_ID}")
+    except Exception as _e:
+        logger.error(f"❌ GLOBAL CALLBACK WEBHOOK FAILED: {_e}")
+        logger.error(f"❌ GLOBAL WEBHOOK ERROR TYPE: {type(_e)}")
+        if hasattr(_e, 'code'):
+            logger.error(f"❌ GLOBAL WEBHOOK HTTP CODE: {_e.code}")
+        if hasattr(_e, 'reason'):
+            logger.error(f"❌ GLOBAL WEBHOOK REASON: {_e.reason}")
+
 # Add CORS headers
 @app.after_request
 def add_cors_headers(response):
@@ -4167,69 +4236,19 @@ def security_scan():
         update_scan_progress("Starting scan...", 0)
         logger.info(f"📊 INITIAL PROGRESS SET VIA UPDATE FUNCTION")
         
+        # CRITICAL FIX: Set global variables for the global progress callback
+        global GLOBAL_PROGRESS_WEBHOOK_URL, GLOBAL_AUDIT_ID
+        GLOBAL_PROGRESS_WEBHOOK_URL = progress_webhook_url
+        GLOBAL_AUDIT_ID = audit_id
+        logger.info(f"📊 GLOBAL VARIABLES SET: webhook_url={GLOBAL_PROGRESS_WEBHOOK_URL}, audit_id={GLOBAL_AUDIT_ID}")
+        
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
             scanner = ChatGPTSecurityScanner()
             
-            # CRITICAL FIX: Direct progress updates instead of callback system
-            update_scan_progress("Starting security analysis", 35)
-            
-            # PROGRESS TRACKING: Set up progress callback for real-time updates (keeping for compatibility)
-            progress_updates = []
-            def progress_callback(progress_data):
-                progress_updates.append(progress_data)
-                logger.info(f"📊 PROGRESS UPDATE: {progress_data['step']} - {progress_data['progress']:.1f}%")
-                logger.info(f"📊 PROGRESS DATA STRUCTURE: {progress_data}")
-                
-                # CRITICAL FIX: Use file-based progress tracking for cross-process access
-                progress_entry = {
-                    'step': progress_data.get('step', 'Unknown'),
-                    'progress': progress_data.get('progress', 0),
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                # Write progress to file for cross-process access
-                write_progress_to_file(progress_entry)
-                
-                logger.info(f"📊 STORED PROGRESS IN FILE: {progress_entry}")
-                logger.info(f"📊 PROGRESS CALLBACK: Thread = {threading.current_thread().name}")
-                
-                # Also update app context for compatibility
-                with app.progress_lock:
-                    app.current_scan_progress = progress_entry
-                
-                # Fire-and-forget webhook to frontend to persist progress
-                try:
-                    if progress_webhook_url and audit_id:
-                        logger.info(f"📡 SENDING CALLBACK WEBHOOK: {progress_webhook_url}")
-                        logger.info(f"📡 CALLBACK WEBHOOK PAYLOAD: {{'auditId': {audit_id}, 'step': {progress_entry.get('step')}, 'progress': {progress_entry.get('progress')}}}")
-                        import urllib.request
-                        import json as _json
-                        req = urllib.request.Request(progress_webhook_url, method='POST')
-                        req.add_header('Content-Type', 'application/json')
-                        payload = _json.dumps({
-                            'auditId': audit_id,
-                            'step': progress_entry.get('step'),
-                            'progress': progress_entry.get('progress'),
-                        }).encode('utf-8')
-                        logger.info(f"📡 WEBHOOK REQUEST HEADERS: {dict(req.headers)}")
-                        logger.info(f"📡 WEBHOOK REQUEST PAYLOAD: {payload}")
-                        response = urllib.request.urlopen(req, payload, timeout=5)
-                        logger.info(f"📡 WEBHOOK RESPONSE: {response.status} {response.reason}")
-                        response_body = response.read()
-                        logger.info(f"📡 WEBHOOK RESPONSE BODY: {response_body}")
-                    else:
-                        logger.warning(f"⚠️ NO CALLBACK WEBHOOK URL OR AUDIT ID: webhook_url={progress_webhook_url}, audit_id={audit_id}")
-                except Exception as _e:
-                    logger.error(f"❌ CALLBACK WEBHOOK FAILED: {_e}")
-                    logger.error(f"❌ CALLBACK WEBHOOK ERROR TYPE: {type(_e)}")
-                    if hasattr(_e, 'code'):
-                        logger.error(f"❌ CALLBACK WEBHOOK HTTP CODE: {_e.code}")
-                    if hasattr(_e, 'reason'):
-                        logger.error(f"❌ CALLBACK WEBHOOK REASON: {_e.reason}")
-            
-            scanner.set_progress_callback(progress_callback)
-            logger.info(f"📊 PROGRESS CALLBACK SET: {progress_callback}")
+            # CRITICAL FIX: Use global progress callback instead of local one
+            scanner.set_progress_callback(global_progress_callback)
+            logger.info(f"📊 GLOBAL PROGRESS CALLBACK SET: {global_progress_callback}")
             logger.info(f"📊 SCANNER HAS CALLBACK: {hasattr(scanner, 'progress_callback')}")
             logger.info(f"📊 SCANNER CALLBACK VALUE: {getattr(scanner, 'progress_callback', None)}")
             
