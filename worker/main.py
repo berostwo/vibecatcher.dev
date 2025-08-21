@@ -174,7 +174,8 @@ class ProgressTracker:
                             'percentage': percent_value,
                             'completed_tasks': self.progress_data['completed_tasks'],
                             'elapsed_seconds': self.progress_data['elapsed_seconds'],
-                            'remaining_seconds': self.progress_data['remaining_seconds']
+                            'remaining_seconds': self.progress_data['remaining_seconds'],
+                            'scan_id': self.progress_data.get('scan_id')  # Preserve scan_id
                         })
                         logger.info(f"🔒 GLOBAL STATE UPDATED: {step} - {percent_value}% - is_running: True - scan_id: {self.progress_data.get('scan_id')}")
                         # No more webhooks - single progress system
@@ -218,7 +219,8 @@ class ProgressTracker:
                         'percentage': 100,
                         'completed_tasks': self.progress_data['total_tasks'],
                         'elapsed_seconds': self.progress_data.get('elapsed_seconds', 0),
-                        'remaining_seconds': 0
+                        'remaining_seconds': 0,
+                        'scan_id': self.progress_data.get('scan_id')  # Preserve scan_id
                     })
                     logger.info(f"✅ Progress completed: {final_step} - scan_id: {self.progress_data.get('scan_id')}")
                 else:
