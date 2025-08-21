@@ -1253,8 +1253,8 @@ class ChatGPTSecurityScanner:
         self.last_cache_cleanup = time.time()
         self.cache_cleanup_interval = 3600  # Clean up every hour
         
-                # Progress tracking completely removed
-        # Progress tracking removed
+                # Progress tracking - will be set by the main worker
+        self.progress_tracker = None
         
         # Security categories for comprehensive coverage
         
@@ -1312,6 +1312,11 @@ class ChatGPTSecurityScanner:
         self.worker_peers = os.environ.get('WORKER_PEERS', '').split(',') if os.environ.get('WORKER_PEERS') else []
         self.max_shard_workers = 2  # Max 2 workers collaborate on sharding
         self.min_files_for_sharding = 300  # Only shard repos with 300+ files
+    
+    def set_progress_tracker(self, progress_tracker):
+        """Set the progress tracker instance for this scanner"""
+        self.progress_tracker = progress_tracker
+        logger.info(f"🔗 PROGRESS TRACKER CONNECTED: Scanner now has access to progress tracking")
     
     # Progress callback methods completely removed
     
@@ -2011,7 +2016,9 @@ class ChatGPTSecurityScanner:
         logger.info(f"🚀 Starting ChatGPT security scan for: {repo_url}")
         
         try:
-            # Progress tracking removed
+            # Progress tracking - now properly connected
+            if self.progress_tracker:
+                self.progress_tracker.update_progress("Cloning repository...", 5)
             
             # Clone repository with timeout
             repo_path = await asyncio.wait_for(
@@ -2026,6 +2033,10 @@ class ChatGPTSecurityScanner:
                 'size': self.get_directory_size(repo_path),
                 'file_count': self.count_files(repo_path)
             }
+            
+            # Progress update for dependency analysis
+            if self.progress_tracker:
+                self.progress_tracker.update_progress("Analyzing dependencies...", 10)
             
             # 🚀 DEPENDENCY ANALYSIS: Eliminate false positives about unused packages
             logger.info("🔍 DEPENDENCY ANALYSIS: Starting comprehensive dependency analysis...")
@@ -2056,7 +2067,9 @@ class ChatGPTSecurityScanner:
                 logger.warning(f"⚠️ Dependency analysis failed: {e}")
                 scan_context = {}
             
-            # Progress tracking removed
+            # Progress update for file analysis
+            if self.progress_tracker:
+                self.progress_tracker.update_progress("Starting file analysis...", 15)
             
             # PHASE 1 NUCLEAR OPTIMIZATION: Smart File Filtering + Batch Analysis
             all_findings = []
@@ -2271,6 +2284,10 @@ class ChatGPTSecurityScanner:
             # PROGRESS TRACKING: Calculate codebase health (EVEN DISTRIBUTION!)
             # Progress tracking removed
             
+            # Progress update for health calculation
+            if self.progress_tracker:
+                self.progress_tracker.update_progress("Calculating codebase health...", 90)
+            
             # Calculate accurate codebase health using ChatGPT
             logger.info(f"🔍 Calculating accurate codebase health...")
             codebase_health = self.calculate_codebase_health(condensed_findings, all_findings, repo_info)
@@ -2325,7 +2342,8 @@ class ChatGPTSecurityScanner:
             )
             
             # PROGRESS TRACKING: Final completion
-            # Progress tracking removed
+            if self.progress_tracker:
+                self.progress_tracker.update_progress("Finalizing results...", 95)
             
             # Cleanup
             shutil.rmtree(repo_path, ignore_errors=True)
@@ -2356,7 +2374,10 @@ class ChatGPTSecurityScanner:
             logger.info(f"🎯 Report validation complete")
             logger.info(f"🚀 Scan completed successfully in {scan_duration:.2f}s")
             
-            # Progress tracking removed
+            # Final progress update
+            if self.progress_tracker:
+                self.progress_tracker.update_progress("Scan completed successfully!", 100)
+            
             report_dict = asdict(report)
             try:
                 if 'scan_context' in locals() and isinstance(scan_context, dict) and scan_context.get('vulnerable_packages'):
@@ -2624,8 +2645,11 @@ class ChatGPTSecurityScanner:
             
             # Update progress for shard batch processing
             try:
-                progress_tracker.update_progress(f"Shard batch {batch_num + 1}/{total_batches}", batch_num + 1)
-                logger.info(f"📊 PROGRESS: Shard batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+                if self.progress_tracker:
+                    self.progress_tracker.update_progress(f"Shard batch {batch_num + 1}/{total_batches}", batch_num + 1)
+                    logger.info(f"📊 PROGRESS: Shard batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+                else:
+                    logger.warning(f"⚠️ PROGRESS: No progress tracker available for shard batch {batch_num + 1}")
             except Exception as e:
                 logger.error(f"❌ PROGRESS ERROR: Failed to update progress for shard batch {batch_num + 1}: {e}")
                 # Don't let progress tracking break the scan, but log the error
@@ -2753,8 +2777,11 @@ class ChatGPTSecurityScanner:
             
             # Update progress for batch processing
             try:
-                progress_tracker.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_num + 1)
-                logger.info(f"📊 PROGRESS: Thread batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+                if self.progress_tracker:
+                    self.progress_tracker.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_num + 1)
+                    logger.info(f"📊 PROGRESS: Thread batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+                else:
+                    logger.warning(f"⚠️ PROGRESS: No progress tracker available for thread batch {batch_num + 1}")
             except Exception as e:
                 logger.error(f"❌ PROGRESS ERROR: Failed to update progress for thread batch {batch_num + 1}: {e}")
                 # Don't let progress tracking break the scan, but log the error
@@ -2962,8 +2989,11 @@ class ChatGPTSecurityScanner:
             
             # Update progress for parallel batch processing
             try:
-                progress_tracker.update_progress(f"Processing batch {batch_num + 1}/{total_batches}", batch_num + 1)
-                logger.info(f"📊 PROGRESS: Parallel batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+                if self.progress_tracker:
+                    self.progress_tracker.update_progress(f"Processing batch {batch_num + 1}/{total_batches}", batch_num + 1)
+                    logger.info(f"📊 PROGRESS: Parallel batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+                else:
+                    logger.warning(f"⚠️ PROGRESS: No progress tracker available for parallel batch {batch_num + 1}")
             except Exception as e:
                 logger.error(f"❌ PROGRESS ERROR: Failed to update progress for parallel batch {batch_num + 1}: {e}")
                 # Don't let progress tracking break the scan, but log the error
@@ -4165,6 +4195,9 @@ def security_scan():
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
             scanner = ChatGPTSecurityScanner()
+            
+            # CRITICAL: Pass the progress tracker to the scanner so it can actually update progress
+            scanner.set_progress_tracker(progress_tracker)
             
             # Initialize progress tracking - estimate based on repository size
             # We'll use a reasonable estimate since we don't know exact batch count yet
