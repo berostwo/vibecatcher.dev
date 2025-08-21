@@ -4,4 +4,4 @@ openai>=1.0.0
 aiohttp==3.9.1
 rich>=13.0.0
 requests>=2.31.0
-firebase-admin
+firebase-admin>=6.0.0

@@ -23,8 +23,12 @@ import urllib.error
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn, BarColumn, TextColumn
 from rich.console import Console
 from rich.theme import Theme
-import firebase_admin
-from firebase_admin import credentials, firestore
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -270,29 +274,33 @@ WORKER_NAME = os.environ.get('WORKER_NAME', 'chatgpt-security-scanner')
 logger.info(f"🔧 WORKER IDENTITY: {WORKER_NAME} at {WORKER_URL}")
 
 # Initialize Firebase Admin SDK
-try:
-    # Check if Firebase is already initialized
-    if not firebase_admin._apps:
-        # Initialize with service account key from environment variable
-        service_account_info = os.environ.get('FIREBASE_SERVICE_ACCOUNT')
-        if service_account_info:
-            cred = credentials.Certificate(json.loads(service_account_info))
-            firebase_admin.initialize_app(cred)
-            logger.info("✅ Firebase Admin SDK initialized successfully")
+db = None
+if FIREBASE_AVAILABLE:
+    try:
+        # Check if Firebase is already initialized
+        if not firebase_admin._apps:
+            # Initialize with service account key from environment variable
+            service_account_info = os.environ.get('FIREBASE_SERVICE_ACCOUNT')
+            if service_account_info:
+                cred = credentials.Certificate(json.loads(service_account_info))
+                firebase_admin.initialize_app(cred)
+                logger.info("✅ Firebase Admin SDK initialized successfully")
+            else:
+                logger.warning("⚠️ FIREBASE_SERVICE_ACCOUNT not set, Firebase integration disabled")
         else:
-            logger.warning("⚠️ FIREBASE_SERVICE_ACCOUNT not set, Firebase integration disabled")
-    else:
-        logger.info("✅ Firebase Admin SDK already initialized")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize Firebase Admin SDK: {e}")
+            logger.info("✅ Firebase Admin SDK already initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Firebase Admin SDK: {e}")
 
-# Get Firestore client
-try:
-    db = firestore.client()
-    logger.info("✅ Firestore client initialized")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize Firestore client: {e}")
-    db = None
+    # Get Firestore client
+    try:
+        db = firestore.client()
+        logger.info("✅ Firestore client initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Firestore client: {e}")
+        db = None
+else:
+    logger.warning("⚠️ Firebase Admin SDK not available, Firebase integration disabled")
 
 def update_audit_worker_info(audit_id: str, worker_url: str, worker_name: str):
     """Update Firestore audit document with worker information"""
