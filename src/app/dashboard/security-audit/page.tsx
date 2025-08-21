@@ -303,16 +303,36 @@ export default function SecurityAuditPage() {
     }
   }, [user]);
 
-  // REAL PROGRESS POLLING: Poll Firestore for centralized progress updates
+  // REAL PROGRESS POLLING: Poll worker's /progress endpoint for real-time updates
   useEffect(() => {
     if (isScanning && currentAudit?.id) {
       console.log('🚀 STARTING ROBUST PROGRESS POLLING...');
+      
+      // Add a small delay to allow worker to initialize scan state
+      const initialDelay = setTimeout(() => {
+        console.log('⏳ Initial delay completed, starting progress polling...');
+      }, 2000); // 2 second delay
+      
       const interval = setInterval(async () => {
         try {
           console.log('🔄 POLLING FOR PROGRESS...');
           
           // SINGLE PROGRESS SYSTEM: Only poll the worker's /progress endpoint
-          const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress');
+          const workerUrl = 'https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress';
+          console.log('📡 POLLING WORKER:', workerUrl);
+          
+          // Also check the debug endpoint to see global state
+          try {
+            const debugResponse = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/debug/global-state');
+            if (debugResponse.ok) {
+              const debugData = await debugResponse.json();
+              console.log('🔍 WORKER DEBUG STATE:', debugData);
+            }
+          } catch (debugError) {
+            console.warn('Could not fetch debug state:', debugError);
+          }
+          
+          const response = await fetch(workerUrl);
           console.log('📡 WORKER POLL RESPONSE STATUS:', response.status);
           
           if (response.ok) {
@@ -321,32 +341,34 @@ export default function SecurityAuditPage() {
             
             if (progressData && progressData.step && (typeof progressData.percentage === 'number' || typeof progressData.progress === 'number')) {
               console.log('✅ WORKER PROGRESS UPDATE:', progressData);
+              console.log('📊 CURRENT SCAN STATE - Step:', progressData.step, 'Progress:', typeof progressData.percentage === 'number' ? progressData.percentage : progressData.progress);
               setCurrentStep(progressData.step);
               setCurrentProgress(typeof progressData.percentage === 'number' ? progressData.percentage : progressData.progress);
               if (progressData.elapsed_time) setElapsedTime(progressData.elapsed_time);
               if (progressData.time_remaining) setTimeRemaining(progressData.time_remaining);
+              
+              // Check if scan completed by checking worker progress
+              if (progressData.percentage === 100) {
+                console.log('🎉 SCAN COMPLETED - STOPPING POLLING');
+                setIsScanning(false);
+                // The scan results will be fetched from Firestore when the worker completes
+              }
             } else if (progressData.status === 'no_scan_running') {
-              console.log('⚠️ Worker reports no scan running - scan may not have started yet');
+              console.log('⚠️ Worker reports no scan running - scan may not have started yet, continuing to poll...');
+              console.log('📊 FRONTEND STATE - isScanning:', isScanning, 'currentProgress:', currentProgress, 'currentStep:', currentStep);
+              // Don't treat this as an error - just continue polling
+              
+              // If we were previously scanning and now get "no scan running", the scan might have completed
+              if (isScanning && currentProgress > 0) {
+                console.log('🎉 SCAN COMPLETED - Worker reports no scan running after progress');
+                setIsScanning(false);
+                // The scan results will be fetched from Firestore when the worker completes
+              }
             } else {
               console.log('⚠️ Invalid worker progress data format:', progressData);
             }
           } else {
             console.error('❌ WORKER POLL FAILED:', response.status, response.statusText);
-          }
-          
-          // Check if scan completed by polling worker status
-          try {
-            const statusResponse = await fetch(`https://chatgpt-security-scanner-505997387504.us-central1.run.app/status/${currentAudit.id}`);
-            if (statusResponse.ok) {
-              const statusData = await statusResponse.json();
-              if (statusData.status === 'completed' && statusData.scanResults) {
-                console.log('🎉 SCAN COMPLETED - STOPPING POLLING');
-                setScanResults(statusData.scanResults as any);
-                setIsScanning(false);
-              }
-            }
-          } catch (statusError) {
-            console.warn('Could not check scan status:', statusError);
           }
         } catch (e) {
           console.error('❌ PROGRESS POLLING ERROR:', e);
@@ -354,9 +376,12 @@ export default function SecurityAuditPage() {
       }, 1000); // Poll every 1 second for more responsive updates
       
       setProgressPollingInterval(interval as unknown as NodeJS.Timeout);
-      return () => clearInterval(interval);
+      return () => {
+        clearInterval(interval);
+        clearTimeout(initialDelay);
+      };
     }
-  }, [isScanning, currentAudit?.id]);
+  }, [isScanning, currentAudit?.id, currentProgress, currentStep]);
 
   // Cleanup polling when scan completes
   useEffect(() => {
