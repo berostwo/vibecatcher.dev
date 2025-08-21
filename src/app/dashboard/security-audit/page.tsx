@@ -333,16 +333,20 @@ export default function SecurityAuditPage() {
           } else {
             console.error('❌ WORKER POLL FAILED:', response.status, response.statusText);
           }
-            } catch (error) {
-              console.error('❌ WORKER POLL ERROR:', error);
-            }
-          }
           
-          // Check if scan completed
-          if (audit?.status === 'completed' && audit.scanResults) {
-            console.log('🎉 SCAN COMPLETED - STOPPING POLLING');
-            setScanResults(audit.scanResults as any);
-            setIsScanning(false);
+          // Check if scan completed by polling worker status
+          try {
+            const statusResponse = await fetch(`https://chatgpt-security-scanner-505997387504.us-central1.run.app/status/${currentAudit.id}`);
+            if (statusResponse.ok) {
+              const statusData = await statusResponse.json();
+              if (statusData.status === 'completed' && statusData.scanResults) {
+                console.log('🎉 SCAN COMPLETED - STOPPING POLLING');
+                setScanResults(statusData.scanResults as any);
+                setIsScanning(false);
+              }
+            }
+          } catch (statusError) {
+            console.warn('Could not check scan status:', statusError);
           }
         } catch (e) {
           console.error('❌ PROGRESS POLLING ERROR:', e);
