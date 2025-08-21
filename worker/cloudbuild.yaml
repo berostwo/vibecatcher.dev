@@ -1,7 +1,7 @@
 steps:
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-f', 'worker/Dockerfile', '-t', 'gcr.io/$PROJECT_ID/chatgpt-security-scanner', '.']
+    args: ['build', '-f', 'Dockerfile', '-t', 'gcr.io/$PROJECT_ID/chatgpt-security-scanner', '.']
   
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
@@ -35,6 +35,8 @@ steps:
       - '1'
       - '--cpu-throttling'
       - '--cpu-boost'
+      - '--set-env-vars'
+      - 'WORKER_URL=https://chatgpt-security-scanner-505997387504.us-central1.run.app,WORKER_NAME=chatgpt-security-scanner'
 
   # Deploy Worker 1
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -64,6 +66,8 @@ steps:
       - '1'
       - '--cpu-throttling'
       - '--cpu-boost'
+      - '--set-env-vars'
+      - 'WORKER_URL=https://chatgpt-security-scanner-1-505997387504.us-central1.run.app,WORKER_NAME=chatgpt-security-scanner-1'
 
   # Deploy Worker 2
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -93,6 +97,8 @@ steps:
       - '1'
       - '--cpu-throttling'
       - '--cpu-boost'
+      - '--set-env-vars'
+      - 'WORKER_URL=https://chatgpt-security-scanner-2-505997387504.us-central1.run.app,WORKER_NAME=chatgpt-security-scanner-2'
 
   # Deploy Worker 3
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -122,6 +128,8 @@ steps:
       - '1'
       - '--cpu-throttling'
       - '--cpu-boost'
+      - '--set-env-vars'
+      - 'WORKER_URL=https://chatgpt-security-scanner-3-505997387504.us-central1.run.app,WORKER_NAME=chatgpt-security-scanner-3'
 
   # Deploy Worker 4
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -151,6 +159,10 @@ steps:
       - '1'
       - '--cpu-throttling'
       - '--cpu-boost'
+      - '--set-env-vars'
+      - 'WORKER_URL=https://chatgpt-security-scanner-4-505997387504.us-central1.run.app,WORKER_NAME=chatgpt-security-scanner-4'
+
+
 
 images:
   - 'gcr.io/$PROJECT_ID/chatgpt-security-scanner'

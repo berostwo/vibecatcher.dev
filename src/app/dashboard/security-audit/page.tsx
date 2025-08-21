@@ -317,9 +317,24 @@ export default function SecurityAuditPage() {
         try {
           console.log('🔄 POLLING FOR PROGRESS...');
           
-          // SINGLE PROGRESS SYSTEM: Only poll the worker's /progress endpoint
-          const workerUrl = 'https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress';
-          console.log('📡 POLLING WORKER:', workerUrl);
+          // DISTRIBUTED PROGRESS SYSTEM: Get the correct worker for this audit
+          let workerUrl: string;
+          
+          try {
+            // Get the worker URL from Firestore for this specific audit
+            const audit = await FirebaseAuditService.getAuditById(currentAudit.id);
+            if (audit?.workerUrl) {
+              workerUrl = `${audit.workerUrl}/progress/${currentAudit.id}`;
+              console.log('📡 POLLING CORRECT WORKER:', workerUrl);
+            } else {
+              // Fallback to the main worker if no worker URL is set
+              workerUrl = 'https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress';
+              console.log('⚠️ No worker URL found, falling back to main worker:', workerUrl);
+            }
+          } catch (error) {
+            console.warn('Could not get worker URL, falling back to main worker:', error);
+            workerUrl = 'https://chatgpt-security-scanner-505997387504.us-central1.run.app/progress';
+          }
           
           // Also check the debug endpoint to see global state
           try {
@@ -364,6 +379,11 @@ export default function SecurityAuditPage() {
                 setIsScanning(false);
                 // The scan results will be fetched from Firestore when the worker completes
               }
+            } else if (progressData.status === 'wrong_worker') {
+              console.log('⚠️ Wrong worker - this worker is not handling the requested audit');
+              console.log('📊 WRONG WORKER INFO:', progressData);
+              // This worker is not handling the requested audit, try to find the correct one
+              // The frontend will automatically retry with the correct worker URL from Firestore
             } else {
               console.log('⚠️ Invalid worker progress data format:', progressData);
             }

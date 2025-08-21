@@ -24,6 +24,9 @@ export interface SecurityAudit {
     progress: number;
     timestamp: string;
   } | null;
+  // Worker information for distributed progress tracking
+  workerUrl?: string;
+  workerName?: string;
   scanResults?: {
     summary: {
       total_findings: number;
@@ -313,6 +316,32 @@ export class FirebaseAuditService {
       console.log(`Cleaned up ${deletePromises.length} old failed audits`);
     } catch (error) {
       console.error('Error cleaning up old failed audits:', error);
+    }
+  }
+
+  /**
+   * Get the worker URL for a specific audit
+   */
+  static async getWorkerUrlForAudit(auditId: string): Promise<string | null> {
+    try {
+      const audit = await this.getAuditById(auditId);
+      return audit?.workerUrl || null;
+    } catch (error) {
+      console.error('Error getting worker URL for audit:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if an audit is being handled by a specific worker
+   */
+  static async isAuditHandledByWorker(auditId: string, workerUrl: string): Promise<boolean> {
+    try {
+      const audit = await this.getAuditById(auditId);
+      return audit?.workerUrl === workerUrl;
+    } catch (error) {
+      console.error('Error checking if audit is handled by worker:', error);
+      return false;
     }
   }
 }

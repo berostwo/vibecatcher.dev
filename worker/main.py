@@ -23,6 +23,8 @@ import urllib.error
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn, BarColumn, TextColumn
 from rich.console import Console
 from rich.theme import Theme
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -261,6 +263,55 @@ current_scan_state = {
     'scan_id': None  # Track which scan is currently running
 }
 current_scan_lock = threading.Lock()
+
+# Worker self-identification
+WORKER_URL = os.environ.get('WORKER_URL', 'https://chatgpt-security-scanner-505997387504.us-central1.run.app')
+WORKER_NAME = os.environ.get('WORKER_NAME', 'chatgpt-security-scanner')
+logger.info(f"🔧 WORKER IDENTITY: {WORKER_NAME} at {WORKER_URL}")
+
+# Initialize Firebase Admin SDK
+try:
+    # Check if Firebase is already initialized
+    if not firebase_admin._apps:
+        # Initialize with service account key from environment variable
+        service_account_info = os.environ.get('FIREBASE_SERVICE_ACCOUNT')
+        if service_account_info:
+            cred = credentials.Certificate(json.loads(service_account_info))
+            firebase_admin.initialize_app(cred)
+            logger.info("✅ Firebase Admin SDK initialized successfully")
+        else:
+            logger.warning("⚠️ FIREBASE_SERVICE_ACCOUNT not set, Firebase integration disabled")
+    else:
+        logger.info("✅ Firebase Admin SDK already initialized")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize Firebase Admin SDK: {e}")
+
+# Get Firestore client
+try:
+    db = firestore.client()
+    logger.info("✅ Firestore client initialized")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize Firestore client: {e}")
+    db = None
+
+def update_audit_worker_info(audit_id: str, worker_url: str, worker_name: str):
+    """Update Firestore audit document with worker information"""
+    try:
+        if db is None:
+            logger.warning("⚠️ Firestore not available, skipping worker info update")
+            return False
+        
+        audit_ref = db.collection('security_audits').document(audit_id)
+        audit_ref.update({
+            'workerUrl': worker_url,
+            'workerName': worker_name,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        logger.info(f"✅ Updated audit {audit_id} with worker info: {worker_name} at {worker_url}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to update audit worker info: {e}")
+        return False
 
 # Global progress push configuration (for Firestore via backend webhook)
 # SINGLE PROGRESS SYSTEM: Only the worker's /progress endpoint
@@ -1280,7 +1331,7 @@ class ChatGPTSecurityScanner:
             "Missing access controls",
             "Weak crypto implementations"
         ]
-        
+    
         # Support up to 4 API keys per worker (5 workers × 4 keys = 20 total)
         for i in range(1, 5):
             additional_key = os.environ.get(f'OPENAI_API_KEY_{i}')
@@ -2138,6 +2189,7 @@ class ChatGPTSecurityScanner:
 
             # If sharding is enabled and we have peers, offload part of the batches via HTTP fan-out
             # Respect minimum file threshold to avoid sharding small repos
+            logger.info(f"🔍 SHARDING CHECK: sharding_enabled={self.sharding_enabled}, worker_peers={self.worker_peers}, total_files={total_files}, min_threshold={getattr(self, 'min_files_for_sharding', 300)}")
             if self.sharding_enabled and self.worker_peers and total_files >= getattr(self, 'min_files_for_sharding', 300):
                 try:
                     logger.info("🧩 Sharding: distributing batches to peers")
@@ -2206,11 +2258,12 @@ class ChatGPTSecurityScanner:
                         logger.warning(f"🧩 Shard collection failed: {e}")
 
                     all_findings = local_findings + aggregated_findings
-                except Exception as e:
+            except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
             else:
                 # No sharding: process all batches locally
+                logger.info("🚀 NO SHARDING: Processing all batches locally on this worker")
                 all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
 
             # all_findings already computed via local processing and/or sharding above
@@ -3929,11 +3982,11 @@ def get_progress():
             logger.warning(f"📊 PROGRESS ENDPOINT: Returning no_scan_running - is_running: {scan_state.get('is_running', 'NOT_FOUND')}")
             logger.warning(f"📊 PROGRESS ENDPOINT: Current step: {scan_state.get('step', 'NOT_FOUND')}")
             logger.warning(f"📊 PROGRESS ENDPOINT: Current percentage: {scan_state.get('percentage', 'NOT_FOUND')}")
-            return jsonify({
-                'status': 'no_scan_running',
-                'message': 'No security scan is currently running'
-            })
-        
+        return jsonify({
+            'status': 'no_scan_running',
+            'message': 'No security scan is currently running'
+        })
+    
         # Format time remaining for frontend
         if scan_state.get('remaining_seconds') is not None:
             remaining_minutes = int(scan_state['remaining_seconds'] // 60)
@@ -3969,6 +4022,84 @@ def get_progress():
         return jsonify({
             'status': 'error',
             'message': 'Failed to get progress data'
+        }), 500
+
+@app.route('/progress/<audit_id>', methods=['GET'])
+def get_progress_for_audit(audit_id: str):
+    """Get progress for a specific audit ID"""
+    try:
+        # Use global scan state for cross-thread access
+        global current_scan_state, current_scan_lock
+        
+        with current_scan_lock:
+            scan_state = current_scan_state.copy()
+        
+        # Check if this worker is handling the requested audit
+        current_audit_id = scan_state.get('scan_id')
+        
+        logger.info(f"📊 AUDIT-SPECIFIC PROGRESS: Requested audit_id={audit_id}, Current audit_id={current_audit_id}")
+        
+        # If this worker is not handling the requested audit, return error
+        if current_audit_id != audit_id:
+            logger.warning(f"📊 AUDIT-SPECIFIC PROGRESS: This worker is not handling audit {audit_id}")
+            return jsonify({
+                'status': 'wrong_worker',
+                'message': f'This worker is not handling audit {audit_id}',
+                'current_audit_id': current_audit_id,
+                'worker_name': WORKER_NAME,
+                'worker_url': WORKER_URL
+            }), 404
+        
+        # Check if scan is running
+        if not scan_state.get('is_running', False):
+            logger.warning(f"📊 AUDIT-SPECIFIC PROGRESS: No scan running for audit {audit_id}")
+            return jsonify({
+                'status': 'no_scan_running',
+                'message': f'No security scan is currently running for audit {audit_id}',
+                'audit_id': audit_id,
+                'worker_name': WORKER_NAME,
+                'worker_url': WORKER_URL
+            })
+        
+        # Format time remaining for frontend
+        if scan_state.get('remaining_seconds') is not None:
+            remaining_minutes = int(scan_state['remaining_seconds'] // 60)
+            remaining_seconds = int(scan_state['remaining_seconds'] % 60)
+            if remaining_minutes > 0:
+                time_remaining = f"{remaining_minutes}m {remaining_seconds}s"
+            else:
+                time_remaining = f"{remaining_seconds}s"
+        else:
+            time_remaining = "Calculating..."
+        
+        # Format elapsed time
+        elapsed_minutes = int(scan_state.get('elapsed_seconds', 0) // 60)
+        elapsed_seconds = int(scan_state.get('elapsed_seconds', 0) % 60)
+        if elapsed_minutes > 0:
+            elapsed_time = f"{elapsed_minutes}m {elapsed_seconds}s"
+        else:
+            elapsed_time = f"{elapsed_seconds}s"
+        
+        return jsonify({
+            'status': 'scan_running',
+            'audit_id': audit_id,
+            'step': scan_state.get('step', 'Unknown'),
+            'percentage': scan_state.get('percentage', 0),
+            'elapsed_time': elapsed_time,
+            'time_remaining': time_remaining,
+            'completed_tasks': scan_state.get('completed_tasks', 0),
+            'total_tasks': scan_state.get('total_tasks', 0),
+            'worker_name': WORKER_NAME,
+            'worker_url': WORKER_URL,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Audit-specific progress endpoint error: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to get progress data',
+            'audit_id': audit_id
         }), 500
 
 @app.route('/progress/reset', methods=['POST'])
@@ -4021,9 +4152,36 @@ def debug_global_state():
         with current_scan_lock:
             scan_state = current_scan_state.copy()
         
+        # Also check sharding configuration
+        scanner = ChatGPTSecurityScanner()
+        
+        # Check if we should force disable sharding for testing
+        force_disable_sharding = request.args.get('disable_sharding', 'false').lower() == 'true'
+        if force_disable_sharding:
+            scanner.sharding_enabled = False
+            scanner.worker_peers = []
+            logger.info("🔧 FORCE DISABLED SHARDING for testing")
+        
+        sharding_info = {
+            'sharding_enabled': scanner.sharding_enabled,
+            'worker_peers': scanner.worker_peers,
+            'max_workers_per_scan': scanner.max_workers_per_scan,
+            'min_files_for_sharding': getattr(scanner, 'min_files_for_sharding', 300),
+            'force_disabled': force_disable_sharding
+        }
+        
+        # Check environment variables
+        env_info = {
+            'SHARDING_ENABLED': os.environ.get('SHARDING_ENABLED', 'NOT_SET'),
+            'WORKER_PEERS': os.environ.get('WORKER_PEERS', 'NOT_SET'),
+            'SHARD_MAX_WORKERS_PER_SCAN': os.environ.get('SHARD_MAX_WORKERS_PER_SCAN', 'NOT_SET')
+        }
+        
         return jsonify({
             'status': 'success',
             'global_scan_state': scan_state,
+            'sharding_config': sharding_info,
+            'environment_vars': env_info,
             'timestamp': datetime.now().isoformat(),
             'thread_info': {
                 'current_thread': str(threading.current_thread()),
@@ -4184,10 +4342,17 @@ def security_scan():
             
             # Start progress tracking for new scan (cleanup happens automatically)
             # Single progress system - no webhooks needed
+            logger.info(f"🚀 STARTING PROGRESS TRACKING: audit_id={audit_id}, estimated_batches={estimated_batches}")
             progress_tracker.start_progress(estimated_batches, "Initializing security scan...", scan_id=audit_id)
+            
+            # Update Firestore with worker information for this audit
+            if audit_id:
+                update_audit_worker_info(audit_id, WORKER_URL, WORKER_NAME)
             
             # DEBUG: Log the global state after starting progress
             logger.info(f"🔍 DEBUG: Global scan state after start_progress: {current_scan_state}")
+            logger.info(f"🔍 DEBUG: Global scan state is_running: {current_scan_state.get('is_running')}")
+            logger.info(f"🔍 DEBUG: Global scan state scan_id: {current_scan_state.get('scan_id')}")
             
             # Set a hard timeout for the entire scan
             scan_timeout = 600  # 10 minutes max (Cloud Run timeout is 15 minutes)
