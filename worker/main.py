@@ -56,7 +56,7 @@ class ProgressTracker:
         self._progress = None
         self._console = None
         
-    def start_progress(self, total_tasks: int, initial_step: str = "Starting scan..."):
+    def start_progress(self, total_tasks: int, initial_step: str = "Starting scan...", scan_id: str = None):
         """Initialize progress tracking"""
         with self.lock:
             self.start_time = datetime.now()
@@ -67,7 +67,8 @@ class ProgressTracker:
                 'remaining_seconds': None,
                 'total_tasks': total_tasks,
                 'completed_tasks': 0,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'scan_id': scan_id
             })
             
             # Update global scan state for cross-thread access
@@ -82,9 +83,10 @@ class ProgressTracker:
                         'completed_tasks': 0,
                         'start_time': self.start_time,
                         'elapsed_seconds': 0,
-                        'remaining_seconds': None
+                        'remaining_seconds': None,
+                        'scan_id': scan_id
                     })
-                logger.info(f"🔒 GLOBAL STATE STARTED: {initial_step} - is_running: True - total_tasks: {total_tasks}")
+                logger.info(f"🔒 GLOBAL STATE STARTED: {initial_step} - is_running: True - total_tasks: {total_tasks} - scan_id: {scan_id}")
             except Exception as e:
                 logger.error(f"❌ GLOBAL STATE START FAILED: {e}")
                 # This is critical - if we can't start global state, progress won't work
@@ -158,17 +160,20 @@ class ProgressTracker:
             try:
                 percent_value = round(percentage, 1)
                 with current_scan_lock:
-                    current_scan_state.update({
-                        'is_running': True,  # Keep scan marked as running
-                        'step': step,
-                        'percentage': percent_value,
-                        'completed_tasks': self.progress_data['completed_tasks'],
-                        'elapsed_seconds': self.progress_data['elapsed_seconds'],
-                        'remaining_seconds': self.progress_data['remaining_seconds']
-                    })
-                logger.info(f"🔒 GLOBAL STATE UPDATED: {step} - {percent_value}% - is_running: True")
-                # Also push to webhook (throttled)
-                maybe_send_progress_webhook(step, percent_value)
+                    # Only update if this is the current scan (scan_id matches)
+                    if current_scan_state.get('scan_id') == self.progress_data.get('scan_id'):
+                        current_scan_state.update({
+                            'is_running': True,  # Keep scan marked as running
+                            'step': step,
+                            'percentage': percent_value,
+                            'completed_tasks': self.progress_data['completed_tasks'],
+                            'elapsed_seconds': self.progress_data['elapsed_seconds'],
+                            'remaining_seconds': self.progress_data['remaining_seconds']
+                        })
+                        logger.info(f"🔒 GLOBAL STATE UPDATED: {step} - {percent_value}% - is_running: True - scan_id: {self.progress_data.get('scan_id')}")
+                        # No more webhooks - single progress system
+                    else:
+                        logger.warning(f"⚠️ PROGRESS IGNORED: Scan ID mismatch - current: {current_scan_state.get('scan_id')}, this: {self.progress_data.get('scan_id')}")
             except Exception as e:
                 logger.error(f"❌ GLOBAL STATE UPDATE FAILED: {e}")
                 # This is critical - if we can't update global state, progress won't work
@@ -199,16 +204,19 @@ class ProgressTracker:
             # Update global scan state for cross-thread access
             global current_scan_state, current_scan_lock
             with current_scan_lock:
-                current_scan_state.update({
-                    'is_running': False,  # Mark as completed
-                    'step': final_step,
-                    'percentage': 100,
-                    'completed_tasks': self.progress_data['total_tasks'],
-                    'elapsed_seconds': self.progress_data.get('elapsed_seconds', 0),
-                    'remaining_seconds': 0
-                })
-            
-            logger.info(f"✅ Progress completed: {final_step}")
+                # Only update if this is the current scan (scan_id matches)
+                if current_scan_state.get('scan_id') == self.progress_data.get('scan_id'):
+                    current_scan_state.update({
+                        'is_running': False,  # Mark as completed
+                        'step': final_step,
+                        'percentage': 100,
+                        'completed_tasks': self.progress_data['total_tasks'],
+                        'elapsed_seconds': self.progress_data.get('elapsed_seconds', 0),
+                        'remaining_seconds': 0
+                    })
+                    logger.info(f"✅ Progress completed: {final_step} - scan_id: {self.progress_data.get('scan_id')}")
+                else:
+                    logger.warning(f"⚠️ COMPLETION IGNORED: Scan ID mismatch - current: {current_scan_state.get('scan_id')}, this: {self.progress_data.get('scan_id')}")
     
     def cleanup(self):
         """Clean up progress resources"""
@@ -220,16 +228,22 @@ class ProgressTracker:
             # Update global scan state for cross-thread access
             global current_scan_state, current_scan_lock
             with current_scan_lock:
-                current_scan_state.update({
-                    'is_running': False,
-                    'step': 'No scan running',
-                    'percentage': 0,
-                    'total_tasks': 0,
-                    'completed_tasks': 0,
-                    'start_time': None,
-                    'elapsed_seconds': 0,
-                    'remaining_seconds': None
-                })
+                # Only update if this is the current scan (scan_id matches)
+                if current_scan_state.get('scan_id') == self.progress_data.get('scan_id'):
+                    current_scan_state.update({
+                        'is_running': False,
+                        'step': 'No scan running',
+                        'percentage': 0,
+                        'total_tasks': 0,
+                        'completed_tasks': 0,
+                        'start_time': None,
+                        'elapsed_seconds': 0,
+                        'remaining_seconds': None,
+                        'scan_id': None
+                    })
+                    logger.info(f"🧹 Progress cleanup completed - scan_id: {self.progress_data.get('scan_id')}")
+                else:
+                    logger.warning(f"⚠️ CLEANUP IGNORED: Scan ID mismatch - current: {current_scan_state.get('scan_id')}, this: {self.progress_data.get('scan_id')}")
 
 # Global progress tracker instance
 progress_tracker = ProgressTracker()
@@ -243,51 +257,17 @@ current_scan_state = {
     'completed_tasks': 0,
     'start_time': None,
     'elapsed_seconds': 0,
-    'remaining_seconds': None
+    'remaining_seconds': None,
+    'scan_id': None  # Track which scan is currently running
 }
 current_scan_lock = threading.Lock()
 
 # Global progress push configuration (for Firestore via backend webhook)
-GLOBAL_AUDIT_ID: Optional[str] = None
-GLOBAL_PROGRESS_WEBHOOK_URL: Optional[str] = None
-GLOBAL_LAST_PROGRESS_WEBHOOK_SENT_TS: float = 0.0
-GLOBAL_LAST_PROGRESS_STEP: Optional[str] = None
-GLOBAL_LAST_PROGRESS_PERCENT: Optional[float] = None
+# SINGLE PROGRESS SYSTEM: Only the worker's /progress endpoint
 
-# Throttled progress webhook sender (every ~3s or on milestone change)
-def maybe_send_progress_webhook(step: str, percent: float) -> None:
-    try:
-        global GLOBAL_AUDIT_ID, GLOBAL_PROGRESS_WEBHOOK_URL
-        global GLOBAL_LAST_PROGRESS_WEBHOOK_SENT_TS, GLOBAL_LAST_PROGRESS_STEP, GLOBAL_LAST_PROGRESS_PERCENT
-        if not GLOBAL_AUDIT_ID or not GLOBAL_PROGRESS_WEBHOOK_URL:
-            return
-
-        now = time.time()
-        is_milestone_change = (GLOBAL_LAST_PROGRESS_STEP != step) or (GLOBAL_LAST_PROGRESS_PERCENT != percent)
-        should_send = is_milestone_change or (now - GLOBAL_LAST_PROGRESS_WEBHOOK_SENT_TS >= 2.5) or percent >= 100.0
-        if not should_send:
-            return
-
-        payload = {
-            'audit_id': GLOBAL_AUDIT_ID,
-            'status': 'running' if percent < 100.0 else 'completed',
-            'progress': {
-                'step': step,
-                'progress': round(percent, 1),
-                'timestamp': datetime.now().isoformat()
-            }
-        }
-        try:
-            import requests
-            requests.post(GLOBAL_PROGRESS_WEBHOOK_URL, json=payload, timeout=5)
-            GLOBAL_LAST_PROGRESS_WEBHOOK_SENT_TS = now
-            GLOBAL_LAST_PROGRESS_STEP = step
-            GLOBAL_LAST_PROGRESS_PERCENT = percent
-            logger.info(f"📡 PROGRESS WEBHOOK SENT: {round(percent,1)}% - {step}")
-        except Exception as webhook_err:
-            logger.warning(f"⚠️ Progress webhook failed: {webhook_err}")
-    except Exception as e:
-        logger.error(f"❌ maybe_send_progress_webhook error: {e}")
+# No more webhooks - single progress system
+# All webhook code removed - single progress system
+# All remaining orphaned webhook code removed
 
 # DEBUG: Log initial global state
 logger.info(f"🔍 INITIAL GLOBAL STATE: {current_scan_state}")
@@ -4166,7 +4146,6 @@ def security_scan():
         repo_url = data.get('repository_url')
         github_token = data.get('github_token')
         audit_id = data.get('audit_id')
-        progress_webhook_url = data.get('progress_webhook_url')
         # Progress tracking removed
         
         # Input validation
@@ -4204,14 +4183,8 @@ def security_scan():
             estimated_batches = 30  # Conservative estimate for most repos
             
             # Start progress tracking for new scan (cleanup happens automatically)
-            # Also set global webhook context for pushing progress
-            global GLOBAL_AUDIT_ID, GLOBAL_PROGRESS_WEBHOOK_URL, GLOBAL_LAST_PROGRESS_WEBHOOK_SENT_TS, GLOBAL_LAST_PROGRESS_STEP, GLOBAL_LAST_PROGRESS_PERCENT
-            GLOBAL_AUDIT_ID = audit_id
-            GLOBAL_PROGRESS_WEBHOOK_URL = progress_webhook_url
-            GLOBAL_LAST_PROGRESS_WEBHOOK_SENT_TS = 0.0
-            GLOBAL_LAST_PROGRESS_STEP = None
-            GLOBAL_LAST_PROGRESS_PERCENT = None
-            progress_tracker.start_progress(estimated_batches, "Initializing security scan...")
+            # Single progress system - no webhooks needed
+            progress_tracker.start_progress(estimated_batches, "Initializing security scan...", scan_id=audit_id)
             
             # DEBUG: Log the global state after starting progress
             logger.info(f"🔍 DEBUG: Global scan state after start_progress: {current_scan_state}")
@@ -4253,60 +4226,17 @@ def security_scan():
             
             # Complete progress tracking
             progress_tracker.complete_progress("Scan completed successfully!")
-            # Ensure a final webhook push at 100%
-            try:
-                maybe_send_progress_webhook("Scan completed successfully!", 100.0)
-            except Exception:
-                pass
+            # No more webhooks - single progress system
             
-            # Send completion webhook if URL provided
-            if progress_webhook_url:
-                try:
-                    import requests
-                    webhook_payload = {
-                        'audit_id': audit_id,
-                        'status': 'completed',
-                        'progress': {
-                            'step': 'Scan completed successfully!',
-                            'progress': 100,
-                            'timestamp': datetime.now().isoformat()
-                        },
-                        'scan_results': result
-                    }
-                    requests.post(progress_webhook_url, json=webhook_payload, timeout=10)
-                    logger.info(f"📡 Completion webhook sent to: {progress_webhook_url}")
-                except Exception as webhook_error:
-                    logger.warning(f"⚠️ Failed to send completion webhook: {webhook_error}")
-            
+            # No more webhooks - single progress system
             return jsonify(result)
             
         except asyncio.TimeoutError:
             logger.error(f"❌ Scan timed out after {scan_timeout}s")
             progress_tracker.complete_progress("Scan timed out")
-            try:
-                maybe_send_progress_webhook("Scan timed out", 100.0)
-            except Exception:
-                pass
+            # No more webhooks - single progress system
             
-            # Send timeout webhook if URL provided
-            if progress_webhook_url:
-                try:
-                    import requests
-                    webhook_payload = {
-                        'audit_id': audit_id,
-                        'status': 'failed',
-                        'progress': {
-                            'step': 'Scan timed out',
-                            'progress': 100,
-                            'timestamp': datetime.now().isoformat()
-                        },
-                        'error': f'Scan timed out after {scan_timeout}s - repository too large or complex',
-                        'error_type': 'TimeoutError'
-                    }
-                    requests.post(progress_webhook_url, json=webhook_payload, timeout=10)
-                    logger.info(f"📡 Timeout webhook sent to: {progress_webhook_url}")
-                except Exception as webhook_error:
-                    logger.warning(f"⚠️ Failed to send timeout webhook: {webhook_error}")
+            # No more webhooks - single progress system
             
             return jsonify({
                 'error': f'Scan timed out after {scan_timeout}s - repository too large or complex',
@@ -4317,30 +4247,9 @@ def security_scan():
         except Exception as scan_error:
             logger.error(f"❌ Scan execution error: {scan_error}")
             progress_tracker.complete_progress("Scan failed with error")
-            try:
-                maybe_send_progress_webhook("Scan failed with error", 100.0)
-            except Exception:
-                pass
+            # No more webhooks - single progress system
             
-            # Send error webhook if URL provided
-            if progress_webhook_url:
-                try:
-                    import requests
-                    webhook_payload = {
-                        'audit_id': audit_id,
-                        'status': 'failed',
-                        'progress': {
-                            'step': 'Scan failed with error',
-                            'progress': 100,
-                            'timestamp': datetime.now().isoformat()
-                        },
-                        'error': str(scan_error),
-                        'error_type': type(scan_error).__name__
-                    }
-                    requests.post(progress_webhook_url, json=webhook_payload, timeout=10)
-                    logger.info(f"📡 Error webhook sent to: {progress_webhook_url}")
-                except Exception as webhook_error:
-                    logger.warning(f"⚠️ Failed to send error webhook: {webhook_error}")
+            # No more webhooks - single progress system
             
             return jsonify({
                 'error': str(scan_error),
