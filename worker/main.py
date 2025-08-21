@@ -4052,6 +4052,20 @@ def get_progress_for_audit(audit_id: str):
         
         # If this worker is not handling the requested audit, return error
         if current_audit_id != audit_id:
+            # Check if there's a scan in progress but scan_id is not set yet (race condition)
+            if scan_state.get('is_running', False) and current_audit_id is None:
+                logger.info(f"📊 AUDIT-SPECIFIC PROGRESS: Scan in progress but scan_id not set yet (race condition)")
+                return jsonify({
+                    'status': 'scan_starting',
+                    'message': 'Security scan is starting up, please wait...',
+                    'audit_id': audit_id,
+                    'step': 'Initializing scan...',
+                    'percentage': 0,
+                    'worker_name': WORKER_NAME,
+                    'worker_url': WORKER_URL,
+                    'timestamp': datetime.now().isoformat()
+                })
+            
             logger.warning(f"📊 AUDIT-SPECIFIC PROGRESS: This worker is not handling audit {audit_id}")
             return jsonify({
                 'status': 'wrong_worker',
