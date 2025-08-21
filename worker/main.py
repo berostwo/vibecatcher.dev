@@ -2198,6 +2198,7 @@ class ChatGPTSecurityScanner:
             # If sharding is enabled and we have peers, offload part of the batches via HTTP fan-out
             # Respect minimum file threshold to avoid sharding small repos
             logger.info(f"🔍 SHARDING CHECK: sharding_enabled={self.sharding_enabled}, worker_peers={self.worker_peers}, total_files={total_files}, min_threshold={getattr(self, 'min_files_for_sharding', 300)}")
+            
             if self.sharding_enabled and self.worker_peers and total_files >= getattr(self, 'min_files_for_sharding', 300):
                 try:
                     logger.info("🧩 Sharding: distributing batches to peers")
