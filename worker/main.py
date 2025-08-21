@@ -72,17 +72,22 @@ class ProgressTracker:
             
             # Update global scan state for cross-thread access
             global current_scan_state, current_scan_lock
-            with current_scan_lock:
-                current_scan_state.update({
-                    'is_running': True,
-                    'step': initial_step,
-                    'percentage': 0,
-                    'total_tasks': total_tasks,
-                    'completed_tasks': 0,
-                    'start_time': self.start_time,
-                    'elapsed_seconds': 0,
-                    'remaining_seconds': None
-                })
+            try:
+                with current_scan_lock:
+                    current_scan_state.update({
+                        'is_running': True,
+                        'step': initial_step,
+                        'percentage': 0,
+                        'total_tasks': total_tasks,
+                        'completed_tasks': 0,
+                        'start_time': self.start_time,
+                        'elapsed_seconds': 0,
+                        'remaining_seconds': None
+                    })
+                logger.info(f"🔒 GLOBAL STATE STARTED: {initial_step} - is_running: True - total_tasks: {total_tasks}")
+            except Exception as e:
+                logger.error(f"❌ GLOBAL STATE START FAILED: {e}")
+                # This is critical - if we can't start global state, progress won't work
             
             # Create rich progress bar
             self._progress = Progress(
@@ -150,14 +155,20 @@ class ProgressTracker:
             
             # Update global scan state for cross-thread access
             global current_scan_state, current_scan_lock
-            with current_scan_lock:
-                current_scan_state.update({
-                    'step': step,
-                    'percentage': round(percentage, 1),
-                    'completed_tasks': self.progress_data['completed_tasks'],
-                    'elapsed_seconds': self.progress_data['elapsed_seconds'],
-                    'remaining_seconds': self.progress_data['remaining_seconds']
-                })
+            try:
+                with current_scan_lock:
+                    current_scan_state.update({
+                        'is_running': True,  # Keep scan marked as running
+                        'step': step,
+                        'percentage': round(percentage, 1),
+                        'completed_tasks': self.progress_data['completed_tasks'],
+                        'elapsed_seconds': self.progress_data['elapsed_seconds'],
+                        'remaining_seconds': self.progress_data['remaining_seconds']
+                    })
+                logger.info(f"🔒 GLOBAL STATE UPDATED: {step} - {round(percentage, 1)}% - is_running: True")
+            except Exception as e:
+                logger.error(f"❌ GLOBAL STATE UPDATE FAILED: {e}")
+                # This is critical - if we can't update global state, progress won't work
             
             logger.info(f"📊 Progress: {step} - {percentage:.1f}% ({self.progress_data['completed_tasks']}/{self.progress_data['total_tasks']})")
     
@@ -186,10 +197,12 @@ class ProgressTracker:
             global current_scan_state, current_scan_lock
             with current_scan_lock:
                 current_scan_state.update({
-                    'is_running': False,
+                    'is_running': False,  # Mark as completed
                     'step': final_step,
                     'percentage': 100,
-                    'completed_tasks': self.progress_data['total_tasks']
+                    'completed_tasks': self.progress_data['total_tasks'],
+                    'elapsed_seconds': self.progress_data.get('elapsed_seconds', 0),
+                    'remaining_seconds': 0
                 })
             
             logger.info(f"✅ Progress completed: {final_step}")
@@ -200,6 +213,20 @@ class ProgressTracker:
             if self._progress:
                 self._progress.stop()
                 self._progress = None
+            
+            # Update global scan state for cross-thread access
+            global current_scan_state, current_scan_lock
+            with current_scan_lock:
+                current_scan_state.update({
+                    'is_running': False,
+                    'step': 'No scan running',
+                    'percentage': 0,
+                    'total_tasks': 0,
+                    'completed_tasks': 0,
+                    'start_time': None,
+                    'elapsed_seconds': 0,
+                    'remaining_seconds': None
+                })
 
 # Global progress tracker instance
 progress_tracker = ProgressTracker()
@@ -216,6 +243,9 @@ current_scan_state = {
     'remaining_seconds': None
 }
 current_scan_lock = threading.Lock()
+
+# DEBUG: Log initial global state
+logger.info(f"🔍 INITIAL GLOBAL STATE: {current_scan_state}")
 
 class DependencyAnalyzer:
     """Analyzes dependencies to eliminate false positives about unused packages"""
@@ -2550,8 +2580,10 @@ class ChatGPTSecurityScanner:
             # Update progress for shard batch processing
             try:
                 progress_tracker.update_progress(f"Shard batch {batch_num + 1}/{total_batches}", batch_num + 1)
-            except Exception:
-                pass  # Don't let progress tracking break the scan
+                logger.info(f"📊 PROGRESS: Shard batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+            except Exception as e:
+                logger.error(f"❌ PROGRESS ERROR: Failed to update progress for shard batch {batch_num + 1}: {e}")
+                # Don't let progress tracking break the scan, but log the error
 
             batch_content = []
             for item in batch_items:
@@ -2677,8 +2709,10 @@ class ChatGPTSecurityScanner:
             # Update progress for batch processing
             try:
                 progress_tracker.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_num + 1)
-            except Exception:
-                pass  # Don't let progress tracking break the scan
+                logger.info(f"📊 PROGRESS: Thread batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+            except Exception as e:
+                logger.error(f"❌ PROGRESS ERROR: Failed to update progress for thread batch {batch_num + 1}: {e}")
+                # Don't let progress tracking break the scan, but log the error
             
             # Build comprehensive batch prompt with content chunking
             batch_content = []
@@ -2884,8 +2918,10 @@ class ChatGPTSecurityScanner:
             # Update progress for parallel batch processing
             try:
                 progress_tracker.update_progress(f"Processing batch {batch_num + 1}/{total_batches}", batch_num + 1)
-            except Exception:
-                pass  # Don't let progress tracking break the scan
+                logger.info(f"📊 PROGRESS: Parallel batch {batch_num + 1}/{total_batches} - Progress updated successfully")
+            except Exception as e:
+                logger.error(f"❌ PROGRESS ERROR: Failed to update progress for parallel batch {batch_num + 1}: {e}")
+                # Don't let progress tracking break the scan, but log the error
             
             # Build comprehensive batch prompt with content chunking
             batch_content = []
@@ -3831,9 +3867,13 @@ def get_progress():
         # DEBUG: Log what we're getting from global state
         logger.info(f"📊 PROGRESS ENDPOINT: global_scan_state = {scan_state}")
         logger.info(f"📊 PROGRESS ENDPOINT: is_running = {scan_state.get('is_running', 'NOT_FOUND')}")
+        logger.info(f"📊 PROGRESS ENDPOINT: step = {scan_state.get('step', 'NOT_FOUND')}")
+        logger.info(f"📊 PROGRESS ENDPOINT: percentage = {scan_state.get('percentage', 'NOT_FOUND')}")
         
         if not scan_state.get('is_running', False):
             logger.warning(f"📊 PROGRESS ENDPOINT: Returning no_scan_running - is_running: {scan_state.get('is_running', 'NOT_FOUND')}")
+            logger.warning(f"📊 PROGRESS ENDPOINT: Current step: {scan_state.get('step', 'NOT_FOUND')}")
+            logger.warning(f"📊 PROGRESS ENDPOINT: Current percentage: {scan_state.get('percentage', 'NOT_FOUND')}")
             return jsonify({
                 'status': 'no_scan_running',
                 'message': 'No security scan is currently running'
@@ -3915,6 +3955,28 @@ def cleanup_stuck_audit():
         return jsonify({'status': 'ok', 'message': f'Stuck audit {audit_id} cleaned up'})
     except Exception as e:
         logger.error(f"❌ Failed to cleanup stuck audit: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/debug/global-state', methods=['GET'])
+def debug_global_state():
+    """Debug endpoint to inspect global scan state"""
+    try:
+        global current_scan_state, current_scan_lock
+        
+        with current_scan_lock:
+            scan_state = current_scan_state.copy()
+        
+        return jsonify({
+            'status': 'success',
+            'global_scan_state': scan_state,
+            'timestamp': datetime.now().isoformat(),
+            'thread_info': {
+                'current_thread': str(threading.current_thread()),
+                'active_threads': len(threading.enumerate())
+            }
+        })
+    except Exception as e:
+        logger.error(f"❌ Debug global state error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/cache-stats', methods=['GET'])
@@ -4063,9 +4125,11 @@ def security_scan():
             # We'll use a reasonable estimate since we don't know exact batch count yet
             estimated_batches = 30  # Conservative estimate for most repos
             
-            # Reset progress tracker for new scan
-            progress_tracker.cleanup()
+            # Start progress tracking for new scan (cleanup happens automatically)
             progress_tracker.start_progress(estimated_batches, "Initializing security scan...")
+            
+            # DEBUG: Log the global state after starting progress
+            logger.info(f"🔍 DEBUG: Global scan state after start_progress: {current_scan_state}")
             
             # Set a hard timeout for the entire scan
             scan_timeout = 600  # 10 minutes max (Cloud Run timeout is 15 minutes)
@@ -4074,9 +4138,11 @@ def security_scan():
             
             # Update progress for scan start
             progress_tracker.update_progress("Starting repository analysis...", 0)
+            logger.info(f"🔍 DEBUG: Global scan state after update 1: {current_scan_state}")
             
             # Update progress for scan execution
             progress_tracker.update_progress("Executing security analysis...", 5)
+            logger.info(f"🔍 DEBUG: Global scan state after update 2: {current_scan_state}")
             
             # Run with timeout protection using asyncio.run()
             logger.info(f"🚀 EXECUTING SCAN: scanner.scan_repository()")
