@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code } from 'lucide-react';
+import { CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, ShieldCheck, Copy, ChevronDown } from 'lucide-react';
 import React from 'react';
 
 interface Repository {
@@ -126,7 +126,7 @@ const getSeverityStyles = (severity: string) => {
   }
 };
 
-const AuditReportTemplate = ({ results }: { 
+const AuditReportTemplate = ({ results, currentAudit }: { 
   results: {
     repoName: string;
     summary: {
@@ -135,6 +135,7 @@ const AuditReportTemplate = ({ results }: {
       high: number;
       medium: number;
       low: number;
+      resolvedCount: number;
     };
     vulnerabilities: Array<{
       id: string;
@@ -145,17 +146,116 @@ const AuditReportTemplate = ({ results }: {
       description: string;
       remediation: string;
       occurrences: number;
+      status?: 'open' | 'resolved' | 'false_positive';
     }>;
   };
+  currentAudit?: SecurityAudit | null;
 }) => {
   // AUTO-COLLAPSE: Track which card is currently expanded
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const { toast } = useToast();
+  
+  // Copy to clipboard function
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({
+        title: "Copied to clipboard!",
+        description: "Remediation prompt copied successfully",
+        duration: 2000,
+      });
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+      toast({
+        title: "Copy failed",
+        description: "Failed to copy to clipboard",
+        variant: "destructive",
+        duration: 3000,
+      });
+    }
+  };
+
+  // Handle status change for findings
+  const handleStatusChange = async (findingId: string, newStatus: string) => {
+    // Validate the status
+    if (!['open', 'resolved', 'false_positive'].includes(newStatus)) {
+      return;
+    }
+    
+    const validStatus = newStatus as 'open' | 'resolved' | 'false_positive';
+    
+    try {
+      // Generate a hash for the finding content to enable cross-audit learning
+      const finding = results.vulnerabilities.find(v => v.id === findingId);
+      if (!finding) return;
+      
+      const findingContent = `${finding.title}-${finding.description}`;
+      const findingHash = btoa(findingContent).slice(0, 16); // Simple hash for demo
+      
+      // Update the vulnerability status in the results
+      const updatedVulnerabilities = results.vulnerabilities.map(vuln => 
+        vuln.id === findingId ? { ...vuln, status: validStatus } : vuln
+      );
+      
+      // Recalculate resolved count
+      const resolvedCount = updatedVulnerabilities.filter(v => 
+        v.status === 'resolved' || v.status === 'false_positive'
+      ).length;
+      
+      // Update the results object
+      results.vulnerabilities = updatedVulnerabilities;
+      results.summary.resolvedCount = resolvedCount;
+      
+      // Persist to backend if we have an audit ID and status is not 'open'
+      if (currentAudit?.id && validStatus !== 'open') {
+        await FirebaseAuditService.updateFindingStatus(
+          currentAudit.id,
+          findingId,
+          validStatus,
+          currentAudit.userId || 'unknown',
+          findingHash
+        );
+      }
+      
+      toast({
+        title: "Status Updated",
+        description: `Finding marked as ${newStatus} and saved`,
+        duration: 2000,
+      });
+    } catch (error) {
+      console.error('Error updating finding status:', error);
+      toast({
+        title: "Error",
+        description: "Failed to save status change",
+        variant: "destructive",
+        duration: 3000,
+      });
+    }
+  };
   
     const healthScore = useMemo(() => {
         if (!results.summary.totalIssues) return 100;
-        const weightedScore = (results.summary.critical * 10) + (results.summary.high * 5) + (results.summary.medium * 2) + (results.summary.low * 1);
-        const maxScore = results.summary.totalIssues * 10;
-    return Math.max(0, Math.round((1 - (weightedScore / (maxScore || 1))) * 100));
+        
+        // Calculate outstanding issues (excluding resolved and false positives)
+        const outstandingIssues = results.vulnerabilities.filter(v => v.status === 'open').length;
+        
+        if (outstandingIssues === 0) return 100;
+        
+        // Calculate weighted score only for outstanding issues
+        const weightedScore = results.vulnerabilities
+            .filter(v => v.status === 'open')
+            .reduce((score, vuln) => {
+                switch (vuln.severity.toLowerCase()) {
+                    case 'critical': return score + 10;
+                    case 'high': return score + 5;
+                    case 'medium': return score + 2;
+                    case 'low': return score + 1;
+                    default: return score;
+                }
+            }, 0);
+        
+        const maxScore = outstandingIssues * 10;
+        return Math.max(0, Math.round((1 - (weightedScore / (maxScore || 1))) * 100));
     }, [results]);
     
   const getHealthColor = (score: number) => {
@@ -180,10 +280,16 @@ const AuditReportTemplate = ({ results }: {
           </div>
         </div>
         <div className="space-y-4 text-center">
+          {/* Findings Resolved Card */}
+          <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-4">
+            <h4 className="text-sm font-medium text-green-400">Findings Resolved</h4>
+            <p className="text-4xl font-bold text-green-500">{results.summary.resolvedCount || 0}</p>
+          </div>
+          
           <div className="grid grid-cols-2 gap-4">
             <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
-              <p className="text-4xl font-bold">{results.summary.totalIssues}</p>
+              <h4 className="text-sm font-medium text-muted-foreground">Outstanding Issues</h4>
+              <p className="text-4xl font-bold">{results.vulnerabilities.filter(v => v.status === 'open').length}</p>
             </div>
             <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
               <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
@@ -193,19 +299,27 @@ const AuditReportTemplate = ({ results }: {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
               <h4 className="text-sm font-medium text-red-400">Critical</h4>
-              <p className="text-4xl font-bold text-red-500">{results.summary.critical}</p>
+              <p className="text-4xl font-bold text-red-500">
+                {results.vulnerabilities.filter(v => v.status === 'open' && v.severity.toLowerCase() === 'critical').length}
+              </p>
             </div>
             <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-4">
               <h4 className="text-sm font-medium text-orange-400">High</h4>
-              <p className="text-4xl font-bold text-orange-500">{results.summary.high}</p>
+              <p className="text-4xl font-bold text-orange-500">
+                {results.vulnerabilities.filter(v => v.status === 'open' && v.severity.toLowerCase() === 'high').length}
+              </p>
             </div>
             <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-4">
               <h4 className="text-sm font-medium text-yellow-400">Medium</h4>
-              <p className="text-4xl font-bold text-yellow-500">{results.summary.medium}</p>
+              <p className="text-4xl font-bold text-yellow-500">
+                {results.vulnerabilities.filter(v => v.status === 'open' && v.severity.toLowerCase() === 'medium').length}
+              </p>
             </div>
-            <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-green-400">Low</h4>
-              <p className="text-4xl font-bold text-green-500">{results.summary.low}</p>
+            <div className="border border-blue-500/50 bg-blue-500/10 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-blue-400">Low</h4>
+              <p className="text-4xl font-bold text-blue-500">
+                {results.vulnerabilities.filter(v => v.status === 'open' && v.severity.toLowerCase() === 'low').length}
+              </p>
             </div>
           </div>
           {/* Master remediation UI removed */}
@@ -219,26 +333,43 @@ const AuditReportTemplate = ({ results }: {
           value={expandedCard || undefined}
           onValueChange={(value) => setExpandedCard(value)}
         >
-          {sortedVulnerabilities.map((vuln: any) => {
+          {sortedVulnerabilities
+            .filter((vuln: any) => vuln.status === 'open')
+            .map((vuln: any) => {
             const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
             return (
               <AccordionItem value={vuln.id} key={vuln.id} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
-                <AccordionTrigger className="hover:no-underline">
-                  <div className="flex items-center gap-4 w-full">
-                    {icon}
-                    <div className="flex-grow text-left">
-                      <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
-                                             <div className="flex items-center gap-2">
-                        <p className="text-sm text-muted-foreground font-mono">
-                          {vuln.occurrences > 1 
-                            ? `${vuln.occurrences} occurrences`
-                            : `${vuln.file}:${vuln.line}`
-                          }
-                        </p>
-                      </div>
+                <div className="flex items-center gap-4 w-full py-4">
+                  {icon}
+                  <div className="flex-grow text-left">
+                    <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm text-muted-foreground font-mono">
+                        {vuln.occurrences > 1 
+                          ? `${vuln.occurrences} occurrences`
+                          : `${vuln.file}:${vuln.line}`
+                        }
+                      </p>
                     </div>
                   </div>
-                </AccordionTrigger>
+                  <div className="flex items-center gap-2">
+                    <Select value={vuln.status || 'open'} onValueChange={(value) => handleStatusChange(vuln.id, value)}>
+                      <SelectTrigger className="w-32 h-8 text-xs">
+                        <SelectValue placeholder="Mark as..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="open">Open</SelectItem>
+                        <SelectItem value="resolved">Resolved</SelectItem>
+                        <SelectItem value="false_positive">False Positive</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <AccordionTrigger className="hover:no-underline ml-2">
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    </AccordionTrigger>
+                  </div>
+                </div>
                 <AccordionContent className="pt-2">
                   <p className="text-sm text-foreground/80 mb-4">{vuln.description}</p>
                   
@@ -257,7 +388,17 @@ const AuditReportTemplate = ({ results }: {
                   )}
                   
                   <div className="bg-card/50 p-4 rounded-md border border-border">
-                    <h4 className="font-semibold mb-2 flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation Prompt</h4>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-semibold flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation Prompt</h4>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => copyToClipboard(`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`)}
+                        className="h-8 w-8 p-0 hover:bg-primary/10"
+                      >
+                        <Copy className="h-4 w-4 text-muted-foreground hover:text-primary" />
+                      </Button>
+                    </div>
                     <div className="bg-black/80 rounded-md p-3">
                       <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
                         {`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`}
@@ -269,6 +410,67 @@ const AuditReportTemplate = ({ results }: {
             );
           })}
         </Accordion>
+
+        {/* Resolved and False Positive Sections */}
+        <div className="space-y-6 mt-8">
+          {/* Resolved Findings Section */}
+          {results.vulnerabilities.filter(v => v.status === 'resolved').length > 0 && (
+            <div className="border border-green-500/30 bg-green-500/5 rounded-lg p-4">
+              <h4 className="font-semibold text-lg text-green-600 mb-4 flex items-center">
+                <CheckCircle className="h-5 w-5 mr-2" />
+                Resolved Findings ({results.vulnerabilities.filter(v => v.status === 'resolved').length})
+              </h4>
+              <div className="space-y-3">
+                {results.vulnerabilities
+                  .filter(v => v.status === 'resolved')
+                  .map((vuln) => (
+                    <div key={vuln.id} className="bg-card/50 border border-green-200 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-grow">
+                          <p className="font-medium text-green-700">{vuln.title}</p>
+                          <p className="text-sm text-muted-foreground font-mono">
+                            {vuln.file}:{vuln.line}
+                          </p>
+                        </div>
+                        <Badge className="bg-green-100 text-green-700 border-green-200">
+                          Resolved
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* False Positive Findings Section */}
+          {results.vulnerabilities.filter(v => v.status === 'false_positive').length > 0 && (
+            <div className="border border-orange-500/30 bg-orange-500/5 rounded-lg p-4">
+              <h4 className="font-semibold text-lg text-orange-600 mb-4 flex items-center">
+                <AlertTriangle className="h-5 w-5 mr-2" />
+                False Positives ({results.vulnerabilities.filter(v => v.status === 'false_positive').length})
+              </h4>
+              <div className="space-y-3">
+                {results.vulnerabilities
+                  .filter(v => v.status === 'false_positive')
+                  .map((vuln) => (
+                    <div key={vuln.id} className="bg-card/50 border border-orange-200 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-grow">
+                          <p className="font-medium text-orange-700">{vuln.title}</p>
+                          <p className="text-sm text-muted-foreground font-mono">
+                            {vuln.file}:{vuln.line}
+                          </p>
+                        </div>
+                        <Badge className="bg-orange-100 text-orange-700 border-orange-200">
+                          False Positive
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   )
@@ -292,12 +494,16 @@ export default function SecurityAuditPage() {
 
   // REAL PROGRESS POLLING - Actually communicate with worker
   const [progressPollingInterval, setProgressPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  
+  // MOST RECENT AUDIT: Display the user's latest completed audit
+  const [mostRecentAudit, setMostRecentAudit] = useState<SecurityAudit | null>(null);
 
   useEffect(() => {
     if (user) {
       fetchRepositories();
       fetchGitHubUsername();
       checkExistingAudit();
+      fetchMostRecentAudit();
     }
   }, [user]);
 
@@ -361,7 +567,7 @@ export default function SecurityAuditPage() {
               // Check if scan completed by checking worker progress status
               if (progressData.status === 'scan_completed') {
                 console.log('🎉 SCAN COMPLETED - Worker reports completion!');
-                setIsScanning(false);
+          setIsScanning(false);
                 
                 // Fetch the completed audit results from Firestore
                 try {
@@ -428,7 +634,7 @@ export default function SecurityAuditPage() {
               // The frontend will automatically retry with the correct worker URL from Firestore
             } else if (progressData.status === 'scan_completed') {
               console.log('🎉 SCAN COMPLETED - Worker reports completion!');
-              setIsScanning(false);
+            setIsScanning(false);
               
               // Fetch the completed audit results from Firestore
               try {
@@ -533,6 +739,29 @@ export default function SecurityAuditPage() {
         description: 'Failed to fetch repositories',
         variant: 'destructive',
       });
+    }
+  };
+
+  const fetchMostRecentAudit = async () => {
+    try {
+      const audits = await FirebaseAuditService.getAuditHistory(user!.uid, 50);
+      if (audits && audits.length > 0) {
+        // Find the most recent completed audit
+        const completedAudits = audits.filter((audit: SecurityAudit) => 
+          audit.status === 'completed' && audit.scanResults
+        );
+        
+        if (completedAudits.length > 0) {
+          // Sort by creation date and get the most recent
+          const mostRecent = completedAudits.sort((a: SecurityAudit, b: SecurityAudit) => 
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )[0];
+          
+          setMostRecentAudit(mostRecent);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching most recent audit:', error);
     }
   };
 
@@ -864,30 +1093,81 @@ export default function SecurityAuditPage() {
               className="min-w-[120px]"
             >
               Force Worker Reset
-            </Button>
+          </Button>
           </div>
           
           {/* SIMPLE PROGRESS BAR */}
           {isScanning && (
-            <div className="space-y-3 pt-4">
-              <div className="flex justify-between text-sm text-muted-foreground">
+             <div className="space-y-3 pt-4">
+               <div className="flex justify-between text-sm text-muted-foreground">
                 <span className="font-medium">{currentStep}</span>
                 <span className="font-mono">{Math.round(currentProgress)}%</span>
-              </div>
-              <div className="w-full bg-muted rounded-full h-3">
-                <div 
-                  className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
+               </div>
+               <div className="w-full bg-muted rounded-full h-3">
+                 <div 
+                   className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
                   style={{ width: `${currentProgress}%` }}
-                />
-              </div>
-            </div>
-          )}
+                 />
+               </div>
+             </div>
+           )}
         </CardContent>
       </Card>
+
+      {/* Most Recent Security Report Header */}
+      <Card className="border-2 border-primary/20">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center space-x-2">
+            <ShieldCheck className="h-5 w-5 text-primary" />
+            <span>Most Recent Security Report</span>
+          </CardTitle>
+          <CardDescription>
+            Your latest security audit results and findings
+          </CardDescription>
+        </CardHeader>
+      </Card>
+
+      {/* Most Recent Security Report Content */}
+      {mostRecentAudit && mostRecentAudit.scanResults ? (
+                    <AuditReportTemplate 
+                      currentAudit={mostRecentAudit}
+                      results={{
+                        repoName: mostRecentAudit.scanResults.repository_info?.name || 'Unknown',
+                        summary: {
+                          totalIssues: mostRecentAudit.scanResults.summary?.condensed_findings || 0,
+                          critical: mostRecentAudit.scanResults.summary?.critical_count || 0,
+                          high: mostRecentAudit.scanResults.summary?.high_count || 0,
+                          medium: mostRecentAudit.scanResults.summary?.medium_count || 0,
+                          low: mostRecentAudit.scanResults.summary?.low_count || 0,
+                          resolvedCount: 0 // Will be calculated from findings status
+                        },
+                    vulnerabilities: mostRecentAudit.scanResults.condensed_findings?.map((finding: any, index: number) => ({
+                      id: `finding-${index}`,
+                      title: finding.message || 'Security Finding',
+                      severity: finding.severity || 'Medium',
+                      file: finding.file_path || 'Unknown file',
+                      line: finding.line_number || 0,
+                      description: finding.description || 'No description available',
+                      remediation: finding.remediation || 'Remediation prompt will be generated for this finding type.',
+                      occurrences: finding.occurrences || 1,
+                      status: 'open' as const
+                    })) || []
+                  }}
+                />
+      ) : (
+        <Card className="border-2 border-primary/20">
+          <CardContent className="text-center py-8">
+            <ShieldCheck className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <p className="text-muted-foreground mb-2">No security reports yet</p>
+            <p className="text-sm text-muted-foreground">Run your first security audit to see results here</p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Scan Results - Using EXACT Template Format */}
       {scanResults && (
         <AuditReportTemplate 
+          currentAudit={currentAudit}
           results={{
             repoName: scanResults.repository_info.name,
             summary: {
@@ -895,7 +1175,8 @@ export default function SecurityAuditPage() {
               critical: scanResults.summary.critical_count,
               high: scanResults.summary.high_count,
               medium: scanResults.summary.medium_count,
-              low: scanResults.summary.low_count
+              low: scanResults.summary.low_count,
+              resolvedCount: 0 // Will be calculated from findings status
             },
             vulnerabilities: scanResults.condensed_findings.map((finding, index) => {
               // Get the remediation prompt from the worker's condensed_remediations
@@ -903,19 +1184,20 @@ export default function SecurityAuditPage() {
                 "Remediation prompt will be generated for this finding type.";
               
               return {
-                id: finding.rule_id || `VULN-${index + 1}`,
+                id: finding.rule_id || `VULN-${1}`,
                 title: finding.message,
                 severity: finding.severity,
                 file: finding.file_path,
                 line: finding.line_number,
                 description: finding.description,
                 remediation: remediationPrompt,
-                occurrences: finding.occurrences || 1
+                occurrences: finding.occurrences || 1,
+                status: 'open' as const
               };
             })
           }}
         />
       )}
-    </div>
+                </div>
   );
 }

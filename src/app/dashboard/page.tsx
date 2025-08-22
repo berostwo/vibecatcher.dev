@@ -116,6 +116,100 @@ export default function DashboardPageContent() {
         </Card>
       </div>
 
+      {/* Welcome to VibeCatcher Card - Full Width */}
+      <Card className="border-2 border-primary bg-background text-foreground">
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2 text-xl text-foreground">
+            <ShieldCheck className="h-6 w-6 text-primary" />
+            <span>Welcome to VibeCatcher.dev</span>
+          </CardTitle>
+          <CardDescription className="text-base text-muted-foreground">
+            Your comprehensive security audit platform for bulletproof applications
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-3">
+              <h4 className="font-semibold text-primary">🔍 How It Works</h4>
+              <ul className="space-y-2 text-sm text-foreground">
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Connect your GitHub repository for instant access</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Advanced security analysis scans your entire codebase</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Get detailed findings with actionable remediation steps</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Track your security improvements over time</span>
+                </li>
+              </ul>
+            </div>
+            <div className="space-y-3">
+              <h4 className="font-semibold text-primary">💳 Credit System</h4>
+              <ul className="space-y-2 text-sm text-foreground">
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span><strong>1 Credit = Up to 500 scannable files</strong></span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Most repositories use 1-2 credits per audit</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>2 free re-audits per week of previously scanned repos</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Bulk credits available for larger repositories</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+          
+          <div className="border-t border-border pt-4">
+            <h4 className="font-semibold text-primary mb-3">🔄 Interactive Audit Workflow</h4>
+            <div className="bg-primary/10 rounded-lg p-4 border border-primary/30">
+              <p className="text-sm text-foreground mb-3">
+                Our interactive audit workflow helps you systematically improve your codebase security:
+              </p>
+              <ul className="space-y-2 text-sm text-foreground">
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span><strong>Mark findings as "Resolved" or "False Positive"</strong></span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Track your security health score improvement</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Generate progress reports for compliance</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-primary">•</span>
+                  <span>Collaborate with team members on fixes</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+        <CardFooter>
+          <Button asChild className="w-full">
+            <Link href="/dashboard/security-audit">
+              Start Your First Security Audit
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+        </CardFooter>
+      </Card>
+
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         <Card className="border-2 border-primary/20">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

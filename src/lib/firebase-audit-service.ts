@@ -52,6 +52,15 @@ export interface SecurityAudit {
       file_count: number;
     };
   };
+  // User's finding status decisions for this repository
+  findingStatuses?: {
+    [findingId: string]: {
+      status: 'resolved' | 'false_positive';
+      timestamp: any;
+      userId: string;
+      findingHash: string; // Hash of finding content for cross-audit matching
+    };
+  };
   error?: string;
   error_type?: string;
   createdAt: any;
@@ -342,6 +351,74 @@ export class FirebaseAuditService {
     } catch (error) {
       console.error('Error checking if audit is handled by worker:', error);
       return false;
+    }
+  }
+
+  /**
+   * Update the status of a specific finding in an audit
+   */
+  static async updateFindingStatus(
+    auditId: string,
+    findingId: string,
+    status: 'resolved' | 'false_positive',
+    userId: string,
+    findingHash: string
+  ): Promise<void> {
+    try {
+      const auditRef = doc(db, this.COLLECTION_NAME, auditId);
+      
+      // Update the finding status in the findingStatuses map
+      await updateDoc(auditRef, {
+        [`findingStatuses.${findingId}`]: {
+          status,
+          timestamp: serverTimestamp(),
+          userId,
+          findingHash
+        }
+      });
+      
+      console.log(`Updated finding ${findingId} status to ${status} for audit ${auditId}`);
+    } catch (error) {
+      console.error('Error updating finding status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get finding statuses for a specific repository to apply false positive learning
+   */
+  static async getRepositoryFindingStatuses(
+    userId: string,
+    repositoryUrl: string
+  ): Promise<{ [findingHash: string]: 'resolved' | 'false_positive' }> {
+    try {
+      // Query for all completed audits for this user and repository
+      const q = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('repositoryUrl', '==', repositoryUrl),
+        where('status', '==', 'completed')
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const statuses: { [findingHash: string]: 'resolved' | 'false_positive' } = {};
+      
+      // Collect all finding statuses from previous audits
+      querySnapshot.docs.forEach(doc => {
+        const audit = doc.data() as SecurityAudit;
+        if (audit.findingStatuses) {
+          Object.entries(audit.findingStatuses).forEach(([findingId, statusInfo]) => {
+            if (statusInfo.status === 'false_positive') {
+              statuses[statusInfo.findingHash] = 'false_positive';
+            }
+          });
+        }
+      });
+      
+      return statuses;
+    } catch (error) {
+      console.error('Error getting repository finding statuses:', error);
+      return {};
     }
   }
 }
