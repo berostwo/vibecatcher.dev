@@ -4050,17 +4050,25 @@ def get_progress_for_audit(audit_id: str):
         
         logger.info(f"📊 AUDIT-SPECIFIC PROGRESS: Requested audit_id={audit_id}, Current audit_id={current_audit_id}")
         
-        # If this worker is not handling the requested audit, return error
+        # If this worker is not handling the requested audit, check if scan is starting
         if current_audit_id != audit_id:
             # Check if there's a scan in progress but scan_id is not set yet (race condition)
-            if scan_state.get('is_running', False) and current_audit_id is None:
-                logger.info(f"📊 AUDIT-SPECIFIC PROGRESS: Scan in progress but scan_id not set yet (race condition)")
+            # Look for multiple indicators that a scan is starting
+            scan_starting_indicators = [
+                scan_state.get('is_running', False),  # Global state shows running
+                scan_state.get('total_tasks', 0) > 0,  # Has tasks assigned
+                scan_state.get('start_time') is not None,  # Has start time
+                scan_state.get('step') is not None  # Has a step
+            ]
+            
+            if any(scan_starting_indicators):
+                logger.info(f"📊 AUDIT-SPECIFIC PROGRESS: Scan appears to be starting (indicators: {scan_starting_indicators})")
                 return jsonify({
                     'status': 'scan_starting',
                     'message': 'Security scan is starting up, please wait...',
                     'audit_id': audit_id,
-                    'step': 'Initializing scan...',
-                    'percentage': 0,
+                    'step': scan_state.get('step', 'Initializing scan...'),
+                    'percentage': scan_state.get('percentage', 0),
                     'worker_name': WORKER_NAME,
                     'worker_url': WORKER_URL,
                     'timestamp': datetime.now().isoformat()
