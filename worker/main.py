@@ -140,7 +140,7 @@ def update_audit_worker_info(audit_id: str, worker_url: str, worker_name: str):
 # All remaining orphaned webhook code removed
 
 # DEBUG: Log initial global state
-        logger.info("🔍 INITIAL GLOBAL STATE: Database-driven progress system")
+logger.info("🔍 INITIAL GLOBAL STATE: Database-driven progress system")
 
 class DependencyAnalyzer:
     """Analyzes dependencies to eliminate false positives about unused packages"""
@@ -2088,7 +2088,7 @@ class ChatGPTSecurityScanner:
                         logger.warning(f"🧩 Shard collection failed: {e}")
 
                     all_findings = local_findings + aggregated_findings
-            except Exception as e:
+                except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
             else:
@@ -2264,12 +2264,12 @@ class ChatGPTSecurityScanner:
                         cache_stats = future.result(timeout=30)  # 30 second timeout
                         report_dict['cache_statistics'] = cache_stats
                         report_dict['cache_benefits'] = {
-                    'cost_savings': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
-                    'time_savings': f"{cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes",
-                    'hit_rate': f"{cache_stats.get('hit_rate_percent', 0)}%",
-                    'api_calls_saved': cache_stats.get('cache_hits', 0)
-                }
-                logger.info(f"📊 CACHE STATS: Scan completed with {cache_stats.get('hit_rate_percent', 0)}% cache hit rate")
+                            'cost_savings': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
+                            'time_savings': f"{cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes",
+                            'hit_rate': f"{cache_stats.get('hit_rate_percent', 0)}%",
+                            'api_calls_saved': cache_stats.get('cache_hits', 0)
+                        }
+                        logger.info(f"📊 CACHE STATS: Scan completed with {cache_stats.get('hit_rate_percent', 0)}% cache hit rate")
                     except concurrent.futures.TimeoutError:
                         logger.warning(f"⚠️ Cache statistics generation timed out after 30s, skipping")
                         report_dict['cache_statistics'] = {'error': 'Cache statistics generation timed out'}
@@ -4152,10 +4152,10 @@ def security_scan():
             watchdog_thread.start()
             
             try:
-            result = asyncio.run(asyncio.wait_for(
-                scanner.scan_repository(repo_url, github_token),
-                timeout=scan_timeout
-            ))
+                result = asyncio.run(asyncio.wait_for(
+                    scanner.scan_repository(repo_url, github_token),
+                    timeout=scan_timeout
+                ))
                 
                 # Verify the result is valid
                 if not result or not isinstance(result, dict):
