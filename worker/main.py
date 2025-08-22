@@ -4138,6 +4138,7 @@ def security_scan():
             # Add watchdog timer to force-complete hanging scans
             import threading
             import time
+            import asyncio  # Re-import to ensure availability
             
             def watchdog_timer():
                 time.sleep(scan_timeout + 30)  # Wait for scan timeout + 30 seconds
