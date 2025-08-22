@@ -4042,12 +4042,23 @@ def security_scan():
             # Database-driven progress - no need for batch estimates
             
             # Start progress tracking in database
-            logger.info(f"🚀 STARTING DATABASE PROGRESS TRACKING: audit_id={audit_id}")
-            update_progress_in_db(audit_id, "Initializing security scan...", 0, 0, 100)
+            if not audit_id:
+                logger.warning("⚠️ No audit_id provided, cannot track progress")
+            else:
+                logger.info(f"🚀 STARTING DATABASE PROGRESS TRACKING: audit_id={audit_id}")
+                try:
+                    update_progress_in_db(audit_id, "Initializing security scan...", 0, 0, 100)
+                except Exception as e:
+                    logger.error(f"❌ Failed to start progress tracking: {e}")
+                    # Don't let progress tracking break the scan
             
             # Update Firestore with worker information for this audit
             if audit_id:
-                update_audit_worker_info(audit_id, WORKER_URL, WORKER_NAME)
+                try:
+                    update_audit_worker_info(audit_id, WORKER_URL, WORKER_NAME)
+                except Exception as e:
+                    logger.error(f"❌ Failed to update audit worker info: {e}")
+                    # Don't let this break the scan
             
             # DEBUG: Log the global state after starting progress
             logger.info("🔍 DEBUG: Database progress tracking started")
@@ -4058,25 +4069,54 @@ def security_scan():
             logger.info(f"🚀 Starting scan with {scan_timeout}s timeout protection")
             
             # Update progress for scan start
-            update_progress_in_db(audit_id, "Starting repository analysis...", 2, 2, 100)
+            if audit_id:
+                try:
+                    update_progress_in_db(audit_id, "Starting repository analysis...", 2, 2, 100)
+                except Exception as e:
+                    logger.error(f"❌ Failed to update progress: {e}")
             
             # Update progress for scan execution
-            update_progress_in_db(audit_id, "Executing security analysis...", 5, 5, 100)
+            if audit_id:
+                try:
+                    update_progress_in_db(audit_id, "Executing security analysis...", 5, 5, 100)
+                except Exception as e:
+                    logger.error(f"❌ Failed to update progress: {e}")
             
             # Run with timeout protection using asyncio.run()
             logger.info(f"🚀 EXECUTING SCAN: scanner.scan_repository()")
             
             # Update progress to show scan is actively running
-            update_progress_in_db(audit_id, "Scanning repository files...", 25, 25, 100)
+            if audit_id:
+                try:
+                    update_progress_in_db(audit_id, "Scanning repository files...", 25, 25, 100)
+                except Exception as e:
+                    logger.error(f"❌ Failed to update progress: {e}")
             
-            result = asyncio.run(asyncio.wait_for(
-                scanner.scan_repository(repo_url, github_token),
-                timeout=scan_timeout
-            ))
+            try:
+                result = asyncio.run(asyncio.wait_for(
+                    scanner.scan_repository(repo_url, github_token),
+                    timeout=scan_timeout
+                ))
+            except Exception as scan_exec_error:
+                logger.error(f"❌ Scan execution failed: {scan_exec_error}")
+                if audit_id:
+                    try:
+                        update_progress_in_db(audit_id, "Scan execution failed", 100, 100, 100, False)
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update progress: {e}")
+                return jsonify({
+                    'error': f'Scan execution failed: {str(scan_exec_error)}',
+                    'error_type': type(scan_exec_error).__name__,
+                    'timestamp': datetime.now().isoformat()
+                }), 500
             logger.info(f"🚀 SCAN EXECUTION COMPLETED: {result}")
             
             # Update progress for scan completion
-            update_progress_in_db(audit_id, "Finalizing scan results...", 95, 95, 100)
+            if audit_id:
+                try:
+                    update_progress_in_db(audit_id, "Finalizing scan results...", 95, 95, 100)
+                except Exception as e:
+                    logger.error(f"❌ Failed to update progress: {e}")
             
             # Check if scan failed
             if 'error' in result:
@@ -4086,12 +4126,20 @@ def security_scan():
             logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
             
             # Complete progress tracking in database
-            update_progress_in_db(audit_id, "Scan completed successfully!", 100, 100, 100, False)
+            if audit_id:
+                try:
+                    update_progress_in_db(audit_id, "Scan completed successfully!", 100, 100, 100, False)
+                except Exception as e:
+                    logger.error(f"❌ Failed to update progress: {e}")
             return jsonify(result)
             
         except asyncio.TimeoutError:
             logger.error(f"❌ Scan timed out after {scan_timeout}s")
-            update_progress_in_db(audit_id, "Scan timed out", 100, 100, 100, False)
+            if audit_id:
+                try:
+                    update_progress_in_db(audit_id, "Scan timed out", 100, 100, 100, False)
+                except Exception as e:
+                    logger.error(f"❌ Failed to update progress: {e}")
             
             return jsonify({
                 'error': f'Scan timed out after {scan_timeout}s - repository too large or complex',
@@ -4101,7 +4149,11 @@ def security_scan():
             }), 408
         except Exception as scan_error:
             logger.error(f"❌ Scan execution error: {scan_error}")
-            update_progress_in_db(audit_id, "Scan failed with error", 100, 100, 100, False)
+            if audit_id:
+                try:
+                    update_progress_in_db(audit_id, "Scan failed with error", 100, 100, 100, False)
+                except Exception as e:
+                    logger.error(f"❌ Failed to update progress: {e}")
             
             return jsonify({
                 'error': str(scan_error),
