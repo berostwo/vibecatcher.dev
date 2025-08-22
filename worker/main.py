@@ -20,9 +20,7 @@ from dataclasses import dataclass, asdict
 from collections import OrderedDict
 import urllib.request
 import urllib.error
-from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn, BarColumn, TextColumn
-from rich.console import Console
-from rich.theme import Theme
+# Rich progress imports removed - using simple database-driven progress instead
 try:
     import firebase_admin
     from firebase_admin import credentials, firestore
@@ -34,241 +32,52 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create custom purple theme for progress bars
-PROGRESS_THEME = Theme({
-    "progress": "purple",
-    "progress.bar": "purple",
-    "progress.description": "purple",
-    "progress.percentage": "purple",
-    "progress.remaining": "purple",
-    "progress.elapsed": "purple"
-})
+# Progress theme removed - using simple database-driven progress instead
 
-class ProgressTracker:
-    """Thread-safe progress tracker using rich.progress with purple theme"""
-    
-    def __init__(self):
-        self.progress_data = {
-            'step': 'Initializing...',
-            'percentage': 0,
-            'elapsed_seconds': 0,
-            'remaining_seconds': None,
-            'total_tasks': 0,
-            'completed_tasks': 0,
-            'timestamp': datetime.now().isoformat()
-        }
-        self.lock = threading.Lock()
-        self.start_time = None
-        self._progress = None
-        self._console = None
-        
-    def start_progress(self, total_tasks: int, initial_step: str = "Starting scan...", scan_id: str = None):
-        """Initialize progress tracking"""
-        with self.lock:
-            self.start_time = datetime.now()
-            self.progress_data.update({
-                'step': initial_step,
-                'percentage': 0,
-                'elapsed_seconds': 0,
-                'remaining_seconds': None,
-                'total_tasks': total_tasks,
-                'completed_tasks': 0,
-                'timestamp': datetime.now().isoformat(),
-                'scan_id': scan_id
-            })
+# Simple database-driven progress tracking
+# No more complex in-memory state synchronization!
+
+def update_progress_in_db(audit_id: str, step: str, percentage: float, completed_tasks: int, total_tasks: int, is_running: bool = True):
+    """Update progress in Firestore database - simple and reliable"""
+    try:
+        if not FIREBASE_AVAILABLE:
+            logger.warning("⚠️ Firebase not available, cannot update progress")
+            return
             
-            # Update global scan state for cross-thread access
-            global current_scan_state, current_scan_lock
-            try:
-                with current_scan_lock:
-                    current_scan_state.update({
-                        'is_running': True,
-                        'step': initial_step,
-                        'percentage': 0,
-                        'total_tasks': total_tasks,
-                        'completed_tasks': 0,
-                        'start_time': self.start_time,
-                        'elapsed_seconds': 0,
-                        'remaining_seconds': None,
-                        'scan_id': scan_id
-                    })
-                logger.info(f"🔒 GLOBAL STATE STARTED: {initial_step} - is_running: True - total_tasks: {total_tasks} - scan_id: {scan_id}")
-            except Exception as e:
-                logger.error(f"❌ GLOBAL STATE START FAILED: {e}")
-                # This is critical - if we can't start global state, progress won't work
-            
-            # Create rich progress bar
-            self._progress = Progress(
-                SpinnerColumn(),
-                TextColumn("[purple]{task.description}"),
-                BarColumn(bar_width=40, complete_style="purple", finished_style="purple"),
-                TextColumn("[purple]{task.percentage:>3.0f}%"),
-                TimeElapsedColumn(),
-                TimeRemainingColumn(),
-                console=Console(theme=PROGRESS_THEME),
-                expand=True
-            )
-            
-            self._progress.start()
-            self._progress.add_task(initial_step, total=total_tasks)
-            logger.info(f"🚀 Progress tracking started: {total_tasks} total tasks")
-    
-    def update_progress(self, step: str, completed_tasks: int = None, advance: int = 1):
-        """Update progress with new step and completion count"""
-        with self.lock:
-            if self._progress is None:
-                logger.warning("⚠️ Progress not started, cannot update")
-                return
-                
-            if completed_tasks is not None:
-                self.progress_data['completed_tasks'] = completed_tasks
-            else:
-                self.progress_data['completed_tasks'] += advance
-                
-            # Calculate percentage
-            if self.progress_data['total_tasks'] > 0:
-                percentage = min(100, (self.progress_data['completed_tasks'] / self.progress_data['total_tasks']) * 100)
-            else:
-                percentage = 0
-                
-            # Calculate time metrics
-            if self.start_time:
-                elapsed = (datetime.now() - self.start_time).total_seconds()
-                self.progress_data['elapsed_seconds'] = elapsed
-                
-                if percentage > 0:
-                    # Estimate remaining time based on current rate
-                    estimated_total = elapsed / (percentage / 100)
-                    remaining = max(0, estimated_total - elapsed)
-                    self.progress_data['remaining_seconds'] = remaining
-                else:
-                    self.progress_data['remaining_seconds'] = None
-            
-            # Update rich progress bar
-            if self._progress.tasks:
-                task = self._progress.tasks[0]
-                self._progress.update(
-                    task.id,
-                    description=step,
-                    completed=self.progress_data['completed_tasks'],
-                    total=self.progress_data['total_tasks']
-                )
-            
-            # Update progress data
-            self.progress_data.update({
+        # Update the security_audits document with progress
+        audit_ref = db.collection('security_audits').document(audit_id)
+        audit_ref.update({
+            'progress': {
                 'step': step,
-                'percentage': round(percentage, 1),
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            # Update global scan state for cross-thread access
-            global current_scan_state, current_scan_lock
-            try:
-                percent_value = round(percentage, 1)
-                with current_scan_lock:
-                    # Only update if this is the current scan (scan_id matches)
-                    if current_scan_state.get('scan_id') == self.progress_data.get('scan_id'):
-                        current_scan_state.update({
-                            'is_running': True,  # Keep scan marked as running
-                            'step': step,
-                            'percentage': percent_value,
-                            'completed_tasks': self.progress_data['completed_tasks'],
-                            'elapsed_seconds': self.progress_data['elapsed_seconds'],
-                            'remaining_seconds': self.progress_data['remaining_seconds'],
-                            'scan_id': self.progress_data.get('scan_id')  # Preserve scan_id
-                        })
-                        logger.info(f"🔒 GLOBAL STATE UPDATED: {step} - {percent_value}% - is_running: True - scan_id: {self.progress_data.get('scan_id')}")
-                        # No more webhooks - single progress system
-                    else:
-                        logger.warning(f"⚠️ PROGRESS IGNORED: Scan ID mismatch - current: {current_scan_state.get('scan_id')}, this: {self.progress_data.get('scan_id')}")
-            except Exception as e:
-                logger.error(f"❌ GLOBAL STATE UPDATE FAILED: {e}")
-                # This is critical - if we can't update global state, progress won't work
-            
-            logger.info(f"📊 Progress: {step} - {percentage:.1f}% ({self.progress_data['completed_tasks']}/{self.progress_data['total_tasks']})")
-    
-    def get_progress_data(self) -> Dict[str, Any]:
-        """Get current progress data (thread-safe)"""
-        with self.lock:
-            return self.progress_data.copy()
-    
-    def complete_progress(self, final_step: str = "Scan completed"):
-        """Mark progress as complete"""
-        with self.lock:
-            if self._progress:
-                self._progress.update(0, description=final_step, completed=self.progress_data['total_tasks'])
-                self._progress.stop()
-                self._progress = None
-            
-            self.progress_data.update({
-                'step': final_step,
-                'percentage': 100,
-                'completed_tasks': self.progress_data['total_tasks'],
-                'remaining_seconds': 0,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            # Update global scan state for cross-thread access
-            global current_scan_state, current_scan_lock
-            with current_scan_lock:
-                # Only update if this is the current scan (scan_id matches)
-                if current_scan_state.get('scan_id') == self.progress_data.get('scan_id'):
-                    current_scan_state.update({
-                        'is_running': False,  # Mark as completed
-                        'step': final_step,
-                        'percentage': 100,
-                        'completed_tasks': self.progress_data['total_tasks'],
-                        'elapsed_seconds': self.progress_data.get('elapsed_seconds', 0),
-                        'remaining_seconds': 0,
-                        'scan_id': self.progress_data.get('scan_id')  # Preserve scan_id
-                    })
-                    logger.info(f"✅ Progress completed: {final_step} - scan_id: {self.progress_data.get('scan_id')}")
-                else:
-                    logger.warning(f"⚠️ COMPLETION IGNORED: Scan ID mismatch - current: {current_scan_state.get('scan_id')}, this: {self.progress_data.get('scan_id')}")
-    
-    def cleanup(self):
-        """Clean up progress resources"""
-        with self.lock:
-            if self._progress:
-                self._progress.stop()
-                self._progress = None
-            
-            # Update global scan state for cross-thread access
-            global current_scan_state, current_scan_lock
-            with current_scan_lock:
-                # Only update if this is the current scan (scan_id matches)
-                if current_scan_state.get('scan_id') == self.progress_data.get('scan_id'):
-                    current_scan_state.update({
-                        'is_running': False,
-                        'step': 'No scan running',
-                        'percentage': 0,
-                        'total_tasks': 0,
-                        'completed_tasks': 0,
-                        'start_time': None,
-                        'elapsed_seconds': 0,
-                        'remaining_seconds': None,
-                        'scan_id': None
-                    })
-                    logger.info(f"🧹 Progress cleanup completed - scan_id: {self.progress_data.get('scan_id')}")
-                else:
-                    logger.warning(f"⚠️ CLEANUP IGNORED: Scan ID mismatch - current: {current_scan_state.get('scan_id')}, this: {self.progress_data.get('scan_id')}")
+                'percentage': percentage,
+                'completed_tasks': completed_tasks,
+                'total_tasks': total_tasks,
+                'is_running': is_running,
+                'last_updated': datetime.now().isoformat()
+            }
+        })
+        logger.info(f"📊 Progress updated in DB: {step} - {percentage}% ({completed_tasks}/{total_tasks})")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to update progress in DB: {e}")
 
-# Global progress tracker instance
-progress_tracker = ProgressTracker()
-
-# Global scan state for cross-thread access
-current_scan_state = {
-    'is_running': False,
-    'step': 'No scan running',
-    'percentage': 0,
-    'total_tasks': 0,
-    'completed_tasks': 0,
-    'start_time': None,
-    'elapsed_seconds': 0,
-    'remaining_seconds': None,
-    'scan_id': None  # Track which scan is currently running
-}
-current_scan_lock = threading.Lock()
+def get_progress_from_db(audit_id: str):
+    """Get progress from Firestore database"""
+    try:
+        if not FIREBASE_AVAILABLE:
+            return None
+            
+        audit_ref = db.collection('security_audits').document(audit_id)
+        audit_doc = audit_ref.get()
+        
+        if audit_doc.exists:
+            data = audit_doc.to_dict()
+            return data.get('progress', {})
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to get progress from DB: {e}")
+        return None
 
 # Worker self-identification
 WORKER_URL = os.environ.get('WORKER_URL', 'https://chatgpt-security-scanner-505997387504.us-central1.run.app')
@@ -331,7 +140,7 @@ def update_audit_worker_info(audit_id: str, worker_url: str, worker_name: str):
 # All remaining orphaned webhook code removed
 
 # DEBUG: Log initial global state
-logger.info(f"🔍 INITIAL GLOBAL STATE: {current_scan_state}")
+        logger.info("🔍 INITIAL GLOBAL STATE: Database-driven progress system")
 
 class DependencyAnalyzer:
     """Analyzes dependencies to eliminate false positives about unused packages"""
@@ -1294,8 +1103,7 @@ class ChatGPTSecurityScanner:
         self.last_cache_cleanup = time.time()
         self.cache_cleanup_interval = 3600  # Clean up every hour
         
-                # Progress tracking - will be set by the main worker
-        self.progress_tracker = None
+                # Progress tracking removed - using database-driven progress instead
         
         # Security categories for comprehensive coverage
         
@@ -1354,12 +1162,7 @@ class ChatGPTSecurityScanner:
         self.max_shard_workers = 2  # Max 2 workers collaborate on sharding
         self.min_files_for_sharding = 300  # Only shard repos with 300+ files
     
-    def set_progress_tracker(self, progress_tracker):
-        """Set the progress tracker instance for this scanner"""
-        self.progress_tracker = progress_tracker
-        logger.info(f"🔗 PROGRESS TRACKER CONNECTED: Scanner now has access to progress tracking")
-    
-    # Progress callback methods completely removed
+    # Progress tracker methods removed - using database-driven progress instead
     
     async def clone_repository(self, repo_url: str, github_token: str = None) -> str:
         """Clone repository with authentication"""
@@ -2057,9 +1860,8 @@ class ChatGPTSecurityScanner:
         logger.info(f"🚀 Starting ChatGPT security scan for: {repo_url}")
         
         try:
-            # Progress tracking - now properly connected
-            if self.progress_tracker:
-                self.progress_tracker.update_progress("Cloning repository...", 5)
+            # Progress tracking - update database
+            update_progress_in_db(self.audit_id, "Cloning repository...", 5, 5, 100)
             
             # Clone repository with timeout
             repo_path = await asyncio.wait_for(
@@ -2076,8 +1878,7 @@ class ChatGPTSecurityScanner:
             }
             
             # Progress update for dependency analysis
-            if self.progress_tracker:
-                self.progress_tracker.update_progress("Analyzing dependencies...", 10)
+            update_progress_in_db(self.audit_id, "Analyzing dependencies...", 10, 10, 100)
             
             # 🚀 DEPENDENCY ANALYSIS: Eliminate false positives about unused packages
             logger.info("🔍 DEPENDENCY ANALYSIS: Starting comprehensive dependency analysis...")
@@ -2109,8 +1910,7 @@ class ChatGPTSecurityScanner:
                 scan_context = {}
             
             # Progress update for file analysis
-            if self.progress_tracker:
-                self.progress_tracker.update_progress("Starting file analysis...", 15)
+            update_progress_in_db(self.audit_id, "Starting file analysis...", 15, 15, 100)
             
             # PHASE 1 NUCLEAR OPTIMIZATION: Smart File Filtering + Batch Analysis
             all_findings = []
@@ -2329,8 +2129,7 @@ class ChatGPTSecurityScanner:
             # Progress tracking removed
             
             # Progress update for health calculation
-            if self.progress_tracker:
-                self.progress_tracker.update_progress("Calculating codebase health...", 90)
+            update_progress_in_db(self.audit_id, "Calculating codebase health...", 90, 90, 100)
             
             # Calculate accurate codebase health using ChatGPT
             logger.info(f"🔍 Calculating accurate codebase health...")
@@ -2386,8 +2185,8 @@ class ChatGPTSecurityScanner:
             )
             
             # PROGRESS TRACKING: Final completion
-            if self.progress_tracker:
-                self.progress_tracker.update_progress("Finalizing results...", 95)
+            # Progress update for final completion
+            update_progress_in_db(self.audit_id, "Finalizing results...", 95, 95, 100)
             
             # Cleanup
             shutil.rmtree(repo_path, ignore_errors=True)
@@ -2419,8 +2218,7 @@ class ChatGPTSecurityScanner:
             logger.info(f"🚀 Scan completed successfully in {scan_duration:.2f}s")
             
             # Final progress update
-            if self.progress_tracker:
-                self.progress_tracker.update_progress("Scan completed successfully!", 100)
+            update_progress_in_db(self.audit_id, "Scan completed successfully!", 100, 100, 100, False)
             
             report_dict = asdict(report)
             try:
@@ -2689,11 +2487,9 @@ class ChatGPTSecurityScanner:
             
             # Update progress for shard batch processing
             try:
-                if self.progress_tracker:
-                    self.progress_tracker.update_progress(f"Shard batch {batch_num + 1}/{total_batches}", batch_num + 1)
-                    logger.info(f"📊 PROGRESS: Shard batch {batch_num + 1}/{total_batches} - Progress updated successfully")
-                else:
-                    logger.warning(f"⚠️ PROGRESS: No progress tracker available for shard batch {batch_num + 1}")
+                percentage = min(100, ((batch_num + 1) / total_batches) * 100)
+                update_progress_in_db(self.audit_id, f"Shard batch {batch_num + 1}/{total_batches}", percentage, batch_num + 1, total_batches)
+                logger.info(f"📊 PROGRESS: Shard batch {batch_num + 1}/{total_batches} - Progress updated successfully")
             except Exception as e:
                 logger.error(f"❌ PROGRESS ERROR: Failed to update progress for shard batch {batch_num + 1}: {e}")
                 # Don't let progress tracking break the scan, but log the error
@@ -2821,11 +2617,9 @@ class ChatGPTSecurityScanner:
             
             # Update progress for batch processing
             try:
-                if self.progress_tracker:
-                    self.progress_tracker.update_progress(f"Analyzing batch {batch_num + 1}/{total_batches}", batch_num + 1)
-                    logger.info(f"📊 PROGRESS: Thread batch {batch_num + 1}/{total_batches} - Progress updated successfully")
-                else:
-                    logger.warning(f"⚠️ PROGRESS: No progress tracker available for thread batch {batch_num + 1}")
+                percentage = min(100, ((batch_num + 1) / total_batches) * 100)
+                update_progress_in_db(self.audit_id, f"Analyzing batch {batch_num + 1}/{total_batches}", percentage, batch_num + 1, total_batches)
+                logger.info(f"📊 PROGRESS: Thread batch {batch_num + 1}/{total_batches} - Progress updated successfully")
             except Exception as e:
                 logger.error(f"❌ PROGRESS ERROR: Failed to update progress for thread batch {batch_num + 1}: {e}")
                 # Don't let progress tracking break the scan, but log the error
@@ -3033,11 +2827,9 @@ class ChatGPTSecurityScanner:
             
             # Update progress for parallel batch processing
             try:
-                if self.progress_tracker:
-                    self.progress_tracker.update_progress(f"Processing batch {batch_num + 1}/{total_batches}", batch_num + 1)
-                    logger.info(f"📊 PROGRESS: Parallel batch {batch_num + 1}/{total_batches} - Progress updated successfully")
-                else:
-                    logger.warning(f"⚠️ PROGRESS: No progress tracker available for parallel batch {batch_num + 1}")
+                percentage = min(100, ((batch_num + 1) / total_batches) * 100)
+                update_progress_in_db(self.audit_id, f"Processing batch {batch_num + 1}/{total_batches}", percentage, batch_num + 1, total_batches)
+                logger.info(f"📊 PROGRESS: Parallel batch {batch_num + 1}/{total_batches} - Progress updated successfully")
             except Exception as e:
                 logger.error(f"❌ PROGRESS ERROR: Failed to update progress for parallel batch {batch_num + 1}: {e}")
                 # Don't let progress tracking break the scan, but log the error
@@ -3973,183 +3765,67 @@ def health_check():
         'health_checks': checks
     })
 
-@app.route('/progress', methods=['GET'])
-def get_progress():
-    """Get current scan progress for real-time updates"""
-    try:
-        # Use global scan state for cross-thread access
-        global current_scan_state, current_scan_lock
-        
-        with current_scan_lock:
-            scan_state = current_scan_state.copy()
-        
-        # DEBUG: Log what we're getting from global state
-        logger.info(f"📊 PROGRESS ENDPOINT: global_scan_state = {scan_state}")
-        logger.info(f"📊 PROGRESS ENDPOINT: is_running = {scan_state.get('is_running', 'NOT_FOUND')}")
-        logger.info(f"📊 PROGRESS ENDPOINT: step = {scan_state.get('step', 'NOT_FOUND')}")
-        logger.info(f"📊 PROGRESS ENDPOINT: percentage = {scan_state.get('percentage', 'NOT_FOUND')}")
-        
-        if not scan_state.get('is_running', False):
-            logger.warning(f"📊 PROGRESS ENDPOINT: Returning no_scan_running - is_running: {scan_state.get('is_running', 'NOT_FOUND')}")
-            logger.warning(f"📊 PROGRESS ENDPOINT: Current step: {scan_state.get('step', 'NOT_FOUND')}")
-            logger.warning(f"📊 PROGRESS ENDPOINT: Current percentage: {scan_state.get('percentage', 'NOT_FOUND')}")
-        return jsonify({
-            'status': 'no_scan_running',
-            'message': 'No security scan is currently running'
-        })
-    
-        # Format time remaining for frontend
-        if scan_state.get('remaining_seconds') is not None:
-            remaining_minutes = int(scan_state['remaining_seconds'] // 60)
-            remaining_seconds = int(scan_state['remaining_seconds'] % 60)
-            if remaining_minutes > 0:
-                time_remaining = f"{remaining_minutes}m {remaining_seconds}s"
-            else:
-                time_remaining = f"{remaining_seconds}s"
-        else:
-            time_remaining = "Calculating..."
-        
-        # Format elapsed time
-        elapsed_minutes = int(scan_state.get('elapsed_seconds', 0) // 60)
-        elapsed_seconds = int(scan_state.get('elapsed_seconds', 0) % 60)
-        if elapsed_minutes > 0:
-            elapsed_time = f"{elapsed_minutes}m {elapsed_seconds}s"
-        else:
-            elapsed_time = f"{elapsed_seconds}s"
-        
-        return jsonify({
-            'status': 'scan_running',
-            'step': scan_state.get('step', 'Unknown'),
-            'percentage': scan_state.get('percentage', 0),
-            'elapsed_time': elapsed_time,
-            'time_remaining': time_remaining,
-            'completed_tasks': scan_state.get('completed_tasks', 0),
-            'total_tasks': scan_state.get('total_tasks', 0),
-            'timestamp': datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ Progress endpoint error: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': 'Failed to get progress data'
-        }), 500
+# Progress endpoint removed - using database-driven progress via /progress/<audit_id> only
 
 @app.route('/progress/<audit_id>', methods=['GET'])
 def get_progress_for_audit(audit_id: str):
-    """Get progress for a specific audit ID"""
+    """Get progress for a specific audit ID from database"""
     try:
-        # Use global scan state for cross-thread access
-        global current_scan_state, current_scan_lock
+        logger.info(f"📊 DATABASE PROGRESS: Getting progress for audit_id={audit_id}")
         
-        with current_scan_lock:
-            scan_state = current_scan_state.copy()
+        # Get progress from database
+        progress_data = get_progress_from_db(audit_id)
         
-        # Check if this worker is handling the requested audit
-        current_audit_id = scan_state.get('scan_id')
-        
-        logger.info(f"📊 AUDIT-SPECIFIC PROGRESS: Requested audit_id={audit_id}, Current audit_id={current_audit_id}")
-        
-        # If this worker is not handling the requested audit, check if scan is starting
-        if current_audit_id != audit_id:
-            # Check if there's a scan in progress but scan_id is not set yet (race condition)
-            # Look for multiple indicators that a scan is starting
-            scan_starting_indicators = [
-                scan_state.get('is_running', False),  # Global state shows running
-                scan_state.get('total_tasks', 0) > 0,  # Has tasks assigned
-                scan_state.get('start_time') is not None,  # Has start time
-                scan_state.get('step') is not None  # Has a step
-            ]
-            
-            if any(scan_starting_indicators):
-                logger.info(f"📊 AUDIT-SPECIFIC PROGRESS: Scan appears to be starting (indicators: {scan_starting_indicators})")
-                return jsonify({
-                    'status': 'scan_starting',
-                    'message': 'Security scan is starting up, please wait...',
-                    'audit_id': audit_id,
-                    'step': scan_state.get('step', 'Initializing scan...'),
-                    'percentage': scan_state.get('percentage', 0),
-                    'worker_name': WORKER_NAME,
-                    'worker_url': WORKER_URL,
-                    'timestamp': datetime.now().isoformat()
-                })
-            
-            logger.warning(f"📊 AUDIT-SPECIFIC PROGRESS: This worker is not handling audit {audit_id}")
-            return jsonify({
-                'status': 'wrong_worker',
-                'message': f'This worker is not handling audit {audit_id}',
-                'current_audit_id': current_audit_id,
-                'worker_name': WORKER_NAME,
-                'worker_url': WORKER_URL
-            }), 404
-        
-        # Check if scan is running
-        if not scan_state.get('is_running', False):
-            logger.warning(f"📊 AUDIT-SPECIFIC PROGRESS: No scan running for audit {audit_id}")
+        if not progress_data:
+            logger.warning(f"📊 DATABASE PROGRESS: No progress data found for audit {audit_id}")
             return jsonify({
                 'status': 'no_scan_running',
-                'message': f'No security scan is currently running for audit {audit_id}',
+                'message': f'No progress data found for audit {audit_id}',
                 'audit_id': audit_id,
                 'worker_name': WORKER_NAME,
                 'worker_url': WORKER_URL
             })
         
-        # Format time remaining for frontend
-        if scan_state.get('remaining_seconds') is not None:
-            remaining_minutes = int(scan_state['remaining_seconds'] // 60)
-            remaining_seconds = int(scan_state['remaining_seconds'] % 60)
-            if remaining_minutes > 0:
-                time_remaining = f"{remaining_minutes}m {remaining_seconds}s"
-            else:
-                time_remaining = f"{remaining_seconds}s"
-        else:
-            time_remaining = "Calculating..."
+        # Check if scan is running
+        is_running = progress_data.get('is_running', False)
         
-        # Format elapsed time
-        elapsed_minutes = int(scan_state.get('elapsed_seconds', 0) // 60)
-        elapsed_seconds = int(scan_state.get('elapsed_seconds', 0) % 60)
-        if elapsed_minutes > 0:
-            elapsed_time = f"{elapsed_minutes}m {elapsed_seconds}s"
-        else:
-            elapsed_time = f"{elapsed_seconds}s"
+        if not is_running:
+            logger.info(f"📊 DATABASE PROGRESS: Scan completed for audit {audit_id}")
+            return jsonify({
+                'status': 'scan_completed',
+                'audit_id': audit_id,
+                'step': progress_data.get('step', 'Scan completed'),
+                'percentage': progress_data.get('percentage', 100),
+                'completed_tasks': progress_data.get('completed_tasks', 0),
+                'total_tasks': progress_data.get('total_tasks', 0),
+                'worker_name': WORKER_NAME,
+                'worker_url': WORKER_URL,
+                'timestamp': progress_data.get('last_updated', datetime.now().isoformat())
+            })
+        
+        logger.info(f"📊 DATABASE PROGRESS: Scan running - {progress_data.get('step', 'Unknown')} - {progress_data.get('percentage', 0)}%")
         
         return jsonify({
             'status': 'scan_running',
             'audit_id': audit_id,
-            'step': scan_state.get('step', 'Unknown'),
-            'percentage': scan_state.get('percentage', 0),
-            'elapsed_time': elapsed_time,
-            'time_remaining': time_remaining,
-            'completed_tasks': scan_state.get('completed_tasks', 0),
-            'total_tasks': scan_state.get('total_tasks', 0),
+            'step': progress_data.get('step', 'Unknown'),
+            'percentage': progress_data.get('percentage', 0),
+            'completed_tasks': progress_data.get('completed_tasks', 0),
+            'total_tasks': progress_data.get('total_tasks', 0),
             'worker_name': WORKER_NAME,
             'worker_url': WORKER_URL,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': progress_data.get('last_updated', datetime.now().isoformat())
         })
         
     except Exception as e:
-        logger.error(f"❌ Audit-specific progress endpoint error: {e}")
+        logger.error(f"❌ Database progress endpoint error: {e}")
         return jsonify({
             'status': 'error',
-            'message': 'Failed to get progress data',
+            'message': 'Failed to get progress data from database',
             'audit_id': audit_id
         }), 500
 
-@app.route('/progress/reset', methods=['POST'])
-def reset_progress():
-    """Reset progress tracker for new scan"""
-    try:
-        progress_tracker.cleanup()
-        return jsonify({
-            'status': 'success',
-            'message': 'Progress tracker reset successfully'
-        })
-    except Exception as e:
-        logger.error(f"❌ Progress reset error: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': 'Failed to reset progress tracker'
-        }), 500
+# Progress reset endpoint removed - no longer needed with database-driven progress
 
 @app.route('/cleanup-stuck-audit', methods=['POST'])
 def cleanup_stuck_audit():
@@ -4161,8 +3837,7 @@ def cleanup_stuck_audit():
         if not audit_id:
             return jsonify({'error': 'audit_id is required'}), 400
         
-        # Reset progress tracker
-        progress_tracker.cleanup()
+        # Database-driven progress - no need to reset tracker
         
         # Clear any temporary files
         import os
@@ -4178,14 +3853,9 @@ def cleanup_stuck_audit():
 
 @app.route('/debug/global-state', methods=['GET'])
 def debug_global_state():
-    """Debug endpoint to inspect global scan state"""
+    """Debug endpoint to inspect worker configuration (no more global state)"""
     try:
-        global current_scan_state, current_scan_lock
-        
-        with current_scan_lock:
-            scan_state = current_scan_state.copy()
-        
-        # Also check sharding configuration
+        # Check sharding configuration
         scanner = ChatGPTSecurityScanner()
         
         # Check if we should force disable sharding for testing
@@ -4207,12 +3877,13 @@ def debug_global_state():
         env_info = {
             'SHARDING_ENABLED': os.environ.get('SHARDING_ENABLED', 'NOT_SET'),
             'WORKER_PEERS': os.environ.get('WORKER_PEERS', 'NOT_SET'),
-            'SHARD_MAX_WORKERS_PER_SCAN': os.environ.get('SHARD_MAX_WORKERS_PER_SCAN', 'NOT_SET')
+            'SHARD_MAX_WORKERS_PER_SCAN': os.environ.get('SHARD_MAX_WORKERS_PER_SCAN', 'NOT_SET'),
+            'FIREBASE_AVAILABLE': FIREBASE_AVAILABLE
         }
         
         return jsonify({
             'status': 'success',
-            'global_scan_state': scan_state,
+            'progress_mode': 'database_driven',
             'sharding_config': sharding_info,
             'environment_vars': env_info,
             'timestamp': datetime.now().isoformat(),
@@ -4366,26 +4037,20 @@ def security_scan():
         try:
             scanner = ChatGPTSecurityScanner()
             
-            # CRITICAL: Pass the progress tracker to the scanner so it can actually update progress
-            scanner.set_progress_tracker(progress_tracker)
+            # Database-driven progress - no need to pass progress tracker
             
-            # Initialize progress tracking - estimate based on repository size
-            # We'll use a reasonable estimate since we don't know exact batch count yet
-            estimated_batches = 30  # Conservative estimate for most repos
+            # Database-driven progress - no need for batch estimates
             
-            # Start progress tracking for new scan (cleanup happens automatically)
-            # Single progress system - no webhooks needed
-            logger.info(f"🚀 STARTING PROGRESS TRACKING: audit_id={audit_id}, estimated_batches={estimated_batches}")
-            progress_tracker.start_progress(estimated_batches, "Initializing security scan...", scan_id=audit_id)
+            # Start progress tracking in database
+            logger.info(f"🚀 STARTING DATABASE PROGRESS TRACKING: audit_id={audit_id}")
+            update_progress_in_db(audit_id, "Initializing security scan...", 0, 0, 100)
             
             # Update Firestore with worker information for this audit
             if audit_id:
                 update_audit_worker_info(audit_id, WORKER_URL, WORKER_NAME)
             
             # DEBUG: Log the global state after starting progress
-            logger.info(f"🔍 DEBUG: Global scan state after start_progress: {current_scan_state}")
-            logger.info(f"🔍 DEBUG: Global scan state is_running: {current_scan_state.get('is_running')}")
-            logger.info(f"🔍 DEBUG: Global scan state scan_id: {current_scan_state.get('scan_id')}")
+            logger.info("🔍 DEBUG: Database progress tracking started")
             
             # Set a hard timeout for the entire scan
             scan_timeout = 600  # 10 minutes max (Cloud Run timeout is 15 minutes)
@@ -4393,18 +4058,16 @@ def security_scan():
             logger.info(f"🚀 Starting scan with {scan_timeout}s timeout protection")
             
             # Update progress for scan start
-            progress_tracker.update_progress("Starting repository analysis...", 0)
-            logger.info(f"🔍 DEBUG: Global scan state after update 1: {current_scan_state}")
+            update_progress_in_db(audit_id, "Starting repository analysis...", 2, 2, 100)
             
             # Update progress for scan execution
-            progress_tracker.update_progress("Executing security analysis...", 5)
-            logger.info(f"🔍 DEBUG: Global scan state after update 2: {current_scan_state}")
+            update_progress_in_db(audit_id, "Executing security analysis...", 5, 5, 100)
             
             # Run with timeout protection using asyncio.run()
             logger.info(f"🚀 EXECUTING SCAN: scanner.scan_repository()")
             
             # Update progress to show scan is actively running
-            progress_tracker.update_progress("Scanning repository files...", 25)
+            update_progress_in_db(audit_id, "Scanning repository files...", 25, 25, 100)
             
             result = asyncio.run(asyncio.wait_for(
                 scanner.scan_repository(repo_url, github_token),
@@ -4413,7 +4076,7 @@ def security_scan():
             logger.info(f"🚀 SCAN EXECUTION COMPLETED: {result}")
             
             # Update progress for scan completion
-            progress_tracker.update_progress("Finalizing scan results...", 95)
+            update_progress_in_db(audit_id, "Finalizing scan results...", 95, 95, 100)
             
             # Check if scan failed
             if 'error' in result:
@@ -4422,19 +4085,13 @@ def security_scan():
             
             logger.info(f"✅ Scan completed successfully in {result.get('scan_duration', 0):.1f}s")
             
-            # Complete progress tracking
-            progress_tracker.complete_progress("Scan completed successfully!")
-            # No more webhooks - single progress system
-            
-            # No more webhooks - single progress system
+            # Complete progress tracking in database
+            update_progress_in_db(audit_id, "Scan completed successfully!", 100, 100, 100, False)
             return jsonify(result)
             
         except asyncio.TimeoutError:
             logger.error(f"❌ Scan timed out after {scan_timeout}s")
-            progress_tracker.complete_progress("Scan timed out")
-            # No more webhooks - single progress system
-            
-            # No more webhooks - single progress system
+            update_progress_in_db(audit_id, "Scan timed out", 100, 100, 100, False)
             
             return jsonify({
                 'error': f'Scan timed out after {scan_timeout}s - repository too large or complex',
@@ -4444,10 +4101,7 @@ def security_scan():
             }), 408
         except Exception as scan_error:
             logger.error(f"❌ Scan execution error: {scan_error}")
-            progress_tracker.complete_progress("Scan failed with error")
-            # No more webhooks - single progress system
-            
-            # No more webhooks - single progress system
+            update_progress_in_db(audit_id, "Scan failed with error", 100, 100, 100, False)
             
             return jsonify({
                 'error': str(scan_error),
@@ -4461,9 +4115,7 @@ def security_scan():
 
 if __name__ == "__main__":
     try:
-        # Cleanup progress tracker on shutdown
-        import atexit
-        atexit.register(progress_tracker.cleanup)
+        # Database-driven progress - no cleanup needed
         
         # Read port from environment variable (Cloud Run requirement)
         port = int(os.environ.get('PORT', 8080))
