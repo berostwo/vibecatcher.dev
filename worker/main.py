@@ -3821,8 +3821,8 @@ def get_progress_for_audit(audit_id: str):
         
         if not progress_data:
             logger.warning(f"📊 DATABASE PROGRESS: No progress data found for audit {audit_id}")
-        return jsonify({
-            'status': 'no_scan_running',
+            return jsonify({
+                'status': 'no_scan_running',
                 'message': f'No progress data found for audit {audit_id}',
                 'audit_id': audit_id,
                 'worker_name': WORKER_NAME,

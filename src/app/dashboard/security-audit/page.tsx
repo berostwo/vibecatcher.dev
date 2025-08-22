@@ -175,6 +175,9 @@ const AuditReportTemplate = ({ results, currentAudit }: {
     }
   };
 
+  // Add timeout tracking for polling
+  const [pollingStartTime, setPollingStartTime] = useState<number | null>(null);
+  
   // Handle status change for findings
   const handleStatusChange = async (findingId: string, newStatus: string) => {
     // Validate the status
@@ -364,9 +367,9 @@ const AuditReportTemplate = ({ results, currentAudit }: {
                       </SelectContent>
                     </Select>
                     <AccordionTrigger className="hover:no-underline ml-2">
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                      <div className="h-8 w-8 p-0 flex items-center justify-center">
                         <ChevronDown className="h-4 w-4" />
-                      </Button>
+                      </div>
                     </AccordionTrigger>
                   </div>
                 </div>
@@ -494,6 +497,7 @@ export default function SecurityAuditPage() {
 
   // REAL PROGRESS POLLING - Actually communicate with worker
   const [progressPollingInterval, setProgressPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  const [pollingStartTime, setPollingStartTime] = useState<number | null>(null);
   
   // MOST RECENT AUDIT: Display the user's latest completed audit
   const [mostRecentAudit, setMostRecentAudit] = useState<SecurityAudit | null>(null);
@@ -515,6 +519,7 @@ export default function SecurityAuditPage() {
       // Add a small delay to allow worker to initialize scan state
       const initialDelay = setTimeout(() => {
         console.log('⏳ Initial delay completed, starting progress polling...');
+        setPollingStartTime(Date.now()); // Start tracking polling time
       }, 2000); // 2 second delay
       
       const interval = setInterval(async () => {
@@ -604,7 +609,6 @@ export default function SecurityAuditPage() {
             } else if (progressData.status === 'no_scan_running') {
               console.log('⚠️ Worker reports no scan running - scan may not have started yet, continuing to poll...');
               console.log('📊 FRONTEND STATE - isScanning:', isScanning, 'currentProgress:', currentProgress, 'currentStep:', currentStep);
-              // Don't treat this as an error - just continue polling
               
               // If we were previously scanning and now get "no scan running", the scan might have completed
               if (isScanning && currentProgress > 0) {
@@ -625,6 +629,18 @@ export default function SecurityAuditPage() {
                   } catch (fetchError) {
                     console.error('❌ Failed to fetch completed audit results:', fetchError);
                   }
+                }
+              }
+              
+              // If we've been polling for too long with no scan running, stop the polling
+              if (isScanning && currentProgress === 0 && currentStep === 'Starting scan...') {
+                const pollingDuration = Date.now() - (pollingStartTime || Date.now());
+                if (pollingDuration > 30000) { // 30 seconds timeout
+                  console.log('⏰ TIMEOUT: Been polling for 30+ seconds with no scan progress, stopping...');
+                  setIsScanning(false);
+                  setCurrentStep('Scan failed to start');
+                  setCurrentProgress(0);
+                  setPollingStartTime(null);
                 }
               }
             } else if (progressData.status === 'wrong_worker') {
