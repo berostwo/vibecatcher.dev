@@ -1707,53 +1707,69 @@ class ChatGPTSecurityScanner:
                 - Provide framework-appropriate code examples
                 """
             
-            # ONE MASSIVE PROMPT for ALL findings
+            # ENHANCED PROMPT for AI-FRIENDLY REMEDIATION
             prompt = f"""
-            You are an expert security engineer. Create remediation prompts for MULTIPLE security vulnerabilities in ONE response.
+            You are an expert security engineer creating remediation instructions for AI coding assistants (Cursor, GitHub Copilot, etc.).
             
             VULNERABILITIES TO ANALYZE:
             {json.dumps(all_findings_summary, indent=2)}
             {context_info}
             
-            **CRITICAL REQUIREMENT**: For each vulnerability, you MUST include:
-            - The exact file path(s) affected
-            - Specific line numbers where the vulnerability exists
-            - Which pages/components are impacted
-            - How many occurrences exist across the codebase
-            - **Framework-specific solution** (based on detected technology stack)
+            For EACH vulnerability, create a COMPREHENSIVE remediation prompt that follows this EXACT structure:
+
+            ## TASK STRUCTURE FOR AI AGENTS:
             
-            For EACH vulnerability, create a remediation prompt that:
-            1. Clearly explains the security issue
-            2. Provides context about why it's dangerous
-            3. Gives specific, actionable steps to fix it
-            4. Is written for coding assistants (Cursor, GitHub Copilot, etc.)
-            5. Includes code examples appropriate for the detected framework
-            6. Addresses the root cause, not just symptoms
-            7. **ALWAYS mentions the specific files and line numbers affected**
-            8. **Uses framework-specific security patterns when available**
+            **🔍 VERIFICATION STEP**: 
+            - First verify this is a real security issue by examining the specific code
+            - Check if modern framework protections already exist
+            - Confirm the vulnerability actually poses a risk in this context
             
-            Example format for each remediation:
-            ```
-            **Critical: Missing Authorization Checks**
-            - **Files Affected**: `src/app/dashboard/page.tsx` (lines 45-67), `src/components/auth/requireAuth.tsx` (lines 23-45)
-            - **Pages Impacted**: Dashboard page, User settings page
-            - **Occurrences**: Found in 3 files across the codebase
-            - **Framework Context**: Next.js application (detected)
-            - **Framework-Specific Fix**: Implement middleware.ts for authentication and use next-auth
-            - **Action**: Add authorization checks before accessing sensitive resources
-            ```
+            **🎯 SPECIFIC MISSION**:
+            - Clear, actionable task with exact files and line numbers
+            - Framework-specific implementation approach
+            - Expected security outcome
+            
+            **⚠️ SECURITY CONTEXT**:
+            - Why this vulnerability is dangerous
+            - Attack scenarios and potential impact
+            - Compliance/regulatory implications if relevant
+            
+            **🔧 IMPLEMENTATION STEPS**:
+            1. **Analyze** - Examine the vulnerable code at specific locations
+            2. **Plan** - Determine the best framework-specific approach
+            3. **Implement** - Apply security fixes with proper patterns
+            4. **Validate** - Test the fix and verify security improvement
+            5. **Document** - Add security comments for future maintainers
+            
+            **📝 CODE REQUIREMENTS**:
+            - Use framework best practices (Next.js, React, etc.)
+            - Follow established security patterns
+            - Maintain existing functionality while adding security
+            - Add proper error handling and logging
+            - Include TypeScript types if applicable
+            
+            **✅ VALIDATION CHECKLIST**:
+            - [ ] Vulnerability is confirmed as real issue
+            - [ ] Fix follows framework security guidelines
+            - [ ] No breaking changes to existing functionality
+            - [ ] Security improvement is measurable
+            - [ ] Code is properly documented
             
             Return in this EXACT JSON format:
             {{
                 "remediations": {{
-                    "rule_id_1": "remediation prompt text here",
-                    "rule_id_2": "remediation prompt text here",
+                    "rule_id_1": "COMPLETE STRUCTURED PROMPT following the above format",
+                    "rule_id_2": "COMPLETE STRUCTURED PROMPT following the above format",
                     ...
                 }}
             }}
             
-            Make each prompt specific enough that a coding assistant can implement the fix robustly.
-            **IMPORTANT**: Every remediation must include the exact file paths, line numbers, and framework-specific solutions.
+            **CRITICAL**: Each remediation must include:
+            - Specific file paths and line numbers
+            - Framework-specific solutions
+            - Verification step to avoid false positive fixes
+            - Step-by-step implementation guide
+            - Validation checklist for the AI agent
             """
             
             # MULTI-API KEY PARALLEL PROCESSING: Use round-robin API key selection
@@ -2220,9 +2236,14 @@ class ChatGPTSecurityScanner:
             logger.info(f"🎯 Report validation complete")
             logger.info(f"🚀 Scan completed successfully in {scan_duration:.2f}s")
             
-            # Final progress update
-            update_progress_in_db(self.audit_id, "Scan completed successfully!", 100, 100, 100, False)
+            # Final progress update - mark as completed BEFORE final processing
+            try:
+                update_progress_in_db(self.audit_id, "Scan completed successfully!", 100, 100, 100, False)
+                logger.info(f"✅ Progress marked as completed in database")
+            except Exception as progress_error:
+                logger.error(f"❌ Failed to mark progress as completed: {progress_error}")
             
+            # Convert report to dictionary for return
             report_dict = asdict(report)
             try:
                 if 'scan_context' in locals() and isinstance(scan_context, dict) and scan_context.get('vulnerable_packages'):
@@ -2231,22 +2252,41 @@ class ChatGPTSecurityScanner:
             except Exception:
                 pass
             
-            # 🚀 ADD CACHE STATISTICS to scan result
+            # 🚀 ADD CACHE STATISTICS to scan result (with timeout protection)
             try:
-                cache_stats = self.get_cache_statistics()
-                report_dict['cache_statistics'] = cache_stats
-                report_dict['cache_benefits'] = {
-                    'cost_savings': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
-                    'time_savings': f"{cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes",
-                    'hit_rate': f"{cache_stats.get('hit_rate_percent', 0)}%",
-                    'api_calls_saved': cache_stats.get('cache_hits', 0)
-                }
-                logger.info(f"📊 CACHE STATS: Scan completed with {cache_stats.get('hit_rate_percent', 0)}% cache hit rate")
+                import asyncio
+                import concurrent.futures
+                
+                # Use ThreadPoolExecutor with timeout to prevent hanging
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(self.get_cache_statistics)
+                    try:
+                        cache_stats = future.result(timeout=30)  # 30 second timeout
+                        report_dict['cache_statistics'] = cache_stats
+                        report_dict['cache_benefits'] = {
+                            'cost_savings': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
+                            'time_savings': f"{cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes",
+                            'hit_rate': f"{cache_stats.get('hit_rate_percent', 0)}%",
+                            'api_calls_saved': cache_stats.get('cache_hits', 0)
+                        }
+                        logger.info(f"📊 CACHE STATS: Scan completed with {cache_stats.get('hit_rate_percent', 0)}% cache hit rate")
+                    except concurrent.futures.TimeoutError:
+                        logger.warning(f"⚠️ Cache statistics generation timed out after 30s, skipping")
+                        report_dict['cache_statistics'] = {'error': 'Cache statistics generation timed out'}
+                        report_dict['cache_benefits'] = {'error': 'Cache statistics generation timed out'}
             except Exception as cache_error:
                 logger.warning(f"⚠️ Failed to get cache statistics: {cache_error}")
                 report_dict['cache_statistics'] = {'error': 'Failed to retrieve cache statistics'}
+                report_dict['cache_benefits'] = {'error': 'Failed to retrieve cache statistics'}
             
             logger.info(f"✅ Scan completed successfully in {scan_duration:.1f}s")
+            
+            # Final safety check - ensure progress is marked as completed
+            try:
+                update_progress_in_db(self.audit_id, "Scan completed successfully!", 100, 100, 100, False)
+                logger.info(f"✅ Final progress confirmation sent to database")
+            except Exception as final_progress_error:
+                logger.error(f"❌ Final progress update failed: {final_progress_error}")
             
             return report_dict
             
@@ -4095,11 +4135,49 @@ def security_scan():
                 except Exception as e:
                     logger.error(f"❌ Failed to update progress: {e}")
             
+            # Add watchdog timer to force-complete hanging scans
+            import threading
+            import time
+            
+            def watchdog_timer():
+                time.sleep(scan_timeout + 30)  # Wait for scan timeout + 30 seconds
+                if audit_id:
+                    try:
+                        logger.warning(f"⚠️ WATCHDOG: Force-completing hanging scan after {scan_timeout + 30}s")
+                        update_progress_in_db(audit_id, "Scan force-completed by watchdog", 100, 100, 100, False)
+                    except Exception as e:
+                        logger.error(f"❌ Watchdog failed to update progress: {e}")
+            
+            watchdog_thread = threading.Thread(target=watchdog_timer, daemon=True)
+            watchdog_thread.start()
+            
             try:
                 result = asyncio.run(asyncio.wait_for(
                     scanner.scan_repository(repo_url, github_token),
                     timeout=scan_timeout
                 ))
+                
+                # Verify the result is valid
+                if not result or not isinstance(result, dict):
+                    logger.error(f"❌ Scan returned invalid result: {type(result)}")
+                    result = {
+                        'error': 'Scan returned invalid result',
+                        'error_type': 'InvalidResultError',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+            except asyncio.TimeoutError:
+                logger.error(f"❌ Scan execution timed out after {scan_timeout}s")
+                if audit_id:
+                    try:
+                        update_progress_in_db(audit_id, "Scan execution timed out", 100, 100, 100, False)
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update progress: {e}")
+                return jsonify({
+                    'error': f'Scan execution timed out after {scan_timeout}s',
+                    'error_type': 'TimeoutError',
+                    'timestamp': datetime.now().isoformat()
+                }), 408
             except Exception as scan_exec_error:
                 logger.error(f"❌ Scan execution failed: {scan_exec_error}")
                 if audit_id:

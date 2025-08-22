@@ -283,11 +283,9 @@ export default function SecurityAuditPage() {
   const [scanResults, setScanResults] = useState<ScanResults | null>(null);
   const [userGitHubUsername, setUserGitHubUsername] = useState<string>('');
   
-  // SIMPLE PROGRESS TRACKING - now includes time remaining
+  // SIMPLE PROGRESS TRACKING
   const [currentStep, setCurrentStep] = useState<string>('Initializing scan...');
   const [currentProgress, setCurrentProgress] = useState<number>(0);
-  const [elapsedTime, setElapsedTime] = useState<string>('0s');
-  const [timeRemaining, setTimeRemaining] = useState<string>('Calculating...');
   
   // PERSISTENT AUDIT STATE: Track current audit across page refreshes
   const [currentAudit, setCurrentAudit] = useState<SecurityAudit | null>(null);
@@ -359,14 +357,43 @@ export default function SecurityAuditPage() {
               console.log('📊 CURRENT SCAN STATE - Step:', progressData.step, 'Progress:', typeof progressData.percentage === 'number' ? progressData.percentage : progressData.progress);
               setCurrentStep(progressData.step);
               setCurrentProgress(typeof progressData.percentage === 'number' ? progressData.percentage : progressData.progress);
-              if (progressData.elapsed_time) setElapsedTime(progressData.elapsed_time);
-              if (progressData.time_remaining) setTimeRemaining(progressData.time_remaining);
               
-              // Check if scan completed by checking worker progress
-              if (progressData.percentage === 100) {
-                console.log('🎉 SCAN COMPLETED - STOPPING POLLING');
+              // Check if scan completed by checking worker progress status
+              if (progressData.status === 'scan_completed') {
+                console.log('🎉 SCAN COMPLETED - Worker reports completion!');
                 setIsScanning(false);
-                // The scan results will be fetched from Firestore when the worker completes
+                
+                // Fetch the completed audit results from Firestore
+                try {
+                  console.log('🔍 Fetching completed audit results from Firestore...');
+                  const completedAudit = await FirebaseAuditService.getAuditById(progressData.audit_id);
+                  
+                  if (completedAudit && completedAudit.scanResults) {
+                    console.log('✅ Found completed audit results:', completedAudit.scanResults);
+                    setScanResults(completedAudit.scanResults);
+                    setCurrentAudit(completedAudit);
+                  } else {
+                    console.log('⚠️ Audit completed but no results found yet, will retry...');
+                    // Set a timeout to retry fetching results
+                    setTimeout(async () => {
+                      try {
+                        const retryAudit = await FirebaseAuditService.getAuditById(progressData.audit_id);
+                        if (retryAudit && retryAudit.scanResults) {
+                          console.log('✅ Retry successful - found audit results:', retryAudit.scanResults);
+                          setScanResults(retryAudit.scanResults);
+                          setCurrentAudit(retryAudit);
+                        }
+                      } catch (retryError) {
+                        console.error('❌ Retry failed:', retryError);
+                      }
+                    }, 2000); // Wait 2 seconds before retry
+                  }
+                } catch (fetchError) {
+                  console.error('❌ Failed to fetch completed audit results:', fetchError);
+                }
+              } else if (progressData.percentage === 100 && progressData.status === 'scan_running') {
+                console.log('📊 Progress at 100% but scan still running - waiting for completion...');
+                // Don't stop scanning yet - wait for the worker to mark completion
               }
             } else if (progressData.status === 'no_scan_running') {
               console.log('⚠️ Worker reports no scan running - scan may not have started yet, continuing to poll...');
@@ -377,13 +404,60 @@ export default function SecurityAuditPage() {
               if (isScanning && currentProgress > 0) {
                 console.log('🎉 SCAN COMPLETED - Worker reports no scan running after progress');
                 setIsScanning(false);
-                // The scan results will be fetched from Firestore when the worker completes
+                
+                // Try to fetch the completed audit results from Firestore
+                if (currentAudit?.id) {
+                  try {
+                    console.log('🔍 Fetching completed audit results after worker completion...');
+                    const completedAudit = await FirebaseAuditService.getAuditById(currentAudit.id);
+                    
+                    if (completedAudit && completedAudit.scanResults) {
+                      console.log('✅ Found completed audit results:', completedAudit.scanResults);
+                      setScanResults(completedAudit.scanResults);
+                      setCurrentAudit(completedAudit);
+                    }
+                  } catch (fetchError) {
+                    console.error('❌ Failed to fetch completed audit results:', fetchError);
+                  }
+                }
               }
             } else if (progressData.status === 'wrong_worker') {
               console.log('⚠️ Wrong worker - this worker is not handling the requested audit');
               console.log('📊 WRONG WORKER INFO:', progressData);
               // This worker is not handling the requested audit, try to find the correct one
               // The frontend will automatically retry with the correct worker URL from Firestore
+            } else if (progressData.status === 'scan_completed') {
+              console.log('🎉 SCAN COMPLETED - Worker reports completion!');
+              setIsScanning(false);
+              
+              // Fetch the completed audit results from Firestore
+              try {
+                console.log('🔍 Fetching completed audit results from Firestore...');
+                const completedAudit = await FirebaseAuditService.getAuditById(progressData.audit_id);
+                
+                if (completedAudit && completedAudit.scanResults) {
+                  console.log('✅ Found completed audit results:', completedAudit.scanResults);
+                  setScanResults(completedAudit.scanResults);
+                  setCurrentAudit(completedAudit);
+                } else {
+                  console.log('⚠️ Audit completed but no results found yet, will retry...');
+                  // Set a timeout to retry fetching results
+                  setTimeout(async () => {
+                    try {
+                      const retryAudit = await FirebaseAuditService.getAuditById(progressData.audit_id);
+                      if (retryAudit && retryAudit.scanResults) {
+                        console.log('✅ Retry successful - found audit results:', retryAudit.scanResults);
+                        setScanResults(retryAudit.scanResults);
+                        setCurrentAudit(retryAudit);
+                      }
+                    } catch (retryError) {
+                      console.error('❌ Retry failed:', retryError);
+                    }
+                  }, 2000); // Wait 2 seconds before retry
+                }
+              } catch (fetchError) {
+                console.error('❌ Failed to fetch completed audit results:', fetchError);
+              }
             } else {
               console.log('⚠️ Invalid worker progress data format:', progressData);
             }
@@ -793,22 +867,18 @@ export default function SecurityAuditPage() {
             </Button>
           </div>
           
-          {/* SIMPLE PROGRESS BAR with time remaining */}
+          {/* SIMPLE PROGRESS BAR */}
           {isScanning && (
             <div className="space-y-3 pt-4">
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span className="font-medium">{currentStep}</span>
-                <span className="font-mono">ETA: {timeRemaining}</span>
+                <span className="font-mono">{Math.round(currentProgress)}%</span>
               </div>
               <div className="w-full bg-muted rounded-full h-3">
                 <div 
                   className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
                   style={{ width: `${currentProgress}%` }}
                 />
-              </div>
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span className="font-mono">Elapsed: {elapsedTime}</span>
-                <span className="font-mono">{Math.round(currentProgress)}%</span>
               </div>
             </div>
           )}
