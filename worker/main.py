@@ -1032,7 +1032,10 @@ class EvidenceFilter:
 class ChatGPTSecurityScanner:
     """Ultimate ChatGPT-powered security scanner for indie developers"""
     
-    def __init__(self):
+    def __init__(self, audit_id: str = None):
+        # Store audit_id for progress tracking
+        self.audit_id = audit_id
+        
         # Initialize OpenAI clients with multiple API keys for parallel processing
         self.api_keys = []
         
@@ -3856,7 +3859,7 @@ def debug_global_state():
     """Debug endpoint to inspect worker configuration (no more global state)"""
     try:
         # Check sharding configuration
-        scanner = ChatGPTSecurityScanner()
+        scanner = ChatGPTSecurityScanner(audit_id=None)  # Debug endpoint doesn't need audit_id
         
         # Check if we should force disable sharding for testing
         force_disable_sharding = request.args.get('disable_sharding', 'false').lower() == 'true'
@@ -3905,7 +3908,7 @@ def get_cache_statistics():
             cache_stats = app.scanner.get_cache_statistics()
         else:
             # Create a temporary scanner instance to get stats
-            temp_scanner = ChatGPTSecurityScanner()
+            temp_scanner = ChatGPTSecurityScanner(audit_id=None)  # Cache stats don't need audit_id
             cache_stats = temp_scanner.get_cache_statistics()
         
         # Add additional performance metrics
@@ -3977,7 +3980,7 @@ def shard_scan():
         if not isinstance(batches_content, list):
             return jsonify({'error': 'Invalid payload'}), 400
 
-        scanner = ChatGPTSecurityScanner()
+        scanner = ChatGPTSecurityScanner(audit_id=None)  # Shard scan doesn't need audit_id
 
         # Analyze each content batch directly (no filesystem dependency)
         all_results: List[SecurityFinding] = []
@@ -4035,7 +4038,7 @@ def security_scan():
         
         # Run the scan with NUCLEAR TIMEOUT PROTECTION
         try:
-            scanner = ChatGPTSecurityScanner()
+            scanner = ChatGPTSecurityScanner(audit_id=audit_id)
             
             # Database-driven progress - no need to pass progress tracker
             
