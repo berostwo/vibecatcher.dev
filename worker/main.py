@@ -2339,10 +2339,10 @@ This vulnerability could allow attackers to {finding.impact.lower() if finding.i
                 except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
-                else:
-                    # No sharding: process all batches locally
-                    logger.info("🚀 NO SHARDING: Processing all batches locally on this worker")
-                    all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
+            else:
+                # No sharding: process all batches locally
+                logger.info("🚀 NO SHARDING: Processing all batches locally on this worker")
+                all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
 
             # all_findings already computed via local processing and/or sharding above
             
