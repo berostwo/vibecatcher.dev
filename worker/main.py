@@ -1707,6 +1707,11 @@ class ChatGPTSecurityScanner:
                 - Provide framework-appropriate code examples
                 """
             
+            # Build example JSON structure with actual rule_ids
+            example_remediations = {}
+            for i, finding in enumerate(condensed_findings[:3]):  # Show first 3 as examples
+                example_remediations[finding.rule_id] = "COMPLETE STRUCTURED PROMPT following the above format"
+            
             # ENHANCED PROMPT for AI-FRIENDLY REMEDIATION
             prompt = f"""
             You are an expert security engineer creating remediation instructions for AI coding assistants (Cursor, GitHub Copilot, etc.).
@@ -1758,11 +1763,12 @@ class ChatGPTSecurityScanner:
             Return in this EXACT JSON format:
             {{
                 "remediations": {{
-                    "rule_id_1": "COMPLETE STRUCTURED PROMPT following the above format",
-                    "rule_id_2": "COMPLETE STRUCTURED PROMPT following the above format",
-                    ...
+                    {json.dumps(example_remediations, indent=20)}
+                    // ... continue for ALL findings using their EXACT rule_id values
                 }}
             }}
+            
+            **IMPORTANT**: Use the EXACT rule_id values from the findings above, not generic placeholders.
             
             **CRITICAL**: Each remediation must include:
             - Specific file paths and line numbers
@@ -1810,6 +1816,9 @@ class ChatGPTSecurityScanner:
                     remediations = result.get('remediations', {})
                     
                     logger.info(f"✅ Successfully parsed {len(remediations)} remediations from nuclear optimization")
+                    logger.info(f"🔍 Generated remediations for rule_ids: {list(remediations.keys())}")
+                    logger.info(f"🔍 Available findings rule_ids: {[f.rule_id for f in condensed_findings]}")
+                    
                     return remediations
                 else:
                     logger.error("❌ No JSON found in nuclear optimization response")
@@ -1822,7 +1831,41 @@ class ChatGPTSecurityScanner:
             
         except Exception as e:
             logger.error(f"❌ Nuclear optimization failed: {e}")
-            return {}
+            logger.warning("⚠️ Falling back to basic remediation generation...")
+            
+            # Fallback: Generate basic remediation prompts
+            fallback_remediations = {}
+            for finding in condensed_findings:
+                fallback_remediations[finding.rule_id] = f"""🔍 SECURITY VULNERABILITY REMEDIATION
+
+**ISSUE**: {finding.message}
+**SEVERITY**: {finding.severity}
+**LOCATION**: {finding.file_path}:{finding.line_number}
+**DESCRIPTION**: {finding.description}
+
+**VERIFICATION STEP**: 
+First verify this is a real security issue by examining the specific code at the location above. Check if modern framework protections already exist.
+
+**MISSION**: 
+Fix the security vulnerability in {finding.file_path} at line {finding.line_number}.
+
+**IMPLEMENTATION**:
+1. Analyze the vulnerable code at the specified location
+2. Apply appropriate security fixes following framework best practices
+3. Test the fix to ensure it resolves the vulnerability
+4. Verify no breaking changes to existing functionality
+
+**SECURITY CONTEXT**:
+This vulnerability could allow attackers to {finding.impact.lower() if finding.impact else 'compromise the application'}.
+
+**VALIDATION**:
+- [ ] Vulnerability is confirmed as real issue
+- [ ] Fix follows security best practices
+- [ ] No breaking changes introduced
+- [ ] Security improvement is measurable"""
+            
+            logger.info(f"✅ Generated {len(fallback_remediations)} fallback remediations")
+            return fallback_remediations
 
     
     
@@ -2088,7 +2131,7 @@ class ChatGPTSecurityScanner:
                         logger.warning(f"🧩 Shard collection failed: {e}")
 
                     all_findings = local_findings + aggregated_findings
-                except Exception as e:
+            except Exception as e:
                     logger.warning(f"🧩 Sharding disabled due to runtime error: {e}. Falling back to local processing.")
                     all_findings = self._process_batches_locally(file_batches, total_batches, scan_start_time, max_scan_time)
             else:
@@ -2264,12 +2307,12 @@ class ChatGPTSecurityScanner:
                         cache_stats = future.result(timeout=30)  # 30 second timeout
                         report_dict['cache_statistics'] = cache_stats
                         report_dict['cache_benefits'] = {
-                            'cost_savings': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
-                            'time_savings': f"{cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes",
-                            'hit_rate': f"{cache_stats.get('hit_rate_percent', 0)}%",
-                            'api_calls_saved': cache_stats.get('cache_hits', 0)
-                        }
-                        logger.info(f"📊 CACHE STATS: Scan completed with {cache_stats.get('hit_rate_percent', 0)}% cache hit rate")
+                    'cost_savings': f"${cache_stats.get('cache_hits', 0) * 0.02:.2f}",
+                    'time_savings': f"{cache_stats.get('cache_hits', 0) * 0.5:.1f} minutes",
+                    'hit_rate': f"{cache_stats.get('hit_rate_percent', 0)}%",
+                    'api_calls_saved': cache_stats.get('cache_hits', 0)
+                }
+                logger.info(f"📊 CACHE STATS: Scan completed with {cache_stats.get('hit_rate_percent', 0)}% cache hit rate")
                     except concurrent.futures.TimeoutError:
                         logger.warning(f"⚠️ Cache statistics generation timed out after 30s, skipping")
                         report_dict['cache_statistics'] = {'error': 'Cache statistics generation timed out'}
@@ -3821,8 +3864,8 @@ def get_progress_for_audit(audit_id: str):
         
         if not progress_data:
             logger.warning(f"📊 DATABASE PROGRESS: No progress data found for audit {audit_id}")
-            return jsonify({
-                'status': 'no_scan_running',
+        return jsonify({
+            'status': 'no_scan_running',
                 'message': f'No progress data found for audit {audit_id}',
                 'audit_id': audit_id,
                 'worker_name': WORKER_NAME,
@@ -4138,7 +4181,6 @@ def security_scan():
             # Add watchdog timer to force-complete hanging scans
             import threading
             import time
-            import asyncio  # Re-import to ensure availability
             
             def watchdog_timer():
                 time.sleep(scan_timeout + 30)  # Wait for scan timeout + 30 seconds

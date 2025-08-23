@@ -55,7 +55,7 @@ export interface SecurityAudit {
   // User's finding status decisions for this repository
   findingStatuses?: {
     [findingId: string]: {
-      status: 'resolved' | 'false_positive';
+      status: 'open' | 'resolved' | 'false_positive';
       timestamp: any;
       userId: string;
       findingHash: string; // Hash of finding content for cross-audit matching
@@ -360,22 +360,33 @@ export class FirebaseAuditService {
   static async updateFindingStatus(
     auditId: string,
     findingId: string,
-    status: 'resolved' | 'false_positive',
+    status: 'open' | 'resolved' | 'false_positive',
     userId: string,
     findingHash: string
   ): Promise<void> {
     try {
       const auditRef = doc(db, this.COLLECTION_NAME, auditId);
       
-      // Update the finding status in the findingStatuses map
-      await updateDoc(auditRef, {
-        [`findingStatuses.${findingId}`]: {
-          status,
-          timestamp: serverTimestamp(),
-          userId,
-          findingHash
-        }
-      });
+      if (status === 'open') {
+        // Remove the finding status if it's being set back to 'open'
+        await updateDoc(auditRef, {
+          [`findingStatuses.${findingId}`]: null
+        });
+        // Remove the field entirely
+        await updateDoc(auditRef, {
+          [`findingStatuses.${findingId}`]: null
+        });
+      } else {
+        // Update the finding status in the findingStatuses map
+        await updateDoc(auditRef, {
+          [`findingStatuses.${findingId}`]: {
+            status,
+            timestamp: serverTimestamp(),
+            userId,
+            findingHash
+          }
+        });
+      }
       
       console.log(`Updated finding ${findingId} status to ${status} for audit ${auditId}`);
     } catch (error) {
@@ -396,7 +407,6 @@ export class FirebaseAuditService {
       const q = query(
         collection(db, this.COLLECTION_NAME),
         where('userId', '==', userId),
-        where('repositoryUrl', '==', repositoryUrl),
         where('status', '==', 'completed')
       );
       
@@ -418,6 +428,46 @@ export class FirebaseAuditService {
       return statuses;
     } catch (error) {
       console.error('Error getting repository finding statuses:', error);
+      return {};
+    }
+  }
+  
+  /**
+   * Get all finding statuses for a specific repository across all audits
+   */
+  static async getRepositoryAllFindingStatuses(
+    userId: string,
+    repositoryUrl: string
+  ): Promise<{ [findingId: string]: 'open' | 'resolved' | 'false_positive' }> {
+    try {
+      // Query for all completed audits for this user and repository
+      const q = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('repositoryUrl', '==', repositoryUrl),
+        where('status', '==', 'completed')
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const allStatuses: { [findingId: string]: 'open' | 'resolved' | 'false_positive' } = {};
+      
+      // Collect all finding statuses from all audits for this repository
+      querySnapshot.docs.forEach(doc => {
+        const audit = doc.data() as SecurityAudit;
+        if (audit.findingStatuses) {
+          Object.entries(audit.findingStatuses).forEach(([findingId, statusInfo]) => {
+            // Use the most recent status for each finding
+            if (!allStatuses[findingId] || 
+                (audit.updatedAt && audit.updatedAt > (audit.updatedAt || 0))) {
+              allStatuses[findingId] = statusInfo.status;
+            }
+          });
+        }
+      });
+      
+      return allStatuses;
+    } catch (error) {
+      console.error('Error getting repository all finding statuses:', error);
       return {};
     }
   }

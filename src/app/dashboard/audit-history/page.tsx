@@ -7,60 +7,47 @@ import { AuditSecurityService } from '@/lib/audit-security';
 import { DashboardPage, DashboardPageHeader } from '@/components/common/dashboard-page';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge, BadgeProps } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 import { 
-  ShieldAlert, 
-  AlertTriangle, 
-  Info, 
   CheckCircle, 
-  SquareMenu, 
   Clock, 
-  Download, 
-  Code,
-  Loader2
+  Download,
+  Loader2,
+  SquareMenu
 } from 'lucide-react';
+import AuditReportTemplate from '@/components/audit-report-template';
 
-// This will be replaced with real data from Firebase
-
-
-const getSeverityStyles = (severity: string) => {
-  switch (severity) {
-    case 'Critical':
-      return {
-        icon: <ShieldAlert className="h-5 w-5 text-red-500" />,
-        borderColor: 'border-red-500/50',
-        bgColor: 'bg-red-500/10',
-        textColor: 'text-red-500',
-      };
-    case 'High':
-      return {
-        icon: <AlertTriangle className="h-5 w-5 text-orange-500" />,
-        borderColor: 'border-orange-500/50',
-        bgColor: 'bg-orange-500/10',
-        textColor: 'text-orange-500',
-      };
-    case 'Medium':
-      return {
-        icon: <Info className="h-5 w-5 text-yellow-500" />,
-        borderColor: 'border-yellow-500/50',
-        bgColor: 'bg-yellow-500/10',
-        textColor: 'text-yellow-500',
-      };
-    default:
-      return {
-        icon: <CheckCircle className="h-5 w-5 text-green-500" />,
-        borderColor: 'border-gray-500/50',
-        bgColor: 'bg-green-500/10',
-        textColor: 'text-green-500',
-      };
-  }
-};
+// Using shared AuditReportTemplate component
 
 
 export default function AuditHistoryPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [auditHistory, setAuditHistory] = useState<SecurityAudit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Copy to clipboard function
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({
+        title: "Copied to clipboard!",
+        description: "Remediation prompt copied successfully",
+        duration: 2000,
+      });
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+      toast({
+        title: "Copy failed",
+        description: "Failed to copy to clipboard",
+        variant: "destructive",
+        duration: 3000,
+      });
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -100,6 +87,136 @@ export default function AuditHistoryPage() {
     if (score > 40) return 'text-orange-500';
     return 'text-red-500';
   }
+  
+  // Handle status change for findings
+  const handleStatusChange = async (auditId: string, findingId: string, newStatus: string) => {
+    // Validate the status
+    if (!['open', 'resolved', 'false_positive'].includes(newStatus)) {
+      return;
+    }
+    
+    const validStatus = newStatus as 'open' | 'resolved' | 'false_positive';
+    
+    try {
+      // Generate a hash for the finding content to enable cross-audit learning
+      const audit = auditHistory.find(a => a.id === auditId);
+      if (!audit) return;
+      
+      const finding = audit.scanResults?.condensed_findings?.find(f => f.rule_id === findingId);
+      if (!finding) return;
+      
+      const findingContent = `${finding.message}-${finding.description}`;
+      const findingHash = btoa(findingContent).slice(0, 16); // Simple hash for demo
+      
+      // Update the vulnerability status in the backend
+      await FirebaseAuditService.updateFindingStatus(
+        auditId,
+        findingId,
+        validStatus,
+        audit.userId || 'unknown',
+        findingHash
+      );
+      
+      // Update local state
+      setAuditHistory(prev => prev.map(a => {
+        if (a.id === auditId) {
+          let updatedFindingStatuses;
+          
+          if (validStatus === 'open') {
+            // Remove the finding status if it's being set back to 'open'
+            const { [findingId]: removed, ...remainingStatuses } = a.findingStatuses || {};
+            updatedFindingStatuses = remainingStatuses;
+          } else {
+            // Add or update the finding status
+            updatedFindingStatuses = {
+              ...a.findingStatuses,
+              [findingId]: {
+                status: validStatus,
+                timestamp: new Date(),
+                userId: a.userId || 'unknown',
+                findingHash: btoa(`${validStatus}-${findingId}`).slice(0, 16)
+              }
+            };
+          }
+          
+          // Recalculate health score using the same logic
+          const openFindings = (a.scanResults?.condensed_findings || []).filter(finding => {
+            const status = updatedFindingStatuses[finding.rule_id]?.status;
+            return !status || status === 'open';
+          });
+          
+          let updatedHealthScore = 100;
+          if (openFindings.length > 0) {
+            let totalPenalty = 0;
+            let maxPossiblePenalty = 0;
+            
+            openFindings.forEach(finding => {
+              const severity = finding?.severity || 'Medium';
+              let penalty = 0;
+              let maxPenalty = 0;
+              
+              switch (severity) {
+                case 'Critical':
+                  penalty = 8;
+                  maxPenalty = 8;
+                  break;
+                case 'High':
+                  penalty = 5;
+                  maxPenalty = 5;
+                  break;
+                case 'Medium':
+                  penalty = 3;
+                  maxPenalty = 3;
+                  break;
+                case 'Low':
+                  penalty = 1;
+                  maxPenalty = 1;
+                  break;
+                default:
+                  penalty = 2;
+                  maxPenalty = 2;
+              }
+              
+              const occurrencePenalty = Math.min(penalty * Math.min(finding?.occurrences || 1, 2), maxPenalty);
+              totalPenalty += occurrencePenalty;
+              maxPossiblePenalty += maxPenalty;
+            });
+            
+            const penaltyPercentage = Math.min((totalPenalty / maxPossiblePenalty) * 100, 95);
+            updatedHealthScore = Math.max(5, Math.round(100 - penaltyPercentage));
+          }
+          
+          return {
+            ...a,
+            findingStatuses: updatedFindingStatuses,
+            scanResults: a.scanResults ? {
+              ...a.scanResults,
+              summary: {
+                ...a.scanResults.summary,
+                codebase_health: updatedHealthScore
+              }
+            } : a.scanResults
+          } as SecurityAudit;
+        }
+        return a;
+      }));
+      
+      toast({
+        title: "Status updated!",
+        description: `Finding marked as ${validStatus}`,
+        duration: 2000,
+      });
+      
+    } catch (error) {
+      console.error('Failed to update finding status:', error);
+      toast({
+        title: "Update failed",
+        description: "Failed to update finding status",
+        variant: "destructive",
+        duration: 3000,
+      });
+    }
+  };
 
   const downloadAuditAsJSON = (audit: SecurityAudit) => {
     try {
@@ -205,19 +322,40 @@ export default function AuditHistoryPage() {
           // Sort vulnerabilities by severity (Critical -> High -> Medium -> Low)
           const sortedVulnerabilities = [...vulnerabilities].sort((a, b) => {
             const severityOrder = { 'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
-            const aSeverity = a?.severity || 'Medium';
-            const bSeverity = b?.severity || 'Medium';
-            return (severityOrder[aSeverity as keyof typeof severityOrder] || 4) - (severityOrder[bSeverity as keyof typeof severityOrder] || 4);
+            // Normalize severity to handle case variations and edge cases
+            const normalizeSeverity = (severity: string) => {
+              if (!severity) return 'Medium';
+              const normalized = severity.trim().toLowerCase();
+              if (normalized.includes('critical')) return 'Critical';
+              if (normalized.includes('high')) return 'High';
+              if (normalized.includes('medium')) return 'Medium';
+              if (normalized.includes('low')) return 'Low';
+              return 'Medium';
+            };
+            
+            const aSeverity = normalizeSeverity(a?.severity);
+            const bSeverity = normalizeSeverity(b?.severity);
+            
+            return (severityOrder[aSeverity] || 4) - (severityOrder[bSeverity] || 4);
           });
           
           // Calculate accurate codebase health score based on actual findings
-          const calculateHealthScore = (findings: any[]) => {
+          const calculateHealthScore = (findings: any[], findingStatuses?: { [key: string]: any }) => {
             if (findings.length === 0) return 100; // Perfect if no issues
+            
+            // Filter out resolved and false positive findings
+            const openFindings = findings.filter(finding => {
+              if (!findingStatuses) return true; // If no statuses, consider all findings open
+              const status = findingStatuses[finding.rule_id]?.status;
+              return !status || status === 'open';
+            });
+            
+            if (openFindings.length === 0) return 100; // All findings resolved
             
             let totalPenalty = 0;
             let maxPossiblePenalty = 0;
             
-            findings.forEach(finding => {
+            openFindings.forEach(finding => {
               const severity = finding?.severity || 'Medium';
               let penalty = 0;
               let maxPenalty = 0;
@@ -256,7 +394,7 @@ export default function AuditHistoryPage() {
             return healthScore;
           };
           
-          const healthScore = calculateHealthScore(sortedVulnerabilities);
+          const healthScore = calculateHealthScore(sortedVulnerabilities, audit.findingStatuses);
           
           return (
           <AccordionItem
@@ -288,110 +426,21 @@ export default function AuditHistoryPage() {
             </div>
             <AccordionContent className="pt-2 pb-4">
               {summary.total_findings > 0 ? (
-                <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4 text-center">
-                        <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-                            <h4 className="text-sm font-medium text-muted-foreground">Total Findings</h4>
-                            <p className="text-4xl font-bold">{sortedVulnerabilities.length}</p>
-                        </div>
-                        <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-                            <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
-                            <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                      <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-2">
-                        <h4 className="text-sm font-medium text-red-400">Critical</h4>
-                        <p className="text-2xl font-bold text-red-500">{summary.critical_count}</p>
-                      </div>
-                      <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-2">
-                        <h4 className="text-sm font-medium text-orange-400">High</h4>
-                        <p className="text-2xl font-bold text-orange-500">{summary.high_count}</p>
-                      </div>
-                      <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-2">
-                        <h4 className="text-sm font-medium text-yellow-400">Medium</h4>
-                        <p className="text-2xl font-bold text-yellow-500">{summary.medium_count}</p>
-                      </div>
-                      <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-2">
-                        <h4 className="text-sm font-medium text-green-400">Low</h4>
-                        <p className="text-2xl font-bold text-green-500">{summary.low_count}</p>
-                      </div>
-                    </div>
-
-                    {/* Known vulnerable packages (from OSV) */}
-                    {Array.isArray((summary as any)?.vulnerable_packages) && (summary as any).vulnerable_packages.length > 0 && (
-                      <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4 text-left">
-                        <h4 className="text-sm font-semibold mb-2">Known vulnerable packages</h4>
-                        <ul className="list-disc list-inside text-sm text-muted-foreground">
-                          {((summary as any).vulnerable_packages as string[]).slice(0, 8).map((pkg, idx) => (
-                            <li key={idx}>{pkg}</li>
-                          ))}
-                          {((summary as any).vulnerable_packages as string[]).length > 8 && (
-                            <li className="italic">and more...</li>
-                          )}
-                        </ul>
-                        <p className="text-xs mt-2 text-muted-foreground">Identified via OSV. Consider updating to patched versions.</p>
-                      </div>
-                    )}
+                <AuditReportTemplate
+                  vulnerabilities={sortedVulnerabilities}
+                  condensed_remediations={audit.scanResults?.condensed_remediations || {}}
+                  findingStatuses={audit.findingStatuses || {}}
+                  onStatusChange={(findingId, newStatus) => handleStatusChange(audit.id, findingId, newStatus)}
+                />
                     
-                    {/* Master Remediation Plan */}
-                    {audit.scanResults?.master_remediation && (
-                      <div className="mt-4">
-                        <Accordion type="single" collapsible className="w-full">
-                          <AccordionItem value="master-remediation" className="rounded-lg border border-white/30 bg-card/50 shadow-sm">
-                            <AccordionTrigger className="hover:no-underline px-4">
-                              <div className="flex items-center gap-3">
-                                <ShieldAlert className="h-5 w-5 text-white" />
-                                <span className="font-semibold text-lg text-white">Master Remediation Plan</span>
-                              </div>
-                            </AccordionTrigger>
-                            <AccordionContent className="px-4 pb-4">
-                              <div className="bg-black/80 rounded-md p-4">
-                                <pre className="text-sm text-green-300 whitespace-pre-wrap font-mono leading-relaxed" dangerouslySetInnerHTML={{ __html: audit.scanResults.master_remediation }} />
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        </Accordion>
-                      </div>
-                    )}
+
+
                     
-                    <Accordion type="single" collapsible className="w-full">
-                        {sortedVulnerabilities.map((vuln) => {
-                            const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
-                            const remediation = audit.scanResults?.condensed_remediations?.[vuln.rule_id] || 
-                              "Remediation prompt will be generated for this finding type.";
-                            
-                            return (
-                            <AccordionItem value={vuln.rule_id} key={vuln.rule_id} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
-                                <AccordionTrigger className="hover:no-underline">
-                                    <div className="flex items-center gap-4 w-full">
-                                        {icon}
-                                        <div className="flex-grow text-left">
-                                            <p className={`font-semibold ${textColor}`} dangerouslySetInnerHTML={{ __html: vuln.message }} />
-                                            <p className="text-sm text-muted-foreground font-mono">
-                                              {vuln.occurrences > 1 
-                                                ? `${vuln.occurrences} occurrences`
-                                                : `${vuln.file_path}:${vuln.line_number}`
-                                              }
-                                            </p>
-                                        </div>
-                                    </div>
-                                </AccordionTrigger>
-                                <AccordionContent className="pt-2">
-                                    <p className="text-sm text-foreground/80 mb-4" dangerouslySetInnerHTML={{ __html: vuln.description }} />
-                                    <div className="bg-card/50 p-4 rounded-md border border-border">
-                                        <h4 className="font-semibold mb-2 flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation</h4>
-                                        <div className="bg-black/80 rounded-md p-3">
-                                            <pre className="text-xs text-green-300 whitespace-pre-wrap font-code" dangerouslySetInnerHTML={{ __html: remediation }} />
-                                        </div>
-                                    </div>
-                                </AccordionContent>
-                            </AccordionItem>
-                            );
-                        })}
-                    </Accordion>
-                </div>
+
+                    
+
+                    
+
               ) : (
                 <div className="flex flex-col items-center justify-center text-center text-muted-foreground p-8">
                     <CheckCircle className="w-12 h-12 text-green-500 mb-4" />

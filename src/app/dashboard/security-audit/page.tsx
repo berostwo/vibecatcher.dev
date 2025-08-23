@@ -12,10 +12,10 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { ErrorBoundary } from '@/components/error-boundary';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CheckCircle, ShieldAlert, AlertTriangle, Info, Terminal, Code, ShieldCheck, Copy, ChevronDown } from 'lucide-react';
+import { Terminal, ShieldCheck } from 'lucide-react';
 import React from 'react';
+import AuditReportTemplate from '@/components/audit-report-template';
 
 interface Repository {
   name: string;
@@ -92,392 +92,9 @@ const renderFileLocation = (finding: SecurityFinding) => {
   return `${finding.file_path}:${finding.line_number}-${finding.end_line}`;
 };
 
-// EXACT TEMPLATE COMPONENT - Copied from template page
-const getSeverityStyles = (severity: string) => {
-  switch (severity) {
-    case 'Critical':
-      return {
-        icon: <ShieldAlert className="h-5 w-5 text-red-500" />,
-        borderColor: 'border-red-500/50',
-        bgColor: 'bg-red-500/10',
-        textColor: 'text-red-500',
-      };
-    case 'High':
-      return {
-        icon: <AlertTriangle className="h-5 w-5 text-orange-500" />,
-        borderColor: 'border-orange-500/50',
-        bgColor: 'bg-orange-500/10',
-        textColor: 'text-orange-500',
-      };
-    case 'Medium':
-      return {
-        icon: <Info className="h-5 w-5 text-yellow-500" />,
-        borderColor: 'border-yellow-500/50',
-        bgColor: 'bg-yellow-500/10',
-        textColor: 'text-yellow-500',
-      };
-    default:
-      return {
-        icon: <CheckCircle className="h-5 w-5 text-green-500" />,
-        borderColor: 'border-gray-500/50',
-        bgColor: 'bg-green-500/10',
-        textColor: 'text-green-500',
-      };
-  }
-};
+// Shared AuditReportTemplate component is now imported from @/components/audit-report-template
 
-const AuditReportTemplate = ({ results, currentAudit }: { 
-  results: {
-    repoName: string;
-    summary: {
-      totalIssues: number;
-      critical: number;
-      high: number;
-      medium: number;
-      low: number;
-      resolvedCount: number;
-    };
-    vulnerabilities: Array<{
-      id: string;
-      title: string;
-      severity: string;
-      file: string;
-      line: number;
-      description: string;
-      remediation: string;
-      occurrences: number;
-      status?: 'open' | 'resolved' | 'false_positive';
-    }>;
-  };
-  currentAudit?: SecurityAudit | null;
-}) => {
-  // AUTO-COLLAPSE: Track which card is currently expanded
-  const [expandedCard, setExpandedCard] = useState<string | null>(null);
-  const { toast } = useToast();
-  
-  // Copy to clipboard function
-  const copyToClipboard = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast({
-        title: "Copied to clipboard!",
-        description: "Remediation prompt copied successfully",
-        duration: 2000,
-      });
-    } catch (err) {
-      console.error('Failed to copy text: ', err);
-      toast({
-        title: "Copy failed",
-        description: "Failed to copy to clipboard",
-        variant: "destructive",
-        duration: 3000,
-      });
-    }
-  };
-
-  // Add timeout tracking for polling
-  const [pollingStartTime, setPollingStartTime] = useState<number | null>(null);
-  
-  // Handle status change for findings
-  const handleStatusChange = async (findingId: string, newStatus: string) => {
-    // Validate the status
-    if (!['open', 'resolved', 'false_positive'].includes(newStatus)) {
-      return;
-    }
-    
-    const validStatus = newStatus as 'open' | 'resolved' | 'false_positive';
-    
-    try {
-      // Generate a hash for the finding content to enable cross-audit learning
-      const finding = results.vulnerabilities.find(v => v.id === findingId);
-      if (!finding) return;
-      
-      const findingContent = `${finding.title}-${finding.description}`;
-      const findingHash = btoa(findingContent).slice(0, 16); // Simple hash for demo
-      
-      // Update the vulnerability status in the results
-      const updatedVulnerabilities = results.vulnerabilities.map(vuln => 
-        vuln.id === findingId ? { ...vuln, status: validStatus } : vuln
-      );
-      
-      // Recalculate resolved count
-      const resolvedCount = updatedVulnerabilities.filter(v => 
-        v.status === 'resolved' || v.status === 'false_positive'
-      ).length;
-      
-      // Update the results object
-      results.vulnerabilities = updatedVulnerabilities;
-      results.summary.resolvedCount = resolvedCount;
-      
-      // Persist to backend if we have an audit ID and status is not 'open'
-      if (currentAudit?.id && validStatus !== 'open') {
-        await FirebaseAuditService.updateFindingStatus(
-          currentAudit.id,
-          findingId,
-          validStatus,
-          currentAudit.userId || 'unknown',
-          findingHash
-        );
-      }
-      
-      toast({
-        title: "Status Updated",
-        description: `Finding marked as ${newStatus} and saved`,
-        duration: 2000,
-      });
-    } catch (error) {
-      console.error('Error updating finding status:', error);
-      toast({
-        title: "Error",
-        description: "Failed to save status change",
-        variant: "destructive",
-        duration: 3000,
-      });
-    }
-  };
-  
-    const healthScore = useMemo(() => {
-        if (!results.summary.totalIssues) return 100;
-        
-        // Calculate outstanding issues (excluding resolved and false positives)
-        const outstandingIssues = results.vulnerabilities.filter(v => v.status === 'open').length;
-        
-        if (outstandingIssues === 0) return 100;
-        
-        // Calculate weighted score only for outstanding issues
-        const weightedScore = results.vulnerabilities
-            .filter(v => v.status === 'open')
-            .reduce((score, vuln) => {
-                switch (vuln.severity.toLowerCase()) {
-                    case 'critical': return score + 10;
-                    case 'high': return score + 5;
-                    case 'medium': return score + 2;
-                    case 'low': return score + 1;
-                    default: return score;
-                }
-            }, 0);
-        
-        const maxScore = outstandingIssues * 10;
-        return Math.max(0, Math.round((1 - (weightedScore / (maxScore || 1))) * 100));
-    }, [results]);
-    
-  const getHealthColor = (score: number) => {
-    if (score > 85) return 'text-green-500';
-    if (score > 60) return 'text-yellow-500';
-    if (score > 40) return 'text-orange-500';
-    return 'text-red-500';
-  }
-
-  const severityOrder = useMemo(() => ['Critical', 'High', 'Medium', 'Low'], []);
-  const sortedVulnerabilities = useMemo(() => {
-    return results.vulnerabilities.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity)) || [];
-  }, [results, severityOrder]);
-
-  return (
-    <Card className="bg-card/50 border-2 border-primary/20 shadow-2xl shadow-primary/10">
-      <CardHeader>
-        <div className="flex flex-col md:flex-row justify-between items-start mb-6">
-          <div className="mb-4 md:mb-0">
-            <CardTitle className="text-2xl">Audit Report: `{results.repoName}`</CardTitle>
-            <CardDescription>{results.summary.totalIssues} vulnerabilities found. See details below.</CardDescription>
-          </div>
-        </div>
-        <div className="space-y-4 text-center">
-          {/* Findings Resolved Card */}
-          <div className="border border-green-500/50 bg-green-500/10 rounded-lg p-4">
-            <h4 className="text-sm font-medium text-green-400">Findings Resolved</h4>
-            <p className="text-4xl font-bold text-green-500">{results.summary.resolvedCount || 0}</p>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Outstanding Issues</h4>
-              <p className="text-4xl font-bold">{results.vulnerabilities.filter(v => v.status === 'open').length}</p>
-            </div>
-            <div className="border border-foreground/20 bg-foreground/5 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Codebase Health</h4>
-              <p className={`text-4xl font-bold ${getHealthColor(healthScore)}`}>{healthScore}%</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="border border-red-500/50 bg-red-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-red-400">Critical</h4>
-              <p className="text-4xl font-bold text-red-500">
-                {results.vulnerabilities.filter(v => v.status === 'open' && v.severity.toLowerCase() === 'critical').length}
-              </p>
-            </div>
-            <div className="border border-orange-500/50 bg-orange-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-orange-400">High</h4>
-              <p className="text-4xl font-bold text-orange-500">
-                {results.vulnerabilities.filter(v => v.status === 'open' && v.severity.toLowerCase() === 'high').length}
-              </p>
-            </div>
-            <div className="border border-yellow-500/50 bg-yellow-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-yellow-400">Medium</h4>
-              <p className="text-4xl font-bold text-yellow-500">
-                {results.vulnerabilities.filter(v => v.status === 'open' && v.severity.toLowerCase() === 'medium').length}
-              </p>
-            </div>
-            <div className="border border-blue-500/50 bg-blue-500/10 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-blue-400">Low</h4>
-              <p className="text-4xl font-bold text-blue-500">
-                {results.vulnerabilities.filter(v => v.status === 'open' && v.severity.toLowerCase() === 'low').length}
-              </p>
-            </div>
-          </div>
-          {/* Master remediation UI removed */}
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Accordion 
-          type="single" 
-          collapsible 
-          className="w-full"
-          value={expandedCard || undefined}
-          onValueChange={(value) => setExpandedCard(value)}
-        >
-          {sortedVulnerabilities
-            .filter((vuln: any) => vuln.status === 'open')
-            .map((vuln: any) => {
-            const { icon, borderColor, bgColor, textColor } = getSeverityStyles(vuln.severity);
-            return (
-              <AccordionItem value={vuln.id} key={vuln.id} className={`rounded-lg mb-4 border ${borderColor} ${bgColor} px-4 shadow-sm`}>
-                <div className="flex items-center gap-4 w-full py-4">
-                  {icon}
-                  <div className="flex-grow text-left">
-                    <p className={`font-semibold ${textColor}`}>{vuln.title}</p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm text-muted-foreground font-mono">
-                        {vuln.occurrences > 1 
-                          ? `${vuln.occurrences} occurrences`
-                          : `${vuln.file}:${vuln.line}`
-                        }
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Select value={vuln.status || 'open'} onValueChange={(value) => handleStatusChange(vuln.id, value)}>
-                      <SelectTrigger className="w-32 h-8 text-xs">
-                        <SelectValue placeholder="Mark as..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="open">Open</SelectItem>
-                        <SelectItem value="resolved">Resolved</SelectItem>
-                        <SelectItem value="false_positive">False Positive</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <AccordionTrigger className="hover:no-underline ml-2">
-                      <div className="h-8 w-8 p-0 flex items-center justify-center">
-                        <ChevronDown className="h-4 w-4" />
-                      </div>
-                    </AccordionTrigger>
-                  </div>
-                </div>
-                <AccordionContent className="pt-2">
-                  <p className="text-sm text-foreground/80 mb-4">{vuln.description}</p>
-                  
-                  {/* Show all file locations if multiple occurrences */}
-                  {vuln.occurrences > 1 && (
-                    <div className="bg-muted p-3 rounded-md mb-4">
-                      <h4 className="font-semibold mb-2 text-sm">All Locations:</h4>
-                      <div className="space-y-1">
-                        {vuln.file.split(', ').map((filePath: string, index: number) => (
-                          <p key={index} className="text-xs font-mono text-muted-foreground">
-                            {filePath}
-                          </p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div className="bg-card/50 p-4 rounded-md border border-border">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-semibold flex items-center"><Code className="mr-2 h-4 w-4" /> Remediation Prompt</h4>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => copyToClipboard(`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`)}
-                        className="h-8 w-8 p-0 hover:bg-primary/10"
-                      >
-                        <Copy className="h-4 w-4 text-muted-foreground hover:text-primary" />
-                      </Button>
-                    </div>
-                    <div className="bg-black/80 rounded-md p-3">
-                      <pre className="text-xs text-green-300 whitespace-pre-wrap font-code">
-                        {`Explain the security vulnerability "${vuln.title}" found in the file \`${vuln.file}\` and provide the corrected code snippet to fix it. The vulnerability is described as: "${vuln.description}". The recommended fix is: "${vuln.remediation}"`}
-                      </pre>
-                    </div>
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            );
-          })}
-        </Accordion>
-
-        {/* Resolved and False Positive Sections */}
-        <div className="space-y-6 mt-8">
-          {/* Resolved Findings Section */}
-          {results.vulnerabilities.filter(v => v.status === 'resolved').length > 0 && (
-            <div className="border border-green-500/30 bg-green-500/5 rounded-lg p-4">
-              <h4 className="font-semibold text-lg text-green-600 mb-4 flex items-center">
-                <CheckCircle className="h-5 w-5 mr-2" />
-                Resolved Findings ({results.vulnerabilities.filter(v => v.status === 'resolved').length})
-              </h4>
-              <div className="space-y-3">
-                {results.vulnerabilities
-                  .filter(v => v.status === 'resolved')
-                  .map((vuln) => (
-                    <div key={vuln.id} className="bg-card/50 border border-green-200 rounded-lg p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-grow">
-                          <p className="font-medium text-green-700">{vuln.title}</p>
-                          <p className="text-sm text-muted-foreground font-mono">
-                            {vuln.file}:{vuln.line}
-                          </p>
-                        </div>
-                        <Badge className="bg-green-100 text-green-700 border-green-200">
-                          Resolved
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          )}
-
-          {/* False Positive Findings Section */}
-          {results.vulnerabilities.filter(v => v.status === 'false_positive').length > 0 && (
-            <div className="border border-orange-500/30 bg-orange-500/5 rounded-lg p-4">
-              <h4 className="font-semibold text-lg text-orange-600 mb-4 flex items-center">
-                <AlertTriangle className="h-5 w-5 mr-2" />
-                False Positives ({results.vulnerabilities.filter(v => v.status === 'false_positive').length})
-              </h4>
-              <div className="space-y-3">
-                {results.vulnerabilities
-                  .filter(v => v.status === 'false_positive')
-                  .map((vuln) => (
-                    <div key={vuln.id} className="bg-card/50 border border-orange-200 rounded-lg p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-grow">
-                          <p className="font-medium text-orange-700">{vuln.title}</p>
-                          <p className="text-sm text-muted-foreground font-mono">
-                            {vuln.file}:{vuln.line}
-                          </p>
-                        </div>
-                        <Badge className="bg-orange-100 text-orange-700 border-orange-200">
-                          False Positive
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  )
-};
+// Old template component removed - now using shared AuditReportTemplate
 
 export default function SecurityAuditPage() {
   const { user } = useAuth();
@@ -637,7 +254,7 @@ export default function SecurityAuditPage() {
                 const pollingDuration = Date.now() - (pollingStartTime || Date.now());
                 if (pollingDuration > 30000) { // 30 seconds timeout
                   console.log('⏰ TIMEOUT: Been polling for 30+ seconds with no scan progress, stopping...');
-                  setIsScanning(false);
+            setIsScanning(false);
                   setCurrentStep('Scan failed to start');
                   setCurrentProgress(0);
                   setPollingStartTime(null);
@@ -707,6 +324,168 @@ export default function SecurityAuditPage() {
     }
   }, [isScanning, progressPollingInterval]);
 
+  // Handle status changes for most recent audit
+  const handleMostRecentStatusChange = async (findingId: string, newStatus: 'open' | 'resolved' | 'false_positive') => {
+    if (!mostRecentAudit?.id) return;
+    
+    try {
+      // Generate a hash for the finding content
+      const finding = mostRecentAudit.scanResults?.condensed_findings?.find(f => f.rule_id === findingId);
+      if (!finding) return;
+      
+      const findingContent = `${finding.message}-${finding.description}`;
+      const findingHash = btoa(findingContent).slice(0, 16);
+      
+      // Update backend
+      await FirebaseAuditService.updateFindingStatus(
+        mostRecentAudit.id,
+        findingId,
+        newStatus,
+        mostRecentAudit.userId || 'unknown',
+        findingHash
+      );
+      
+      // Update local state
+      setMostRecentAudit(prev => prev ? {
+        ...prev,
+        findingStatuses: {
+          ...prev.findingStatuses,
+          [findingId]: {
+            status: newStatus,
+            timestamp: new Date(),
+            userId: prev.userId || 'unknown',
+            findingHash: findingHash
+          }
+        },
+        scanResults: prev.scanResults ? {
+          ...prev.scanResults,
+          summary: {
+            ...prev.scanResults.summary,
+            codebase_health: calculateUpdatedHealthScore(prev.scanResults.condensed_findings, findingId, newStatus)
+          }
+        } : prev.scanResults
+      } : null);
+      
+      toast({
+        title: "Status updated!",
+        description: `Finding marked as ${newStatus}`,
+        duration: 2000,
+      });
+      
+    } catch (error) {
+      console.error('Failed to update finding status:', error);
+      toast({
+        title: "Update failed",
+        description: "Failed to update finding status",
+        variant: "destructive",
+        duration: 3000,
+      });
+    }
+  };
+  
+  // Calculate updated health score when a finding status changes
+  const calculateUpdatedHealthScore = (findings: any[], findingId: string, newStatus: 'open' | 'resolved' | 'false_positive') => {
+    // Create a temporary status map for this calculation
+    const tempStatuses: { [key: string]: string } = {};
+    tempStatuses[findingId] = newStatus;
+    
+    // Filter out resolved and false positive findings
+    const openFindings = findings.filter(finding => {
+      const status = tempStatuses[finding.rule_id] || finding.status || 'open';
+      return status === 'open';
+    });
+    
+    if (openFindings.length === 0) return 100; // All findings resolved
+    
+    let totalPenalty = 0;
+    let maxPossiblePenalty = 0;
+    
+    openFindings.forEach(finding => {
+      const severity = finding?.severity || 'Medium';
+      let penalty = 0;
+      let maxPenalty = 0;
+      
+      switch (severity) {
+        case 'Critical':
+          penalty = 8;
+          maxPenalty = 8;
+          break;
+        case 'High':
+          penalty = 5;
+          maxPenalty = 5;
+          break;
+        case 'Medium':
+          penalty = 3;
+          maxPenalty = 3;
+          break;
+        case 'Low':
+          penalty = 1;
+          maxPenalty = 1;
+          break;
+        default:
+          penalty = 2;
+          maxPenalty = 2;
+      }
+      
+      const occurrencePenalty = Math.min(penalty * Math.min(finding?.occurrences || 1, 2), maxPenalty);
+      totalPenalty += occurrencePenalty;
+      maxPossiblePenalty += maxPenalty;
+    });
+    
+    const penaltyPercentage = Math.min((totalPenalty / maxPossiblePenalty) * 100, 95);
+    return Math.max(5, Math.round(100 - penaltyPercentage));
+  };
+  
+  // Handle status changes for scan results
+  const handleScanResultsStatusChange = async (findingId: string, newStatus: 'open' | 'resolved' | 'false_positive') => {
+    if (!currentAudit?.id || !scanResults) return;
+    
+    try {
+      // Generate a hash for the finding content
+      const finding = scanResults.condensed_findings.find(f => f.rule_id === findingId);
+      if (!finding) return;
+      
+      const findingContent = `${finding.message}-${finding.description}`;
+      const findingHash = btoa(findingContent).slice(0, 16);
+      
+      // Update backend
+      await FirebaseAuditService.updateFindingStatus(
+        currentAudit.id,
+        findingId,
+        newStatus,
+        currentAudit.userId || 'unknown',
+        findingHash
+      );
+      
+      // Update local state
+      setScanResults(prev => prev ? {
+        ...prev,
+        condensed_findings: prev.condensed_findings.map(f => 
+          f.rule_id === findingId ? { ...f, status: newStatus } : f
+        ),
+        summary: {
+          ...prev.summary,
+          codebase_health: calculateUpdatedHealthScore(prev.condensed_findings, findingId, newStatus)
+        }
+      } : null);
+      
+      toast({
+        title: "Status updated!",
+        description: `Finding marked as ${newStatus}`,
+        duration: 2000,
+      });
+      
+    } catch (error) {
+      console.error('Failed to update finding status:', error);
+      toast({
+        title: "Update failed",
+        description: "Failed to update finding status",
+        variant: "destructive",
+        duration: 3000,
+      });
+    }
+  };
+  
   // Check for existing active audit on page load/refresh
   const checkExistingAudit = async () => {
     if (!user) return;
@@ -1145,31 +924,12 @@ export default function SecurityAuditPage() {
 
       {/* Most Recent Security Report Content */}
       {mostRecentAudit && mostRecentAudit.scanResults ? (
-                    <AuditReportTemplate 
-                      currentAudit={mostRecentAudit}
-                      results={{
-                        repoName: mostRecentAudit.scanResults.repository_info?.name || 'Unknown',
-                        summary: {
-                          totalIssues: mostRecentAudit.scanResults.summary?.condensed_findings || 0,
-                          critical: mostRecentAudit.scanResults.summary?.critical_count || 0,
-                          high: mostRecentAudit.scanResults.summary?.high_count || 0,
-                          medium: mostRecentAudit.scanResults.summary?.medium_count || 0,
-                          low: mostRecentAudit.scanResults.summary?.low_count || 0,
-                          resolvedCount: 0 // Will be calculated from findings status
-                        },
-                    vulnerabilities: mostRecentAudit.scanResults.condensed_findings?.map((finding: any, index: number) => ({
-                      id: `finding-${index}`,
-                      title: finding.message || 'Security Finding',
-                      severity: finding.severity || 'Medium',
-                      file: finding.file_path || 'Unknown file',
-                      line: finding.line_number || 0,
-                      description: finding.description || 'No description available',
-                      remediation: finding.remediation || 'Remediation prompt will be generated for this finding type.',
-                      occurrences: finding.occurrences || 1,
-                      status: 'open' as const
-                    })) || []
-                  }}
-                />
+        <AuditReportTemplate 
+          vulnerabilities={mostRecentAudit.scanResults.condensed_findings || []}
+          condensed_remediations={mostRecentAudit.scanResults.condensed_remediations || {}}
+          findingStatuses={mostRecentAudit.findingStatuses || {}}
+          onStatusChange={handleMostRecentStatusChange}
+        />
       ) : (
         <Card className="border-2 border-primary/20">
           <CardContent className="text-center py-8">
@@ -1180,38 +940,13 @@ export default function SecurityAuditPage() {
         </Card>
       )}
 
-      {/* Scan Results - Using EXACT Template Format */}
+      {/* Scan Results - Using Shared Template Format */}
       {scanResults && (
         <AuditReportTemplate 
-          currentAudit={currentAudit}
-          results={{
-            repoName: scanResults.repository_info.name,
-            summary: {
-              totalIssues: scanResults.summary.condensed_findings,
-              critical: scanResults.summary.critical_count,
-              high: scanResults.summary.high_count,
-              medium: scanResults.summary.medium_count,
-              low: scanResults.summary.low_count,
-              resolvedCount: 0 // Will be calculated from findings status
-            },
-            vulnerabilities: scanResults.condensed_findings.map((finding, index) => {
-              // Get the remediation prompt from the worker's condensed_remediations
-              const remediationPrompt = scanResults.condensed_remediations?.[finding.rule_id] || 
-                "Remediation prompt will be generated for this finding type.";
-              
-              return {
-                id: finding.rule_id || `VULN-${1}`,
-                title: finding.message,
-                severity: finding.severity,
-                file: finding.file_path,
-                line: finding.line_number,
-                description: finding.description,
-                remediation: remediationPrompt,
-                occurrences: finding.occurrences || 1,
-                status: 'open' as const
-              };
-            })
-          }}
+          vulnerabilities={scanResults.condensed_findings || []}
+          condensed_remediations={scanResults.condensed_remediations || {}}
+          findingStatuses={currentAudit?.findingStatuses || {}}
+          onStatusChange={handleScanResultsStatusChange}
         />
       )}
                 </div>
