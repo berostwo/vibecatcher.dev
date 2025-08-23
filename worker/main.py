@@ -45,20 +45,32 @@ class StuckAuditPrevention:
         self.heartbeat_timeout = 600 # 10 minutes
         
     def cleanup_stuck_audits_on_startup(self):
-        """Clean up any stuck audits when worker starts - SIMPLIFIED VERSION"""
+        """Clean up any stuck audits when worker starts"""
         try:
             if not FIREBASE_AVAILABLE:
                 return
                 
-            logger.info("🧹 STARTUP CLEANUP: Simplified cleanup (avoiding index requirements)")
+            logger.info("🧹 STARTUP CLEANUP: Checking for stuck audits...")
             
-            # Temporarily disable complex queries that require indexes
-            # Instead, we'll rely on the manual "Reset All Audits" button in the frontend
-            logger.info("🧹 STARTUP CLEANUP: Use 'Reset All Audits' button if needed")
+            # Find all audits marked as running
+            audits_ref = self.db.collection('security_audits')
+            stuck_audits = audits_ref.where('progress.is_running', '==', True).stream()
             
-            # TODO: After Firestore indexes are created, re-enable the full cleanup:
-            # - Query: where('progress.is_running', '==', True)
-            # - Requires index on: progress.is_running (Ascending), __name__ (Ascending)
+            cleaned_count = 0
+            for audit in stuck_audits:
+                audit_data = audit.to_dict()
+                audit_id = audit.id
+                
+                # Check if audit is actually stuck
+                if self._is_audit_stuck(audit_data):
+                    logger.warning(f"🧹 Found stuck audit: {audit_id}")
+                    self._recover_stuck_audit(audit_id, audit_data)
+                    cleaned_count += 1
+            
+            if cleaned_count > 0:
+                logger.info(f"🧹 STARTUP CLEANUP: Recovered {cleaned_count} stuck audits")
+            else:
+                logger.info("🧹 STARTUP CLEANUP: No stuck audits found")
                 
         except Exception as e:
             logger.error(f"❌ Startup cleanup failed: {e}")
@@ -138,20 +150,30 @@ class StuckAuditPrevention:
         logger.info("💓 HEARTBEAT MONITOR: Started stuck audit prevention system")
     
     def _heartbeat_cleanup(self):
-        """Periodic cleanup of stuck audits - SIMPLIFIED VERSION"""
+        """Periodic cleanup of stuck audits"""
         try:
             if not FIREBASE_AVAILABLE:
                 return
+                
+            # Find audits that haven't updated in a while
+            cutoff_time = datetime.now() - timedelta(seconds=self.heartbeat_timeout)
+            cutoff_str = cutoff_time.isoformat()
             
-            # Temporarily disable complex queries that require indexes
-            # This prevents the 400 error from blocking the worker
-            logger.info("💓 HEARTBEAT: Skipping complex cleanup (requires Firestore indexes)")
+            audits_ref = self.db.collection('security_audits')
+            stuck_audits = audits_ref.where('progress.last_updated', '<', cutoff_str).where('progress.is_running', '==', True).stream()
             
-            # TODO: After Firestore indexes are created, re-enable the full cleanup:
-            # - progress.is_running (Ascending)
-            # - progress.last_updated (Ascending) 
-            # - __name__ (Ascending)
+            cleaned_count = 0
+            for audit in stuck_audits:
+                audit_data = audit.to_dict()
+                audit_id = audit.id
+                
+                logger.warning(f"💓 HEARTBEAT: Found stuck audit: {audit_id}")
+                self._recover_stuck_audit(audit_id, audit_data)
+                cleaned_count += 1
             
+            if cleaned_count > 0:
+                logger.info(f"💓 HEARTBEAT: Cleaned up {cleaned_count} stuck audits")
+                
         except Exception as e:
             logger.error(f"❌ Heartbeat cleanup failed: {e}")
 
