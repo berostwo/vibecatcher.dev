@@ -471,4 +471,48 @@ export class FirebaseAuditService {
       return {};
     }
   }
+
+  /**
+   * Update audit status (for manual reset and recovery)
+   */
+  static async updateAuditStatus(
+    auditId: string,
+    status: 'pending' | 'running' | 'completed' | 'failed',
+    error?: string,
+    notes?: string
+  ): Promise<void> {
+    try {
+      const auditRef = doc(db, this.COLLECTION_NAME, auditId);
+      const updateData: any = {
+        status,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (error) {
+        updateData.error = error;
+      }
+
+      if (notes) {
+        updateData.notes = notes;
+      }
+
+      // If resetting to pending, clear progress and worker info
+      if (status === 'pending') {
+        updateData.progress = {
+          step: 'Ready to start',
+          progress: 0,
+          timestamp: new Date().toISOString()
+        };
+        updateData.workerUrl = null;
+        updateData.workerName = null;
+        updateData.completedAt = null;
+      }
+
+      await updateDoc(auditRef, updateData);
+      console.log(`✅ Audit ${auditId} status updated to ${status}`);
+    } catch (error) {
+      console.error('❌ Failed to update audit status:', error);
+      throw error;
+    }
+  }
 }

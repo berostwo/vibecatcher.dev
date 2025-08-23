@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Terminal, ShieldCheck } from 'lucide-react';
+import { Terminal, ShieldCheck, RefreshCw } from 'lucide-react';
 import React from 'react';
 import AuditReportTemplate from '@/components/audit-report-template';
 
@@ -730,6 +730,58 @@ export default function SecurityAuditPage() {
     return scanResults.condensed_findings.filter(f => f.severity.toLowerCase() === severity.toLowerCase()).length;
   };
 
+  const handleResetAllAudits = async () => {
+    if (!user) {
+      toast({
+        title: 'Error',
+        description: 'User not logged in.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const audits = await FirebaseAuditService.getAuditHistory(user.uid, 100); // Get all audits for the user
+      const failedAudits = audits.filter((audit: SecurityAudit) => audit.status === 'failed');
+
+      if (failedAudits.length === 0) {
+        toast({
+          title: 'No Failed Audits',
+          description: 'No failed audits found to reset.',
+        });
+        return;
+      }
+
+      const confirmed = confirm(`Are you sure you want to reset ${failedAudits.length} failed audits? This action cannot be undone.`);
+
+      if (confirmed) {
+        for (const audit of failedAudits) {
+          await FirebaseAuditService.updateAuditStatus(
+            audit.id,
+            'pending', // Reset to pending state
+            undefined,
+            'Manual reset'
+          );
+          toast({
+            title: 'Resetting Audit',
+            description: `Resetting audit: ${audit.repositoryName}`,
+          });
+        }
+        toast({
+          title: 'Audits Reset',
+          description: `Successfully reset ${failedAudits.length} failed audits.`,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to reset all failed audits:', error);
+      toast({
+        title: 'Reset Failed',
+        description: 'Failed to reset failed audits.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -743,13 +795,21 @@ export default function SecurityAuditPage() {
       </div>
 
       {/* Repository Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Select Repository</CardTitle>
-          <CardDescription>
-            Choose a repository to perform a comprehensive security audit
-          </CardDescription>
-        </CardHeader>
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-bold">Select Repository</h2>
+          {/* 🚀 PRODUCTION-READY: Manual cleanup button for stuck audits */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleResetAllAudits}
+            className="text-orange-600 border-orange-600 hover:bg-orange-50"
+            title="Reset all stuck audits if you're experiencing issues"
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Reset All Audits
+          </Button>
+        </div>
         <CardContent className="space-y-4">
           <div className="flex items-center space-x-4">
             <Select value={selectedRepository} onValueChange={setSelectedRepository}>
