@@ -10,7 +10,7 @@ import { Badge, BadgeProps } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { 
+import {
   CheckCircle, 
   Clock, 
   Download,
@@ -87,7 +87,7 @@ export default function AuditHistoryPage() {
     if (score > 40) return 'text-orange-500';
     return 'text-red-500';
   }
-  
+
   // Handle status change for findings
   const handleStatusChange = async (auditId: string, findingId: string, newStatus: string) => {
     // Validate the status
@@ -418,12 +418,12 @@ export default function AuditHistoryPage() {
                   <Download className="h-3 w-3" />
                   Download
                 </button>
-                <div className="hidden sm:flex items-center gap-2 text-muted-foreground">
-                    <Clock className="h-4 w-4" />
-                    <span>{audit.completedAt ? new Date(audit.completedAt.toDate()).toLocaleDateString() : 'Unknown'}</span>
+                    <div className="hidden sm:flex items-center gap-2 text-muted-foreground">
+                        <Clock className="h-4 w-4" />
+                        <span>{audit.completedAt ? new Date(audit.completedAt.toDate()).toLocaleDateString() : 'Unknown'}</span>
+                    </div>
                 </div>
               </div>
-            </div>
             <AccordionContent className="pt-2 pb-4">
               {summary.total_findings > 0 ? (
                 <AuditReportTemplate

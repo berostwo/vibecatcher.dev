@@ -114,6 +114,22 @@ export class FirebaseAuditService {
       
       console.log('📊 Active audit check results:', { hasPending, hasRunning });
       
+      // Debug: Log the actual audit data if found
+      if (hasPending) {
+        console.log('🔍 Found pending audits:', pendingSnapshot.docs.map(doc => ({ id: doc.id, status: doc.data().status, createdAt: doc.data().createdAt, repositoryName: doc.data().repositoryName })));
+      }
+      if (hasRunning) {
+        console.log('🔍 Found running audits:', runningSnapshot.docs.map(doc => ({ id: doc.id, status: doc.data().status, createdAt: doc.data().createdAt, repositoryName: doc.data().repositoryName })));
+      }
+      
+      // Additional debug: Log the exact query results
+      console.log('🔍 Query details:', {
+        pendingQuery: `status == 'pending' AND userId == '${userId}'`,
+        runningQuery: `status == 'running' AND userId == '${userId}'`,
+        pendingCount: pendingSnapshot.docs.length,
+        runningCount: runningSnapshot.docs.length
+      });
+      
       // Return true if either query has results
       return hasPending || hasRunning;
     } catch (error) {
@@ -253,6 +269,51 @@ export class FirebaseAuditService {
   }
 
 
+
+  /**
+   * Force reset any stuck audit statuses for a user
+   */
+  static async forceResetStuckAudits(userId: string): Promise<boolean> {
+    try {
+      console.log('🔄 Force resetting stuck audits for user:', userId);
+      
+      // Find any audits that are stuck in pending/running state
+      const stuckQuery = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('status', 'in', ['pending', 'running'])
+      );
+      
+      const stuckSnapshot = await getDocs(stuckQuery);
+      
+      if (stuckSnapshot.empty) {
+        console.log('✅ No stuck audits found to reset');
+        return true;
+      }
+      
+      console.log(`🔄 Found ${stuckSnapshot.docs.length} stuck audits to reset`);
+      
+      // Reset all stuck audits to 'failed' status
+      const resetPromises = stuckSnapshot.docs.map(async (doc) => {
+        const auditData = doc.data();
+        console.log(`🔄 Resetting audit ${doc.id} from ${auditData.status} to failed`);
+        
+        await updateDoc(doc.ref, {
+          status: 'failed',
+          completedAt: serverTimestamp(),
+          error: 'Audit was force-reset due to stuck state'
+        });
+      });
+      
+      await Promise.all(resetPromises);
+      console.log('✅ Successfully reset all stuck audits');
+      return true;
+      
+    } catch (error) {
+      console.error('❌ Error force resetting stuck audits:', error);
+      return false;
+    }
+  }
 
   /**
    * Get audit history for a user

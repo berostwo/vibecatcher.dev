@@ -4400,10 +4400,17 @@ def security_scan():
             watchdog_thread.start()
             
             try:
-                result = asyncio.run(asyncio.wait_for(
-                    scanner.scan_repository(repo_url, github_token),
-                    timeout=scan_timeout
-                ))
+                # Create a new event loop for this scan
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                try:
+                    result = loop.run_until_complete(asyncio.wait_for(
+                        scanner.scan_repository(repo_url, github_token),
+                        timeout=scan_timeout
+                    ))
+                finally:
+                    loop.close()
                 
                 # Verify the result is valid
                 if not result or not isinstance(result, dict):

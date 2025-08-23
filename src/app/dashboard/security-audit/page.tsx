@@ -190,7 +190,7 @@ export default function SecurityAuditPage() {
               // Check if scan completed by checking worker progress status
               if (progressData.status === 'scan_completed') {
                 console.log('🎉 SCAN COMPLETED - Worker reports completion!');
-          setIsScanning(false);
+      setIsScanning(false);
                 
                 // Fetch the completed audit results from Firestore
                 try {
@@ -255,7 +255,7 @@ export default function SecurityAuditPage() {
                 const pollingDuration = Date.now() - (pollingStartTime || Date.now());
                 if (pollingDuration > 30000) { // 30 seconds timeout
                   console.log('⏰ TIMEOUT: Been polling for 30+ seconds with no scan progress, stopping...');
-            setIsScanning(false);
+                setIsScanning(false);
                   setCurrentStep('Scan failed to start');
                   setCurrentProgress(0);
                   setPollingStartTime(null);
@@ -512,12 +512,12 @@ export default function SecurityAuditPage() {
             // Audit is too old, mark it as failed and don't show as scanning
             console.log('⚠️ Found stale running audit, marking as failed');
             try {
-              await FirebaseAuditService.updateAuditStatus(
+                await FirebaseAuditService.updateAuditStatus(
                 activeAudit.id, 
-                'failed', 
+                  'failed', 
                 'Audit timed out - stale state detected', 
                 'Auto-cleanup: Audit was running for too long'
-              );
+                );
             } catch (error) {
               console.error('Failed to mark stale audit as failed:', error);
             }
@@ -528,9 +528,9 @@ export default function SecurityAuditPage() {
         } else if (activeAudit.status === 'completed' && activeAudit.scanResults) {
           setScanResults(activeAudit.scanResults);
           setIsScanning(false);
+          }
         }
-      }
-    } catch (error) {
+      } catch (error) {
       console.error('Error checking existing audit:', error);
     }
   };
@@ -587,11 +587,11 @@ export default function SecurityAuditPage() {
           variant: 'default',
         });
       } else {
-        toast({
-          title: 'Error',
+      toast({
+        title: 'Error',
           description: 'Failed to fetch repositories. Please try again.',
-          variant: 'destructive',
-        });
+        variant: 'destructive',
+      });
       }
     } finally {
       setIsLoadingRepos(false);
@@ -829,6 +829,47 @@ export default function SecurityAuditPage() {
     }
   };
 
+  const handleForceReset = async () => {
+    if (!user) {
+      toast({
+        title: 'Error',
+        description: 'Please sign in to reset stuck audits',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      console.log('🔄 Force resetting stuck audits...');
+      
+      const success = await FirebaseAuditService.forceResetStuckAudits(user.uid);
+      
+      if (success) {
+        toast({
+          title: 'Success',
+          description: 'Stuck audits have been reset. You can now start a new audit.',
+          variant: 'default',
+        });
+        
+        // Refresh the page to clear any stale state
+        window.location.reload();
+      } else {
+        toast({
+          title: 'Error',
+          description: 'Failed to reset stuck audits. Please try again.',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error force resetting audits:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to reset stuck audits. Please try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const getSeverityCount = (severity: string) => {
     if (!scanResults?.condensed_findings) return 0;
     return scanResults.condensed_findings.filter(f => f.severity.toLowerCase() === severity.toLowerCase()).length;
@@ -932,8 +973,8 @@ export default function SecurityAuditPage() {
         <CardContent className="space-y-4">
           <div className="flex items-center space-x-4">
             <div className="flex-1">
-              <Select value={selectedRepository} onValueChange={setSelectedRepository}>
-                <SelectTrigger className="w-[400px]">
+            <Select value={selectedRepository} onValueChange={setSelectedRepository}>
+              <SelectTrigger className="w-[400px]">
                   <SelectValue placeholder={
                     isLoadingRepos 
                       ? "Loading repositories..." 
@@ -941,8 +982,8 @@ export default function SecurityAuditPage() {
                         ? "No repositories found" 
                         : "Select a repository"
                   } />
-                </SelectTrigger>
-                <SelectContent>
+            </SelectTrigger>
+            <SelectContent>
                   {isLoadingRepos ? (
                     <SelectItem value="__loading__" disabled>
                       <div className="flex items-center space-x-2">
@@ -958,44 +999,56 @@ export default function SecurityAuditPage() {
                     </SelectItem>
                   ) : (
                     repositories.map((repo) => (
-                      <SelectItem key={repo.name} value={repo.name}>
-                        <div className="flex items-center space-x-2">
-                          <span>{repo.name}</span>
-                          {repo.private && (
-                            <Badge variant="secondary" className="text-xs">
-                              Private
-                            </Badge>
-                          )}
-                        </div>
-                      </SelectItem>
+                  <SelectItem key={repo.name} value={repo.name}>
+                    <div className="flex items-center space-x-2">
+                      <span>{repo.name}</span>
+                      {repo.private && (
+                        <Badge variant="secondary" className="text-xs">
+                          Private
+                        </Badge>
+                      )}
+                    </div>
+                </SelectItem>
                     ))
                   )}
-                </SelectContent>
-              </Select>
+            </SelectContent>
+          </Select>
               
               {/* Show retry button if no repositories and not loading */}
               {!isLoadingRepos && repositories.length === 0 && (
                 <div className="mt-2">
-                  <Button 
-                    variant="outline" 
+            <Button 
+                variant="outline"
                     size="sm" 
                     onClick={fetchRepositories}
                     className="text-sm"
-                  >
+              >
                     <RefreshCw className="h-3 w-3 mr-1" />
                     Retry Loading Repositories
-                  </Button>
+              </Button>
                 </div>
-              )}
+            )}
             </div>
             
+            <div className="flex gap-2">
             <Button 
-              onClick={handleAudit} 
-              disabled={!selectedRepository || isScanning || isLoadingRepos}
+                onClick={handleAudit} 
+                disabled={!selectedRepository || isScanning || isLoadingRepos}
               className="min-w-[120px]"
             >
-              {isScanning ? 'Scanning...' : 'Run Security Audit'}
+                {isScanning ? 'Scanning...' : 'Run Security Audit'}
             </Button>
+              
+            <Button 
+                onClick={handleForceReset}
+              variant="outline"
+                disabled={isScanning}
+                className="whitespace-nowrap"
+            >
+                <RefreshCw className="mr-2 h-3 w-3" />
+                Force Reset
+          </Button>
+            </div>
           </div>
           
           {/* PROGRESS BAR - Only show when actively scanning */}
