@@ -177,10 +177,8 @@ class StuckAuditPrevention:
         except Exception as e:
             logger.error(f"❌ Heartbeat cleanup failed: {e}")
 
-# Initialize stuck audit prevention system
+# Initialize stuck audit prevention system (will be set after db is initialized)
 stuck_audit_prevention = None
-if FIREBASE_AVAILABLE:
-    stuck_audit_prevention = StuckAuditPrevention(db)
 
 # Simple database-driven progress tracking
 # No more complex in-memory state synchronization!
@@ -308,6 +306,17 @@ if FIREBASE_AVAILABLE:
         db = None
 else:
     logger.warning("⚠️ Firebase Admin SDK not available, Firebase integration disabled")
+
+# 🚀 PRODUCTION-READY: Initialize stuck audit prevention system after db is available
+if FIREBASE_AVAILABLE and db:
+    try:
+        stuck_audit_prevention = StuckAuditPrevention(db)
+        logger.info("✅ Stuck audit prevention system initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize stuck audit prevention system: {e}")
+        stuck_audit_prevention = None
+else:
+    logger.warning("⚠️ Stuck audit prevention system disabled - Firebase not available")
 
 def update_audit_worker_info(audit_id: str, worker_url: str, worker_name: str):
     """Update Firestore audit document with worker information"""
