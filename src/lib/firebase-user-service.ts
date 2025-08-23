@@ -230,16 +230,27 @@ export class FirebaseUserService {
    */
   static async getUserByUid(uid: string): Promise<FirebaseUser | null> {
     try {
+      console.log('🔍 Getting user by UID:', uid);
       const userDoc = await getDoc(doc(db, 'users', uid));
       
       if (!userDoc.exists()) {
+        console.log('⚠️ User document not found');
         return null;
       }
       
-      return userDoc.data() as FirebaseUser;
+      const userData = userDoc.data() as FirebaseUser;
+      console.log('✅ User data retrieved successfully');
+      return userData;
       
     } catch (error) {
-      console.error('Error getting user by UID:', error);
+      console.error('❌ Error getting user by UID:', error);
+      
+      // If it's a connection error, return null to prevent blocking
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('timeout') || errorMessage.includes('transport errored')) {
+        console.warn('⚠️ Firebase connection issue when getting user by UID');
+      }
+      
       return null;
     }
   }

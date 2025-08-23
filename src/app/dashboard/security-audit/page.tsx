@@ -102,6 +102,7 @@ export default function SecurityAuditPage() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [selectedRepository, setSelectedRepository] = useState<string>('');
   const [isScanning, setIsScanning] = useState(false);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [scanResults, setScanResults] = useState<ScanResults | null>(null);
   const [userGitHubUsername, setUserGitHubUsername] = useState<string>('');
   
@@ -536,26 +537,64 @@ export default function SecurityAuditPage() {
 
   const fetchGitHubUsername = async () => {
     try {
+      console.log('🔍 Fetching GitHub username for user:', user!.uid);
       const firebaseUser = await FirebaseUserService.getUserByUid(user!.uid);
       if (firebaseUser?.githubUsername) {
+        console.log('✅ GitHub username found:', firebaseUser.githubUsername);
         setUserGitHubUsername(firebaseUser.githubUsername);
+      } else {
+        console.log('⚠️ No GitHub username found for user');
       }
     } catch (error) {
-      console.error('Error fetching GitHub username:', error);
+      console.error('❌ Error fetching GitHub username:', error);
+      
+      // If it's a Firebase connection error, show a warning but don't block the UI
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('timeout') || errorMessage.includes('transport errored')) {
+        console.warn('⚠️ Firebase connection issue when fetching GitHub username');
+        toast({
+          title: 'Connection Warning',
+          description: 'Having trouble loading user data. Some features may be limited.',
+          variant: 'default',
+        });
+      }
     }
   };
 
   const fetchRepositories = async () => {
     try {
+      setIsLoadingRepos(true);
+      console.log('🔍 Fetching repositories for user:', user!.uid);
       const repos = await GitHubService.getUserRepositories(user!.uid);
+      console.log('📊 Repositories fetched successfully:', repos.length);
       setRepositories(repos);
     } catch (error) {
-      console.error('Error fetching repositories:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to fetch repositories',
-        variant: 'destructive',
-      });
+      console.error('❌ Error fetching repositories:', error);
+      
+      // Provide more specific error messages
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (errorMessage.includes('Authorization required') || errorMessage.includes('Authorization failed')) {
+        toast({
+          title: 'GitHub Authorization Required',
+          description: 'Please re-authenticate with GitHub to access your repositories',
+          variant: 'destructive',
+        });
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('transport errored')) {
+        toast({
+          title: 'Connection Issue',
+          description: 'Having trouble connecting to GitHub. Please try again.',
+          variant: 'default',
+        });
+      } else {
+        toast({
+          title: 'Error',
+          description: 'Failed to fetch repositories. Please try again.',
+          variant: 'destructive',
+        });
+      }
+    } finally {
+      setIsLoadingRepos(false);
     }
   };
 
@@ -863,42 +902,96 @@ export default function SecurityAuditPage() {
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl font-bold">Select Repository</h2>
-          {/* 🚀 PRODUCTION-READY: Manual cleanup button for stuck audits */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleResetAllAudits}
-            className="text-orange-600 border-orange-600 hover:bg-orange-50"
-            title="Reset all stuck audits if you're experiencing issues"
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Reset All Audits
-          </Button>
+          <div className="flex items-center space-x-2">
+            {/* Manual refresh button for repositories */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchRepositories}
+              disabled={isLoadingRepos}
+              className="text-blue-600 border-blue-600 hover:bg-blue-50"
+              title="Refresh repository list"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingRepos ? 'animate-spin' : ''}`} />
+              Refresh Repos
+            </Button>
+            
+            {/* 🚀 PRODUCTION-READY: Manual cleanup button for stuck audits */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleResetAllAudits}
+              className="text-orange-600 border-orange-600 hover:bg-orange-50"
+              title="Reset all stuck audits if you're experiencing issues"
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Reset All Audits
+            </Button>
+          </div>
         </div>
         <CardContent className="space-y-4">
           <div className="flex items-center space-x-4">
-            <Select value={selectedRepository} onValueChange={setSelectedRepository}>
-              <SelectTrigger className="w-[400px]">
-              <SelectValue placeholder="Select a repository" />
-            </SelectTrigger>
-            <SelectContent>
-                {repositories.map((repo) => (
-                  <SelectItem key={repo.name} value={repo.name}>
-                    <div className="flex items-center space-x-2">
-                      <span>{repo.name}</span>
-                      {repo.private && (
-                        <Badge variant="secondary" className="text-xs">
-                          Private
-                        </Badge>
-                      )}
-                    </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            <div className="flex-1">
+              <Select value={selectedRepository} onValueChange={setSelectedRepository}>
+                <SelectTrigger className="w-[400px]">
+                  <SelectValue placeholder={
+                    isLoadingRepos 
+                      ? "Loading repositories..." 
+                      : repositories.length === 0 
+                        ? "No repositories found" 
+                        : "Select a repository"
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  {isLoadingRepos ? (
+                    <SelectItem value="__loading__" disabled>
+                      <div className="flex items-center space-x-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                        <span>Loading repositories...</span>
+                      </div>
+                    </SelectItem>
+                  ) : repositories.length === 0 ? (
+                    <SelectItem value="__no_repos__" disabled>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-muted-foreground">No repositories available</span>
+                      </div>
+                    </SelectItem>
+                  ) : (
+                    repositories.map((repo) => (
+                      <SelectItem key={repo.name} value={repo.name}>
+                        <div className="flex items-center space-x-2">
+                          <span>{repo.name}</span>
+                          {repo.private && (
+                            <Badge variant="secondary" className="text-xs">
+                              Private
+                            </Badge>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+              
+              {/* Show retry button if no repositories and not loading */}
+              {!isLoadingRepos && repositories.length === 0 && (
+                <div className="mt-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={fetchRepositories}
+                    className="text-sm"
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    Retry Loading Repositories
+                  </Button>
+                </div>
+              )}
+            </div>
+            
             <Button 
               onClick={handleAudit} 
-              disabled={!selectedRepository || isScanning}
+              disabled={!selectedRepository || isScanning || isLoadingRepos}
               className="min-w-[120px]"
             >
               {isScanning ? 'Scanning...' : 'Run Security Audit'}
