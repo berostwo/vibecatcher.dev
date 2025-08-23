@@ -200,31 +200,7 @@ export class FirebaseAuditService {
     }
   }
 
-  /**
-   * Update audit status
-   */
-  static async updateAuditStatus(auditId: string, status: SecurityAudit['status'], results?: any, error?: string): Promise<void> {
-    try {
-      const auditRef = doc(db, this.COLLECTION_NAME, auditId);
-      const updateData: any = {
-        status,
-        updatedAt: serverTimestamp()
-      };
 
-      if (status === 'completed' && results) {
-        updateData.scanResults = results;
-        updateData.completedAt = serverTimestamp();
-      } else if (status === 'failed' && error) {
-        updateData.error = error;
-        updateData.completedAt = serverTimestamp();
-      }
-
-      await updateDoc(auditRef, updateData);
-    } catch (error) {
-      console.error('Error updating audit status:', error);
-      throw error;
-    }
-  }
 
   /**
    * Get audit history for a user

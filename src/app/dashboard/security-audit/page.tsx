@@ -106,7 +106,7 @@ export default function SecurityAuditPage() {
   const [userGitHubUsername, setUserGitHubUsername] = useState<string>('');
   
   // SIMPLE PROGRESS TRACKING
-  const [currentStep, setCurrentStep] = useState<string>('Initializing scan...');
+  const [currentStep, setCurrentStep] = useState<string>('Ready to scan');
   const [currentProgress, setCurrentProgress] = useState<number>(0);
   
   // PERSISTENT AUDIT STATE: Track current audit across page refreshes
@@ -497,10 +497,32 @@ export default function SecurityAuditPage() {
         setCurrentAudit(activeAudit);
         
         if (activeAudit.status === 'running') {
-          setIsScanning(true);
-          if (activeAudit.progress) {
-            setCurrentStep(activeAudit.progress.step);
-            setCurrentProgress(activeAudit.progress.progress);
+          // Only set scanning state if the audit is actually recent and active
+          const auditAge = Date.now() - new Date(activeAudit.createdAt).getTime();
+          const maxAge = 30 * 60 * 1000; // 30 minutes
+          
+          if (auditAge < maxAge) {
+            setIsScanning(true);
+            if (activeAudit.progress) {
+              setCurrentStep(activeAudit.progress.step);
+              setCurrentProgress(activeAudit.progress.progress);
+            }
+          } else {
+            // Audit is too old, mark it as failed and don't show as scanning
+            console.log('⚠️ Found stale running audit, marking as failed');
+            try {
+              await FirebaseAuditService.updateAuditStatus(
+                activeAudit.id, 
+                'failed', 
+                'Audit timed out - stale state detected', 
+                'Auto-cleanup: Audit was running for too long'
+              );
+            } catch (error) {
+              console.error('Failed to mark stale audit as failed:', error);
+            }
+            setIsScanning(false);
+            setCurrentStep('Ready to scan');
+            setCurrentProgress(0);
           }
         } else if (activeAudit.status === 'completed' && activeAudit.scanResults) {
           setScanResults(activeAudit.scanResults);
@@ -589,7 +611,7 @@ export default function SecurityAuditPage() {
     setScanResults(null);
     
     // RESET PROGRESS TO 0
-    setCurrentStep('Initializing scan...');
+            setCurrentStep('Starting security scan...');
     setCurrentProgress(0);
     
     try {
@@ -838,121 +860,10 @@ export default function SecurityAuditPage() {
             >
               {isScanning ? 'Scanning...' : 'Run Security Audit'}
             </Button>
-            {isScanning && (
-              <Button 
-                onClick={() => {
-                  setIsScanning(false);
-                  setCurrentStep('Initializing scan...');
-                  setCurrentProgress(0);
-                  setCurrentAudit(null);
-                  toast({
-                    title: 'Scan Reset',
-                    description: 'Scanning state has been reset. You can start a new scan.',
-                  });
-                }}
-                variant="outline"
-                className="min-w-[120px]"
-              >
-                Reset Scan
-              </Button>
-            )}
-            <Button 
-              onClick={async () => {
-                try {
-                  // Clean up any stale audits
-                  if (currentAudit && (currentAudit.status === 'running' || currentAudit.status === 'pending')) {
-                    await FirebaseAuditService.updateAuditStatus(
-                      currentAudit.id, 
-                      'failed', 
-                      undefined, 
-                      'Manual cleanup - user reset'
-                    );
-                    setCurrentAudit(null);
-                    setIsScanning(false);
-                    setCurrentStep('Initializing scan...');
-                    setCurrentProgress(0);
-                    toast({
-                      title: 'Cleanup Complete',
-                      description: 'Stale audit has been cleaned up. You can start a new scan.',
-                    });
-                  } else {
-                    toast({
-                      title: 'No Cleanup Needed',
-                      description: 'No stale audits found.',
-                    });
-                  }
-                } catch (error) {
-                  console.error('Cleanup failed:', error);
-                  toast({
-                    title: 'Cleanup Failed',
-                    description: 'Failed to clean up stale audit.',
-                    variant: 'destructive',
-                  });
-                }
-              }}
-              variant="outline"
-              className="min-w-[120px]"
-            >
-              Cleanup Stale
-            </Button>
-            <Button 
-              onClick={async () => {
-                try {
-                  // Call worker cleanup endpoint for stuck audits
-                  if (currentAudit) {
-                    const response = await fetch('https://chatgpt-security-scanner-505997387504.us-central1.run.app/cleanup-stuck-audit', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                      },
-                      body: JSON.stringify({
-                        audit_id: currentAudit.id,
-                      }),
-                    });
-                    
-                    if (response.ok) {
-                      // Also cleanup in Firestore
-                      await FirebaseAuditService.updateAuditStatus(
-                        currentAudit.id, 
-                        'failed', 
-                        undefined, 
-                        'Manual cleanup - worker reset'
-                      );
-                      setCurrentAudit(null);
-                      setIsScanning(false);
-                      setCurrentStep('Initializing scan...');
-                      setCurrentProgress(0);
-                      toast({
-                        title: 'Worker Cleanup Complete',
-                        description: 'Stuck audit has been cleaned up on both worker and database.',
-                      });
-                    } else {
-                      throw new Error('Worker cleanup failed');
-                    }
-                  } else {
-                    toast({
-                      title: 'No Audit to Cleanup',
-                      description: 'No current audit found.',
-                    });
-                  }
-                } catch (error) {
-                  console.error('Worker cleanup failed:', error);
-                  toast({
-                    title: 'Worker Cleanup Failed',
-                    description: 'Failed to cleanup stuck audit on worker.',
-                    variant: 'destructive',
-                  });
-                }
-              }}
-              variant="outline"
-              className="min-w-[120px]"
-            >
-              Force Worker Reset
-          </Button>
           </div>
           
-          {/* SIMPLE PROGRESS BAR */}
-          {isScanning && (
+          {/* PROGRESS BAR - Only show when actively scanning */}
+          {isScanning && currentProgress > 0 && (
              <div className="space-y-3 pt-4">
                <div className="flex justify-between text-sm text-muted-foreground">
                 <span className="font-medium">{currentStep}</span>
@@ -961,7 +872,7 @@ export default function SecurityAuditPage() {
                <div className="w-full bg-muted rounded-full h-3">
                  <div 
                    className="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
-                  style={{ width: `${currentProgress}%` }}
+                  style={{ width: `${Math.max(0, Math.min(100, currentProgress))}%` }}
                  />
                </div>
              </div>
