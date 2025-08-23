@@ -561,12 +561,18 @@ export default function SecurityAuditPage() {
 
   const fetchMostRecentAudit = async () => {
     try {
+      console.log('🔍 Fetching most recent audit for user:', user!.uid);
       const audits = await FirebaseAuditService.getAuditHistory(user!.uid, 50);
+      
       if (audits && audits.length > 0) {
+        console.log('📊 Found audits:', audits.length);
+        
         // Find the most recent completed audit
         const completedAudits = audits.filter((audit: SecurityAudit) => 
           audit.status === 'completed' && audit.scanResults
         );
+        
+        console.log('✅ Completed audits with results:', completedAudits.length);
         
         if (completedAudits.length > 0) {
           // Sort by creation date and get the most recent
@@ -574,11 +580,27 @@ export default function SecurityAuditPage() {
             new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           )[0];
           
+          console.log('🎯 Setting most recent audit:', mostRecent.id);
           setMostRecentAudit(mostRecent);
+        } else {
+          console.log('⚠️ No completed audits with results found');
         }
+      } else {
+        console.log('📭 No audits found for user');
       }
     } catch (error) {
-      console.error('Error fetching most recent audit:', error);
+      console.error('❌ Error fetching most recent audit:', error);
+      
+      // If it's a Firebase connection error, show a warning but don't block the UI
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('timeout') || errorMessage.includes('transport errored')) {
+        console.warn('⚠️ Firebase connection issue when fetching most recent audit');
+        toast({
+          title: 'Connection Warning',
+          description: 'Having trouble loading recent audit data. Some features may be limited.',
+          variant: 'default',
+        });
+      }
     }
   };
 
@@ -594,6 +616,7 @@ export default function SecurityAuditPage() {
 
     // Check if user already has an active audit
     try {
+      console.log('🔍 Checking for active audit before starting new one...');
       const hasActive = await FirebaseAuditService.hasActiveAudit(user!.uid);
       if (hasActive) {
         toast({
@@ -603,8 +626,28 @@ export default function SecurityAuditPage() {
         });
         return;
       }
+      console.log('✅ No active audit found, proceeding with new scan');
     } catch (error) {
-      console.error('Error checking active audit:', error);
+      console.error('❌ Error checking active audit:', error);
+      
+      // If it's a Firebase connection error, show a warning but allow the audit to proceed
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('timeout') || errorMessage.includes('transport errored')) {
+        toast({
+          title: 'Connection Warning',
+          description: 'Having trouble connecting to database. Proceeding with audit...',
+          variant: 'default',
+        });
+        console.warn('⚠️ Firebase connection issue, allowing audit to proceed');
+      } else {
+        // For other errors, show error and stop
+        toast({
+          title: 'Error',
+          description: 'Failed to check for active audits. Please try again.',
+          variant: 'destructive',
+        });
+        return;
+      }
     }
 
     setIsScanning(true);

@@ -76,6 +76,8 @@ export class FirebaseAuditService {
    */
   static async hasActiveAudit(userId: string): Promise<boolean> {
     try {
+      console.log('🔍 Checking for active audit for user:', userId);
+      
       // Query for pending audits
       const pendingQuery = query(
         collection(db, this.COLLECTION_NAME),
@@ -90,16 +92,41 @@ export class FirebaseAuditService {
         where('userId', '==', userId)
       );
       
-      // Execute both queries in parallel
-      const [pendingSnapshot, runningSnapshot] = await Promise.all([
+      console.log('📡 Executing Firestore queries...');
+      
+      // Execute both queries in parallel with timeout
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Firestore query timeout')), 10000)
+      );
+      
+      const queriesPromise = Promise.all([
         getDocs(pendingQuery),
         getDocs(runningQuery)
       ]);
       
+      const [pendingSnapshot, runningSnapshot] = await Promise.race([
+        queriesPromise,
+        timeoutPromise
+      ]);
+      
+      const hasPending = !pendingSnapshot.empty;
+      const hasRunning = !runningSnapshot.empty;
+      
+      console.log('📊 Active audit check results:', { hasPending, hasRunning });
+      
       // Return true if either query has results
-      return !pendingSnapshot.empty || !runningSnapshot.empty;
+      return hasPending || hasRunning;
     } catch (error) {
-      console.error('Error checking active audit:', error);
+      console.error('❌ Error checking active audit:', error);
+      
+      // If it's a connection error, return false to allow the audit to proceed
+      // This prevents the system from being completely blocked by Firebase issues
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('timeout') || errorMessage.includes('transport errored')) {
+        console.warn('⚠️ Firebase connection issue detected, allowing audit to proceed');
+        return false;
+      }
+      
       return false;
     }
   }
@@ -109,6 +136,8 @@ export class FirebaseAuditService {
    */
   static async getActiveAudit(userId: string): Promise<SecurityAudit | null> {
     try {
+      console.log('🔍 Getting active audit for user:', userId);
+      
       // Query for pending audits
       const pendingQuery = query(
         collection(db, this.COLLECTION_NAME),
@@ -125,17 +154,33 @@ export class FirebaseAuditService {
         orderBy('createdAt', 'desc')
       );
       
-      // Execute both queries in parallel
-      const [pendingSnapshot, runningSnapshot] = await Promise.all([
+      console.log('📡 Executing Firestore queries for active audit...');
+      
+      // Execute both queries in parallel with timeout
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Firestore query timeout')), 10000)
+      );
+      
+      const queriesPromise = Promise.all([
         getDocs(pendingQuery),
         getDocs(runningQuery)
       ]);
       
+      const [pendingSnapshot, runningSnapshot] = await Promise.race([
+        queriesPromise,
+        timeoutPromise
+      ]);
+      
       // Combine results
-      const pendingAudits = pendingSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
-      const runningAudits = runningSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      const pendingAudits = pendingSnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      const runningAudits = runningSnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
       
       const allActiveAudits = [...pendingAudits, ...runningAudits];
+      
+      console.log('📊 Active audit query results:', { 
+        pendingCount: pendingAudits.length, 
+        runningCount: runningAudits.length 
+      });
       
       if (allActiveAudits.length === 0) return null;
       
@@ -148,7 +193,14 @@ export class FirebaseAuditService {
       
       return allActiveAudits[0];
     } catch (error) {
-      console.error('Error getting active audit:', error);
+      console.error('❌ Error getting active audit:', error);
+      
+      // If it's a connection error, return null to prevent blocking
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('timeout') || errorMessage.includes('transport errored')) {
+        console.warn('⚠️ Firebase connection issue detected, returning null for active audit');
+      }
+      
       return null;
     }
   }
@@ -207,6 +259,8 @@ export class FirebaseAuditService {
    */
   static async getAuditHistory(userId: string, limitCount: number = 50): Promise<SecurityAudit[]> {
     try {
+      console.log('🔍 Getting audit history for user:', userId, 'limit:', limitCount);
+      
       // Query for completed audits
       const completedQuery = query(
         collection(db, this.COLLECTION_NAME),
@@ -223,17 +277,34 @@ export class FirebaseAuditService {
         orderBy('completedAt', 'desc')
       );
       
-      // Execute both queries in parallel
-      const [completedSnapshot, failedSnapshot] = await Promise.all([
+      console.log('📡 Executing Firestore queries for audit history...');
+      
+      // Execute both queries in parallel with timeout
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Firestore query timeout')), 10000)
+      );
+      
+      const queriesPromise = Promise.all([
         getDocs(completedQuery),
         getDocs(failedQuery)
       ]);
       
+      const [completedSnapshot, failedSnapshot] = await Promise.race([
+        queriesPromise,
+        timeoutPromise
+      ]);
+      
       // Combine and sort results
-      const completedAudits = completedSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
-      const failedAudits = failedSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      const completedAudits = completedSnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
+      const failedAudits = failedSnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }) as SecurityAudit);
       
       const allAudits = [...completedAudits, ...failedAudits];
+      
+      console.log('📊 Audit history results:', { 
+        completedCount: completedAudits.length, 
+        failedCount: failedAudits.length,
+        totalCount: allAudits.length
+      });
       
       // Sort by completedAt descending (most recent first)
       allAudits.sort((a, b) => {
@@ -245,7 +316,14 @@ export class FirebaseAuditService {
       // Apply limit manually
       return allAudits.slice(0, limitCount);
     } catch (error) {
-      console.error('Error getting audit history:', error);
+      console.error('❌ Error getting audit history:', error);
+      
+      // If it's a connection error, return empty array to prevent blocking
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('timeout') || errorMessage.includes('transport errored')) {
+        console.warn('⚠️ Firebase connection issue detected, returning empty audit history');
+      }
+      
       return [];
     }
   }
