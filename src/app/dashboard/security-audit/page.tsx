@@ -1076,38 +1076,38 @@ export default function SecurityAuditPage() {
               >
                     <RefreshCw className="h-3 w-3 mr-1" />
                     Retry Loading Repositories
-              </Button>
+            </Button>
                 </div>
             )}
             </div>
             
             <div className="flex gap-2">
-            <Button 
+              <Button 
                 onClick={handleAudit} 
                 disabled={!selectedRepository || isScanning || isLoadingRepos}
-              className="min-w-[120px]"
-            >
-                {isScanning ? 'Scanning...' : 'Run Security Audit'}
-            </Button>
-              
-                          <Button 
-                onClick={handleForceReset}
-                variant="outline"
-                disabled={isScanning}
-                className="whitespace-nowrap"
+                className="min-w-[120px]"
               >
-                <RefreshCw className="mr-2 h-3 w-3" />
-                Force Reset
+                {isScanning ? 'Scanning...' : 'Run Security Audit'}
               </Button>
               
-              <Button 
+            <Button 
+                onClick={handleForceReset}
+              variant="outline"
+                disabled={isScanning}
+                className="whitespace-nowrap"
+            >
+                <RefreshCw className="mr-2 h-3 w-3" />
+                Force Reset
+            </Button>
+              
+            <Button 
                 onClick={handleNuclearDelete}
                 variant="destructive"
                 disabled={isScanning}
                 className="whitespace-nowrap"
               >
                 ☢️ Nuclear Delete
-              </Button>
+          </Button>
             </div>
           </div>
           
