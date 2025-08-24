@@ -2489,8 +2489,19 @@ This vulnerability could allow attackers to {finding.impact.lower() if finding.i
             
             # Final progress update - mark as completed BEFORE final processing
             try:
+                logger.info(f"🔄 MARKING SCAN AS COMPLETED: audit_id={self.audit_id}")
                 update_progress_in_db(self.audit_id, "Scan completed successfully!", 100, 100, 100, False)
                 logger.info(f"✅ Progress marked as completed in database")
+                
+                # Verify the update worked
+                import time
+                time.sleep(1)  # Wait a moment for DB update
+                verify_progress = get_progress_from_db(self.audit_id)
+                if verify_progress:
+                    logger.info(f"🔍 VERIFICATION: Progress data after completion: {verify_progress}")
+                else:
+                    logger.warning(f"⚠️ VERIFICATION: No progress data found after marking completion")
+                    
             except Exception as progress_error:
                 logger.error(f"❌ Failed to mark progress as completed: {progress_error}")
             
@@ -4082,6 +4093,7 @@ def get_progress_for_audit(audit_id: str):
         
         # Check if scan is running
         is_running = progress_data.get('is_running', False)
+        logger.info(f"🔍 PROGRESS DEBUG: audit_id={audit_id}, is_running={is_running}, progress_data={progress_data}")
         
         if not is_running:
             logger.info(f"📊 DATABASE PROGRESS: Scan completed for audit {audit_id}")
