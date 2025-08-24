@@ -130,6 +130,16 @@ export class FirebaseAuditService {
         runningCount: runningSnapshot.docs.length
       });
       
+      // CRITICAL: If we have pending audits, show them clearly
+      if (hasPending) {
+        console.log('🚨 BLOCKING: These pending audits are preventing new audits from starting:');
+        pendingSnapshot.docs.forEach((doc, index) => {
+          const data = doc.data();
+          console.log(`  ${index + 1}. ID: ${doc.id}, Status: ${data.status}, Repo: ${data.repositoryName}, Created: ${data.createdAt}`);
+        });
+        console.log('🚨 ACTION REQUIRED: Use the "Force Reset" button to clear these stuck audits');
+      }
+      
       // Return true if either query has results
       return hasPending || hasRunning;
     } catch (error) {
@@ -293,24 +303,109 @@ export class FirebaseAuditService {
       
       console.log(`🔄 Found ${stuckSnapshot.docs.length} stuck audits to reset`);
       
+      // Log each stuck audit before resetting
+      stuckSnapshot.docs.forEach((doc, index) => {
+        const auditData = doc.data();
+        console.log(`  ${index + 1}. ID: ${doc.id}, Status: ${auditData.status}, Repo: ${auditData.repositoryName}, Created: ${auditData.createdAt}`);
+      });
+      
       // Reset all stuck audits to 'failed' status
       const resetPromises = stuckSnapshot.docs.map(async (doc) => {
         const auditData = doc.data();
         console.log(`🔄 Resetting audit ${doc.id} from ${auditData.status} to failed`);
         
-        await updateDoc(doc.ref, {
-          status: 'failed',
-          completedAt: serverTimestamp(),
-          error: 'Audit was force-reset due to stuck state'
-        });
+        try {
+          await updateDoc(doc.ref, {
+            status: 'failed',
+            completedAt: serverTimestamp(),
+            error: 'Audit was force-reset due to stuck state'
+          });
+          console.log(`✅ Successfully reset audit ${doc.id}`);
+        } catch (resetError) {
+          console.error(`❌ Failed to reset audit ${doc.id}:`, resetError);
+        }
       });
       
       await Promise.all(resetPromises);
       console.log('✅ Successfully reset all stuck audits');
-      return true;
+      
+      // Verify the reset worked by checking again
+      const verifyQuery = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('status', 'in', ['pending', 'running'])
+      );
+      
+      const verifySnapshot = await getDocs(verifyQuery);
+      console.log(`🔍 Verification: ${verifySnapshot.docs.length} audits still in pending/running state`);
+      
+      return verifySnapshot.empty;
       
     } catch (error) {
       console.error('❌ Error force resetting stuck audits:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Nuclear option: Delete stuck audits entirely
+   */
+  static async nuclearDeleteStuckAudits(userId: string): Promise<boolean> {
+    try {
+      console.log('☢️ NUCLEAR OPTION: Deleting stuck audits for user:', userId);
+      
+      // Find any audits that are stuck in pending/running state
+      const stuckQuery = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('status', 'in', ['pending', 'running'])
+      );
+      
+      const stuckSnapshot = await getDocs(stuckQuery);
+      
+      if (stuckSnapshot.empty) {
+        console.log('✅ No stuck audits found to delete');
+        return true;
+      }
+      
+      console.log(`☢️ Found ${stuckSnapshot.docs.length} stuck audits to DELETE`);
+      
+      // Log each stuck audit before deleting
+      stuckSnapshot.docs.forEach((doc, index) => {
+        const auditData = doc.data();
+        console.log(`  ${index + 1}. ID: ${doc.id}, Status: ${auditData.status}, Repo: ${auditData.repositoryName}, Created: ${auditData.createdAt}`);
+      });
+      
+      // Delete all stuck audits
+      const deletePromises = stuckSnapshot.docs.map(async (doc) => {
+        const auditData = doc.data();
+        console.log(`☢️ Deleting audit ${doc.id} (${auditData.status})`);
+        
+        try {
+          await deleteDoc(doc.ref);
+          console.log(`✅ Successfully deleted audit ${doc.id}`);
+        } catch (deleteError) {
+          console.error(`❌ Failed to delete audit ${doc.id}:`, deleteError);
+        }
+      });
+      
+      await Promise.all(deletePromises);
+      console.log('☢️ Successfully deleted all stuck audits');
+      
+      // Verify the deletion worked
+      const verifyQuery = query(
+        collection(db, this.COLLECTION_NAME),
+        where('userId', '==', userId),
+        where('status', 'in', ['pending', 'running'])
+      );
+      
+      const verifySnapshot = await getDocs(verifyQuery);
+      console.log(`🔍 Verification: ${verifySnapshot.docs.length} audits still in pending/running state`);
+      
+      return verifySnapshot.empty;
+      
+    } catch (error) {
+      console.error('❌ Error deleting stuck audits:', error);
       return false;
     }
   }

@@ -870,6 +870,57 @@ export default function SecurityAuditPage() {
     }
   };
 
+  const handleNuclearDelete = async () => {
+    if (!user) {
+      toast({
+        title: 'Error',
+        description: 'Please sign in to delete stuck audits',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Confirm the nuclear option
+    const confirmed = confirm(
+      '☢️ NUCLEAR OPTION: This will PERMANENTLY DELETE all stuck audits.\n\n' +
+      'This action cannot be undone. Are you absolutely sure?'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      console.log('☢️ Nuclear delete of stuck audits...');
+      
+      const success = await FirebaseAuditService.nuclearDeleteStuckAudits(user.uid);
+      
+      if (success) {
+        toast({
+          title: '☢️ Nuclear Delete Complete',
+          description: 'All stuck audits have been permanently deleted. You can now start a new audit.',
+          variant: 'default',
+        });
+        
+        // Refresh the page to clear any stale state
+        window.location.reload();
+      } else {
+        toast({
+          title: 'Error',
+          description: 'Failed to delete stuck audits. Please try again.',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error nuclear deleting audits:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to delete stuck audits. Please try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const getSeverityCount = (severity: string) => {
     if (!scanResults?.condensed_findings) return 0;
     return scanResults.condensed_findings.filter(f => f.severity.toLowerCase() === severity.toLowerCase()).length;
@@ -1039,15 +1090,24 @@ export default function SecurityAuditPage() {
                 {isScanning ? 'Scanning...' : 'Run Security Audit'}
             </Button>
               
-            <Button 
+                          <Button 
                 onClick={handleForceReset}
-              variant="outline"
+                variant="outline"
                 disabled={isScanning}
                 className="whitespace-nowrap"
-            >
+              >
                 <RefreshCw className="mr-2 h-3 w-3" />
                 Force Reset
-          </Button>
+              </Button>
+              
+              <Button 
+                onClick={handleNuclearDelete}
+                variant="destructive"
+                disabled={isScanning}
+                className="whitespace-nowrap"
+              >
+                ☢️ Nuclear Delete
+              </Button>
             </div>
           </div>
           

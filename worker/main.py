@@ -2123,6 +2123,9 @@ This vulnerability could allow attackers to {finding.impact.lower() if finding.i
     
     async def scan_repository(self, repo_url: str, github_token: str = None) -> Dict[str, Any]:
         """Main method to scan repository for security vulnerabilities"""
+        # Ensure asyncio is accessible
+        import asyncio
+        
         start_time = datetime.now()
         logger.info(f"🚀 Starting ChatGPT security scan for: {repo_url}")
         
