@@ -22,17 +22,27 @@ import zipfile
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Firebase
+# Initialize Firebase (prefer Application Default Credentials on Cloud Run)
 try:
     firebase_admin.get_app()
 except ValueError:
-    cred = credentials.Certificate("service-account-key.json")
-    firebase_admin.initialize_app(cred, {
-        'storageBucket': 'vibelog-lj17r.appspot.com'
-    })
+    try:
+        cred_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        if cred_path and os.path.exists(cred_path):
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred)
+        else:
+            # Use ADC when running on Cloud Run / GCP
+            firebase_admin.initialize_app()
+    except Exception:
+        # Fallback: initialize without explicit creds (ADC)
+        firebase_admin.initialize_app()
 
 db = firestore.client()
-bucket = storage.bucket()
+try:
+    bucket = storage.bucket()
+except Exception:
+    bucket = None
 
 class SecurityScanOrchestrator:
     """Clean orchestrator that coordinates 5 specialized security scanners"""
@@ -618,21 +628,25 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 orchestrator = SecurityScanOrchestrator()
 
-@app.route('/', methods=['POST'])
-async def start_scan():
+@app.route('/', methods=['GET'])
+def root_ok():
+    return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
+
+@app.route('/scan', methods=['POST'])
+def start_scan():
     """Start a new security scan"""
     try:
-        data = request.get_json()
+        data = request.get_json(force=True, silent=True) or {}
         repo_url = data.get('repo_url')
         github_token = data.get('github_token')
-        
+
         if not repo_url:
             return jsonify({'error': 'repo_url is required'}), 400
-        
-        # Run scan
-        result = await orchestrator.start_scan(repo_url, github_token)
+
+        # Run async orchestrator synchronously in Flask
+        result = asyncio.run(orchestrator.start_scan(repo_url, github_token))
         return jsonify(result)
-        
+
     except Exception as e:
         logger.error(f"❌ API error: {e}")
         return jsonify({'error': str(e)}), 500
