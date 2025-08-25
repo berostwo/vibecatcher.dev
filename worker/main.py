@@ -23,6 +23,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Firebase (prefer Application Default Credentials on Cloud Run)
+db = None
+bucket = None
+
 try:
     firebase_admin.get_app()
 except ValueError:
@@ -34,15 +37,26 @@ except ValueError:
         else:
             # Use ADC when running on Cloud Run / GCP
             firebase_admin.initialize_app()
-    except Exception:
-        # Fallback: initialize without explicit creds (ADC)
-        firebase_admin.initialize_app()
-
-db = firestore.client()
-try:
-    bucket = storage.bucket()
-except Exception:
-    bucket = None
+        
+        # Try to initialize Firestore
+        try:
+            db = firestore.client()
+            logger.info("✅ Firestore client initialized successfully")
+        except Exception as firestore_error:
+            logger.error(f"❌ Firestore initialization failed: {firestore_error}")
+            db = None
+            
+        # Try to initialize Storage
+        try:
+            bucket = storage.bucket()
+            logger.info("✅ Storage bucket initialized successfully")
+        except Exception as storage_error:
+            logger.error(f"❌ Storage initialization failed: {storage_error}")
+            bucket = None
+            
+    except Exception as init_error:
+        logger.error(f"❌ Firebase initialization failed: {init_error}")
+        # Continue without Firebase - worker will work for public repos only
 
 class SecurityScanOrchestrator:
     """Clean orchestrator that coordinates 5 specialized security scanners"""
@@ -60,20 +74,24 @@ class SecurityScanOrchestrator:
         try:
             # If no github_token provided, try to resolve via user_id from Firestore
             if not github_token and user_id:
-                try:
-                    token_doc = db.collection('users').document(user_id).get()
-                    if token_doc.exists:
-                        data = token_doc.to_dict() or {}
-                        candidate = data.get('githubAccessToken')
-                        if isinstance(candidate, str) and len(candidate) > 10:
-                            github_token = candidate
-                            logger.info("🔐 GitHub token resolved from server-side store for user")
+                if db is None:
+                    logger.warning("⚠️ Firestore unavailable - cannot resolve GitHub token. Only public repositories can be scanned.")
+                    logger.warning("⚠️ To scan private repositories, enable Firestore API or provide github_token directly.")
+                else:
+                    try:
+                        token_doc = db.collection('users').document(user_id).get()
+                        if token_doc.exists:
+                            data = token_doc.to_dict() or {}
+                            candidate = data.get('githubAccessToken')
+                            if isinstance(candidate, str) and len(candidate) > 10:
+                                github_token = candidate
+                                logger.info("🔐 GitHub token resolved from server-side store for user")
+                            else:
+                                logger.warning("⚠️ No GitHub token found for user; proceeding without token (public repos only)")
                         else:
-                            logger.warning("⚠️ No GitHub token found for user; proceeding without token (public repos only)")
-                    else:
-                        logger.warning("⚠️ User document not found when resolving GitHub token")
-                except Exception as resolve_err:
-                    logger.warning(f"⚠️ Failed to resolve GitHub token for user: {resolve_err}")
+                            logger.warning("⚠️ User document not found when resolving GitHub token")
+                    except Exception as resolve_err:
+                        logger.warning(f"⚠️ Failed to resolve GitHub token for user: {resolve_err}")
 
             # Step 1: Download repository (do this first to avoid Firestore dependency)
             repo_path = await self._download_repository(repo_url, github_token)
