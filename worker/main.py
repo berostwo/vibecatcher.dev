@@ -52,12 +52,29 @@ class SecurityScanOrchestrator:
         self.repo_url = None
         self.scan_id = None
         
-    async def start_scan(self, repo_url: str, github_token: str = None) -> Dict[str, Any]:
+    async def start_scan(self, repo_url: str, github_token: str = None, user_id: str = None) -> Dict[str, Any]:
         """Main entry point - orchestrates the entire security scan"""
         start_time = datetime.now()
         logger.info(f"🚀 Starting security scan for: {repo_url}")
         
         try:
+            # If no github_token provided, try to resolve via user_id from Firestore
+            if not github_token and user_id:
+                try:
+                    token_doc = db.collection('users').document(user_id).get()
+                    if token_doc.exists:
+                        data = token_doc.to_dict() or {}
+                        candidate = data.get('githubAccessToken')
+                        if isinstance(candidate, str) and len(candidate) > 10:
+                            github_token = candidate
+                            logger.info("🔐 GitHub token resolved from server-side store for user")
+                        else:
+                            logger.warning("⚠️ No GitHub token found for user; proceeding without token (public repos only)")
+                    else:
+                        logger.warning("⚠️ User document not found when resolving GitHub token")
+                except Exception as resolve_err:
+                    logger.warning(f"⚠️ Failed to resolve GitHub token for user: {resolve_err}")
+
             # Step 1: Create scan record
             self.scan_id = await self._create_scan_record(repo_url)
             logger.info(f"✅ Created scan record: {self.scan_id}")
@@ -639,12 +656,13 @@ def start_scan():
         data = request.get_json(force=True, silent=True) or {}
         repo_url = data.get('repo_url')
         github_token = data.get('github_token')
+        user_id = data.get('user_id')
 
         if not repo_url:
             return jsonify({'error': 'repo_url is required'}), 400
 
         # Run async orchestrator synchronously in Flask
-        result = asyncio.run(orchestrator.start_scan(repo_url, github_token))
+        result = asyncio.run(orchestrator.start_scan(repo_url, github_token, user_id))
         return jsonify(result)
 
     except Exception as e:
