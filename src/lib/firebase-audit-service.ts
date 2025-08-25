@@ -96,7 +96,7 @@ export class FirebaseAuditService {
       
       // Execute both queries in parallel with timeout
       const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Firestore query timeout')), 10000)
+        setTimeout(() => reject(new Error('Firestore query timeout')), 60000)
       );
       
       const queriesPromise = Promise.all([
@@ -184,7 +184,7 @@ export class FirebaseAuditService {
       
       // Execute both queries in parallel with timeout
       const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Firestore query timeout')), 10000)
+        setTimeout(() => reject(new Error('Firestore query timeout')), 60000)
       );
       
       const queriesPromise = Promise.all([
@@ -437,7 +437,7 @@ export class FirebaseAuditService {
       
       // Execute both queries in parallel with timeout
       const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Firestore query timeout')), 10000)
+        setTimeout(() => reject(new Error('Firestore query timeout')), 60000)
       );
       
       const queriesPromise = Promise.all([
