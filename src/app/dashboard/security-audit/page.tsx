@@ -24,7 +24,7 @@ export default function SecurityAuditPage() {
             <CardDescription>
               We're rebuilding the security audit system with a new, more powerful architecture
             </CardDescription>
-          </CardHeader>
+      </CardHeader>
           <CardContent className="text-center space-y-4">
             <p className="text-muted-foreground">
               The security audit system is being completely rebuilt to work with our new modular worker architecture. 
@@ -47,9 +47,9 @@ export default function SecurityAuditPage() {
                 Back to Dashboard
               </Link>
             </Button>
-          </CardContent>
-        </Card>
-      </div>
+        </CardContent>
+      </Card>
+                </div>
     </DashboardPage>
   );
 }

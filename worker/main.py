@@ -22,7 +22,7 @@ import zipfile
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Firebase (prefer Application Default Credentials on Cloud Run)
+# Initialize Firebase with environment variables
 db = None
 bucket = None
 
@@ -30,13 +30,31 @@ try:
     firebase_admin.get_app()
 except ValueError:
     try:
-        cred_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-        if cred_path and os.path.exists(cred_path):
-            cred = credentials.Certificate(cred_path)
+        # Check if we have Firebase environment variables
+        firebase_project_id = os.getenv('FIREBASE_PROJECT_ID')
+        
+        if firebase_project_id:
+            # Use Firebase environment variables
+            firebase_config = {
+                'projectId': firebase_project_id,
+                'privateKeyId': os.getenv('FIREBASE_PRIVATE_KEY_ID'),
+                'privateKey': os.getenv('FIREBASE_PRIVATE_KEY', '').replace('\\n', '\n'),
+                'clientEmail': os.getenv('FIREBASE_CLIENT_EMAIL'),
+                'clientId': os.getenv('FIREBASE_CLIENT_ID'),
+                'authUri': os.getenv('FIREBASE_AUTH_URI'),
+                'tokenUri': os.getenv('FIREBASE_TOKEN_URI'),
+                'authProviderX509CertUrl': os.getenv('FIREBASE_AUTH_PROVIDER_X509_CERT_URL'),
+                'clientX509CertUrl': os.getenv('FIREBASE_CLIENT_X509_CERT_URL')
+            }
+            
+            cred = credentials.Certificate(firebase_config)
             firebase_admin.initialize_app(cred)
+            logger.info(f"✅ Firebase initialized with project: {firebase_project_id}")
+            
         else:
-            # Use ADC when running on Cloud Run / GCP
+            # Fallback to Application Default Credentials
             firebase_admin.initialize_app()
+            logger.info("✅ Firebase initialized with Application Default Credentials")
         
         # Try to initialize Firestore
         try:
@@ -77,7 +95,7 @@ class SecurityScanOrchestrator:
                 if db is None:
                     logger.warning("⚠️ Firestore unavailable - cannot resolve GitHub token. Only public repositories can be scanned.")
                     logger.warning("⚠️ To scan private repositories, enable Firestore API or provide github_token directly.")
-                else:
+        else:
                     try:
                         token_doc = db.collection('users').document(user_id).get()
                         if token_doc.exists:
@@ -86,7 +104,7 @@ class SecurityScanOrchestrator:
                             if isinstance(candidate, str) and len(candidate) > 10:
                                 github_token = candidate
                                 logger.info("🔐 GitHub token resolved from server-side store for user")
-                            else:
+            else:
                                 logger.warning("⚠️ No GitHub token found for user; proceeding without token (public repos only)")
                         else:
                             logger.warning("⚠️ User document not found when resolving GitHub token")
@@ -226,10 +244,10 @@ class SecurityScanOrchestrator:
                 extracted_dirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d)) and d != '__pycache__']
                 if extracted_dirs:
                     repo_path = os.path.join(temp_dir, extracted_dirs[0])
-                else:
+            else:
                     repo_path = temp_dir
                     
-            else:
+                else:
                 # Handle other Git URLs (clone)
                 import subprocess
                 subprocess.run(['git', 'clone', repo_url, temp_dir], check=True)
@@ -237,7 +255,7 @@ class SecurityScanOrchestrator:
             
             logger.info(f"✅ Repository downloaded to: {repo_path}")
             return repo_path
-            
+                
         except Exception as e:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise Exception(f"Failed to download repository: {e}")
@@ -285,7 +303,7 @@ class SecurityScanOrchestrator:
             await self._update_scanner_progress(scanner_name, 'running')
             
             # Run scanner
-            start_time = datetime.now()
+        start_time = datetime.now()
             findings = await scanner_func(repo_path)
             duration = (datetime.now() - start_time).total_seconds()
             
@@ -321,13 +339,13 @@ class SecurityScanOrchestrator:
         ]
         
         # Scan all files
-        for root, dirs, files in os.walk(repo_path):
+            for root, dirs, files in os.walk(repo_path):
             # Skip common directories
-            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__', '.venv', 'venv']]
+                dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__', '.venv', 'venv']]
             
-            for file in files:
+                for file in files:
                 if file.endswith(('.env', '.config', '.json', '.yaml', '.yml', '.js', '.ts', '.py', '.go', '.rs', '.php', '.rb', '.java')):
-                    file_path = os.path.join(root, file)
+                        file_path = os.path.join(root, file)
                     try:
                         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read()
@@ -348,7 +366,7 @@ class SecurityScanOrchestrator:
                                 })
                     except Exception:
                         continue
-        
+            
         logger.info(f"🔍 Secrets scanner found {len(findings)} potential secrets")
         return findings
     
@@ -386,10 +404,10 @@ class SecurityScanOrchestrator:
             for file in files:
                 if file.endswith(('.js', '.ts', '.jsx', '.tsx', '.py', '.go', '.php', '.rb')):
                     file_path = os.path.join(root, file)
-                    try:
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            content = f.read()
-                            
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    
                         for pattern, description, severity in auth_patterns:
                             import re
                             matches = re.finditer(pattern, content, re.IGNORECASE)
@@ -404,8 +422,8 @@ class SecurityScanOrchestrator:
                                     'remediation': 'Enable secure authentication settings and use environment variables for secrets'
                                 })
                     except Exception:
-                        continue
-        
+                    continue
+            
         logger.info(f"🔐 Auth scanner found {len(findings)} auth issues")
         return findings
     
@@ -445,10 +463,10 @@ class SecurityScanOrchestrator:
             for file in files:
                 if file.endswith(('.js', '.ts', '.jsx', '.tsx', '.py', '.go', '.php', '.rb', '.java', '.html', '.htm')):
                     file_path = os.path.join(root, file)
-                    try:
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            content = f.read()
-                            
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    
                         for pattern, description, severity in dangerous_patterns:
                             import re
                             matches = re.finditer(pattern, content, re.IGNORECASE)
@@ -463,8 +481,8 @@ class SecurityScanOrchestrator:
                                     'remediation': 'Use safe alternatives and proper input validation'
                                 })
                     except Exception:
-                        continue
-        
+                    continue
+            
         logger.info(f"🌐 WebApp scanner found {len(findings)} security issues")
         return findings
     
@@ -553,10 +571,10 @@ class SecurityScanOrchestrator:
             for file in files:
                 if file.endswith(('.js', '.ts', '.jsx', '.tsx', '.py', '.go', '.php', '.rb', '.java', '.env', '.config', '.yaml', '.yml')):
                     file_path = os.path.join(root, file)
-                    try:
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            content = f.read()
-                            
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    
                         for pattern, description, severity in deployment_patterns:
                             import re
                             matches = re.finditer(pattern, content, re.IGNORECASE)
@@ -571,8 +589,8 @@ class SecurityScanOrchestrator:
                                     'remediation': 'Remove development code and enable production security settings'
                                 })
                     except Exception:
-                        continue
-        
+                    continue
+            
         logger.info(f"🚀 Deployment scanner found {len(findings)} deployment issues")
         return findings
     
@@ -598,7 +616,7 @@ class SecurityScanOrchestrator:
     
     async def _aggregate_findings(self, scanner_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Aggregate findings from all scanners"""
-        all_findings = []
+                    all_findings = []
         
         for result in scanner_results:
             if result['status'] == 'completed':
@@ -700,14 +718,14 @@ def start_scan():
         repo_url = data.get('repo_url')
         github_token = data.get('github_token')
         user_id = data.get('user_id')
-
+        
         if not repo_url:
             return jsonify({'error': 'repo_url is required'}), 400
 
         # Run async orchestrator synchronously in Flask
         result = asyncio.run(orchestrator.start_scan(repo_url, github_token, user_id))
-        return jsonify(result)
-
+            return jsonify(result)
+        
     except Exception as e:
         logger.error(f"❌ API error: {e}")
         return jsonify({'error': str(e)}), 500
