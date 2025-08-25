@@ -75,46 +75,69 @@ class SecurityScanOrchestrator:
                 except Exception as resolve_err:
                     logger.warning(f"⚠️ Failed to resolve GitHub token for user: {resolve_err}")
 
-            # Step 1: Create scan record
-            self.scan_id = await self._create_scan_record(repo_url)
-            logger.info(f"✅ Created scan record: {self.scan_id}")
-            
-            # Step 2: Download repository
+            # Step 1: Download repository (do this first to avoid Firestore dependency)
             repo_path = await self._download_repository(repo_url, github_token)
             logger.info(f"✅ Downloaded repository to: {repo_path}")
             
-            # Step 3: Run all 5 scanners in parallel
+            # Step 2: Run all 5 scanners in parallel
             scanner_results = await self._run_scanners(repo_path)
             logger.info(f"✅ All scanners completed: {len(scanner_results)} results")
             
-            # Step 4: Aggregate results
+            # Step 3: Aggregate results
             aggregated_findings = await self._aggregate_findings(scanner_results)
             logger.info(f"✅ Aggregated findings: {len(aggregated_findings)} total")
             
-            # Step 5: Generate AI summary
+            # Step 4: Generate AI summary
             final_report = await self._generate_ai_summary(aggregated_findings, repo_path)
             logger.info(f"✅ AI summary generated")
             
-            # Step 6: Save final results
-            await self._save_final_results(final_report)
-            logger.info(f"✅ Final results saved")
+            # Step 5: Try to save to Firestore (optional, don't fail if it doesn't work)
+            try:
+                self.scan_id = await self._create_scan_record(repo_url)
+                await self._save_final_results(final_report)
+                logger.info(f"✅ Results saved to Firestore")
+            except Exception as firestore_error:
+                logger.warning(f"⚠️ Firestore save failed (continuing): {firestore_error}")
+                self.scan_id = f"local_scan_{int(start_time.timestamp())}"
             
             scan_duration = (datetime.now() - start_time).total_seconds()
             logger.info(f"🎉 Scan completed successfully in {scan_duration:.1f}s")
             
+            # Return comprehensive results for immediate use
             return {
                 'scan_id': self.scan_id,
                 'status': 'completed',
                 'findings_count': len(aggregated_findings),
                 'scan_duration': scan_duration,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'repository': repo_url.split('/')[-1],
+                'summary': {
+                    'total_findings': len(aggregated_findings),
+                    'critical_count': len([f for f in aggregated_findings if f.get('severity', '').lower() == 'critical']),
+                    'high_count': len([f for f in aggregated_findings if f.get('severity', '').lower() == 'high']),
+                    'medium_count': len([f for f in aggregated_findings if f.get('severity', '').lower() == 'medium']),
+                    'low_count': len([f for f in aggregated_findings if f.get('severity', '').lower() == 'low']),
+                    'codebase_health': max(5, 100 - (len(aggregated_findings) * 2))
+                },
+                'findings': aggregated_findings,
+                'scanners': {
+                    result['scanner']: {
+                        'status': result['status'],
+                        'findings': len(result.get('findings', []))
+                    }
+                    for result in scanner_results
+                }
             }
             
         except Exception as e:
             logger.error(f"❌ Scan failed: {e}")
-            await self._mark_scan_failed(str(e))
+            try:
+                await self._mark_scan_failed(str(e))
+            except:
+                pass  # Don't fail if Firestore is unavailable
+            
             return {
-                'scan_id': self.scan_id,
+                'scan_id': getattr(self, 'scan_id', 'unknown'),
                 'status': 'failed',
                 'error': str(e),
                 'timestamp': datetime.now().isoformat()

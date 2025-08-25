@@ -77,8 +77,33 @@ export default function CodeScannerPage() {
       const data = await response.json();
       console.log('Scan started:', data);
       
-      // Start progress polling
-      pollScanProgress();
+      if (data.status === 'completed') {
+        // Worker completed the scan immediately (synchronous)
+        setScanResults(data);
+        setIsScanning(false);
+        setScanProgress(100);
+        setScanStep('Scan completed!');
+        
+        toast({
+          title: "Scan completed!",
+          description: `Found ${data.findings_count} security issues in ${selectedRepository}`,
+        });
+      } else if (data.status === 'failed') {
+        // Scan failed
+        setScanError(data.error || 'Scan failed');
+        setIsScanning(false);
+        setScanProgress(0);
+        setScanStep('');
+        
+        toast({
+          title: "Scan failed",
+          description: data.error || "Please try again",
+          variant: "destructive",
+        });
+      } else {
+        // Start progress polling for async scans
+        pollScanProgress();
+      }
       
     } catch (error) {
       console.error('Failed to start scan:', error);
