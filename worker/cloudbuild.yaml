@@ -1,0 +1,41 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'worker/Dockerfile', '-t', 'gcr.io/$PROJECT_ID/chatgpt-security-scanner', '.']
+  
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/chatgpt-security-scanner']
+  
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'chatgpt-security-scanner'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/chatgpt-security-scanner'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '2Gi'
+      - '--cpu'
+      - '2'
+      - '--timeout'
+      - '900'
+      - '--min-instances'
+      - '1'
+      - '--max-instances'
+      - '10'
+      - '--concurrency'
+      - '1'
+      - '--cpu-throttling'
+      - '--cpu-boost'
+
+# Store images in Google Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/chatgpt-security-scanner'
