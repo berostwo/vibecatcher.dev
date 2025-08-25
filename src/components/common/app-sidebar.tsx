@@ -35,12 +35,11 @@ export function AppSidebar() {
   const { signOut, user, isLoading, githubToken } = useAuth()
   const { selectedProduct, setSelectedProduct, isExpanded, setIsExpanded } = usePaymentSidebar()
 
-  const menuItems = [
-    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { href: "/dashboard/security-audit", label: "Security Audit", icon: ShieldCheck },
-    { href: "/dashboard/audit-history", label: "Audit History", icon: History },
-    { href: "/dashboard/template", label: "Template", icon: LayoutTemplate },
-    { href: "/dashboard/account", label: "Account", icon: User },
+      const menuItems = [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/dashboard/code-scanner", label: "Code Scanner", icon: ShieldCheck },
+      { href: "/dashboard/template", label: "Template", icon: LayoutTemplate },
+      { href: "/dashboard/account", label: "Account", icon: User },
   ]
 
   const handleProductSelect = (productId: string) => {

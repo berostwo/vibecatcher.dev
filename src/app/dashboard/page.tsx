@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Github, History, ShieldCheck, ArrowRight, CheckCircle, ShoppingCart } from 'lucide-react'
+import { Github, History, ShieldCheck, CheckCircle, ShoppingCart } from 'lucide-react'
 import Link from 'next/link'
 import { DashboardPage, DashboardPageHeader } from '@/components/common/dashboard-page'
 import { useAuth } from '@/contexts/auth-context'
@@ -63,7 +63,7 @@ export default function DashboardPageContent() {
     <DashboardPage>
       <DashboardPageHeader title="Dashboard" description="An overview of your account and security audits." />
       
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-1">
         <Card className="bg-gradient-to-r from-primary/10 to-accent/10 border-2 border-primary/20">
             <CardHeader>
                 <div className="flex items-center space-x-4">
@@ -90,19 +90,11 @@ export default function DashboardPageContent() {
                             </p>
                         )}
                         <CardDescription>
-                            Ready to secure your code?
+                            Security audit features coming soon!
                         </CardDescription>
                     </div>
                 </div>
             </CardHeader>
-            <CardContent>
-                <Button asChild>
-                    <Link href="/dashboard/security-audit">
-                        Start Audit
-                        <ArrowRight className="ml-2 h-4 w-4"/>
-                    </Link>
-                </Button>
-            </CardContent>
         </Card>
         <Card className="border-2 border-primary/20">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -201,12 +193,9 @@ export default function DashboardPageContent() {
           </div>
         </CardContent>
         <CardFooter>
-          <Button asChild className="w-full">
-            <Link href="/dashboard/security-audit">
-              Start Your First Security Audit
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
-          </Button>
+          <div className="text-center text-sm text-muted-foreground">
+            Security audit features are being rebuilt and will be available soon!
+          </div>
         </CardFooter>
       </Card>
 

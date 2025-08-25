@@ -641,8 +641,10 @@ class SecurityScanOrchestrator:
 
 # Flask app for the orchestrator
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, origins=['http://localhost:9002', 'http://localhost:3000', 'https://vibecatcher.dev'], supports_credentials=True)
 orchestrator = SecurityScanOrchestrator()
 
 @app.route('/', methods=['GET'])

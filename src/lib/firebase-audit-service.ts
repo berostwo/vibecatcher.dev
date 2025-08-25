@@ -725,4 +725,34 @@ export class FirebaseAuditService {
       throw error;
     }
   }
+
+  /**
+   * Update audit with completed scan results
+   */
+  static async updateAuditWithResults(
+    auditId: string,
+    scanResults: any,
+    status: 'completed' | 'failed' = 'completed'
+  ): Promise<void> {
+    try {
+      const auditRef = doc(db, this.COLLECTION_NAME, auditId);
+      const updateData: any = {
+        status,
+        scanResults,
+        updatedAt: serverTimestamp(),
+        completedAt: serverTimestamp(),
+        progress: {
+          step: 'Scan completed',
+          progress: 100,
+          timestamp: new Date().toISOString()
+        }
+      };
+
+      await updateDoc(auditRef, updateData);
+      console.log(`✅ Audit ${auditId} updated with scan results and marked as ${status}`);
+    } catch (error) {
+      console.error('❌ Failed to update audit with results:', error);
+      throw error;
+    }
+  }
 }
